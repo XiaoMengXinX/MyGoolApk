@@ -126,7 +126,15 @@ func (a *App) detailPage(cx *core.Scope, id string) core.Node {
 func (d *detail) postBody(cx *core.Scope) core.Node {
 	a := d.a
 	get := func() backend.Feed { return d.feed.Get() }
-	return core.Dynamic(func(cx *core.Scope) core.Node {
+	type shape struct {
+		feedShape
+		blocks, rich          int
+		target, counted, text bool
+	}
+	return dynamicShape(cx, func() shape {
+		f := get()
+		return shape{shapeOfFeed(f, 0), len(f.Blocks), len(f.Rich), f.Target != nil, f.Answers > 0 || f.Followers > 0, f.Content != ""}
+	}, func(cx *core.Scope, _ shape) core.Node {
 		f := core.Untracked(cx, get)
 		s := shapeOfFeed(f, 0)
 		kids := []core.Node{a.feedHeader(cx, get, 40)}

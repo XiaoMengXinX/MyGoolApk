@@ -46,8 +46,8 @@ func (a *App) feedCard(cx *core.Scope, get func() backend.Feed) core.Node {
 				func(cx *core.Scope, s feedShape) core.Node { return a.feedBody(cx, get, s) }),
 		),
 		row(core.Style{Padding: core.Edges{Right: 16, Bottom: 8, Left: 16}, Gap: 16, AlignItems: core.AlignCenter}, "",
-			core.Dynamic(func(cx *core.Scope) core.Node {
-				if core.Untracked(cx, get).Target == nil {
+			dynamicShape(cx, func() bool { return get().Target != nil }, func(cx *core.Scope, has bool) core.Node {
+				if !has {
 					return core.Group{}
 				}
 				return a.targetChip(cx, func() *backend.Target { return get().Target })
@@ -73,8 +73,8 @@ func (a *App) targetChip(cx *core.Scope, get func() *backend.Target) core.Node {
 		}
 	}, core.Style{Direction: core.Row, Height: core.Pt(32), FlexShrink: 1, Padding: core.Edges{Left: 6, Right: 12}, Gap: 6,
 		AlignItems: core.AlignCenter, CornerRadius: 8, Overflow: core.Hidden}, "bg-surface-container-high",
-		core.Dynamic(func(cx *core.Scope) core.Node {
-			if t := core.Untracked(cx, get); t != nil && t.LogoURL != "" {
+		dynamicShape(cx, func() bool { t := get(); return t != nil && t.LogoURL != "" }, func(cx *core.Scope, logo bool) core.Node {
+			if logo {
 				return a.pic(cx, func() string {
 					if t := get(); t != nil {
 						return t.LogoURL
@@ -98,11 +98,11 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 		tap("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 0, CornerRadius: size / 2, Overflow: core.Hidden}, "",
 			a.avatar(cx, author, size)),
 		tap("作者主页", func() { a.openUser(author()) }, fill.Merge(core.Style{Gap: 2}), "",
-			authorName(author, textSecondary),
+			authorName(cx, author, textSecondary),
 			core.Text{ContentFunc: meta, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
 		),
-		core.Dynamic(func(cx *core.Scope) core.Node {
-			if k := core.Untracked(cx, get).Kind; k != backend.PostText {
+		dynamicShape(cx, func() bool { return get().Kind != backend.PostText }, func(cx *core.Scope, badge bool) core.Node {
+			if badge {
 				return tonalPill(func() string { return get().Kind.Label() })
 			}
 			return core.Group{}
@@ -116,12 +116,12 @@ func (a *App) avatar(cx *core.Scope, get func() backend.Author, size core.Points
 		Children: []core.Node{a.pic(cx, func() string { return get().AvatarURL }, core.Cover, "", fillAbs)}}
 }
 
-func authorName(get func() backend.Author, size core.Points) core.Node {
+func authorName(cx *core.Scope, get func() backend.Author, size core.Points) core.Node {
 	return row(core.Style{Gap: 4, AlignItems: core.AlignCenter}, "",
 		core.Text{ContentFunc: func() string { return displayName(get().Name) }, MaxLines: 1, Class: "text-on-surface",
 			Style: func() core.Style { s := textStyle(size, 500); s.FlexShrink = 1; return s }()},
-		core.Dynamic(func(cx *core.Scope) core.Node {
-			if core.Untracked(cx, get).Verified {
+		dynamicShape(cx, func() bool { return get().Verified }, func(cx *core.Scope, verified bool) core.Node {
+			if verified {
 				return icon(&symbols.Verified, size, "text-primary")
 			}
 			return core.Group{}
@@ -226,7 +226,7 @@ func (a *App) feedMedia(cx *core.Scope, get func() backend.Feed, s feedShape, de
 		kids = append(kids, a.linkCard(cx, func() *backend.Link { return get().Link }, detail, open))
 	}
 	if s.vote {
-		kids = append(kids, voteCard(func() *backend.Vote { return get().Vote }, open))
+		kids = append(kids, voteCard(cx, func() *backend.Vote { return get().Vote }, open))
 	}
 	if s.fw {
 		kids = append(kids, a.forwardCard(cx, func() *backend.Forward { return get().Forward }, open))
@@ -362,9 +362,8 @@ func (a *App) videoCover(cx *core.Scope, get func() *backend.Video, detail bool,
 		core.View{Class: "bg-black/50", Style: core.Style{Position: core.Absolute, Width: core.Pt(56), Height: core.Pt(56), CornerRadius: 28,
 			Top: core.Pct(50), Left: core.Pct(50), Margin: core.Edges{Top: -28, Left: -28}, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter},
 			Children: []core.Node{icon(&symbols.PlayArrow, 32, "text-white")}},
-		core.Dynamic(func(cx *core.Scope) core.Node {
-			v := core.Untracked(cx, get)
-			if v == nil || v.Duration <= 0 {
+		dynamicShape(cx, func() bool { v := get(); return v != nil && v.Duration > 0 }, func(cx *core.Scope, timed bool) core.Node {
+			if !timed {
 				return core.Group{}
 			}
 			return core.Text{ContentFunc: func() string {
@@ -393,8 +392,8 @@ func formatDuration(d time.Duration) string {
 
 func (a *App) linkCard(cx *core.Scope, get func() *backend.Link, detail bool, card func()) core.Node {
 	kids := []core.Node{
-		core.Dynamic(func(cx *core.Scope) core.Node {
-			if l := core.Untracked(cx, get); l != nil && l.CoverURL != "" {
+		dynamicShape(cx, func() bool { l := get(); return l != nil && l.CoverURL != "" }, func(cx *core.Scope, cover bool) core.Node {
+			if cover {
 				return a.pic(cx, func() string {
 					if l := get(); l != nil {
 						return thumbURL(backend.Image{URL: l.CoverURL}, thumbSquare)
@@ -437,8 +436,16 @@ func (a *App) linkCard(cx *core.Scope, get func() *backend.Link, detail bool, ca
 	return tap("链接", onPress, style, "bg-surface-container-high", kids...)
 }
 
-func voteCard(get func() *backend.Vote, card func()) core.Node {
-	return core.Dynamic(func(cx *core.Scope) core.Node {
+func voteCard(cx *core.Scope, get func() *backend.Vote, card func()) core.Node {
+	// A card's row is reused for another post: the vote is made again when it
+	// is another one.
+	return dynamicShape(cx, func() string {
+		v := get()
+		if v == nil {
+			return ""
+		}
+		return fmt.Sprint(v.Title, v.Expired, v.Options)
+	}, func(cx *core.Scope, _ string) core.Node {
 		v := core.Untracked(cx, get)
 		if v == nil {
 			return core.Group{}
@@ -481,7 +488,13 @@ func progressBar(fraction float32) core.Node {
 }
 
 func (a *App) forwardCard(cx *core.Scope, get func() *backend.Forward, open func()) core.Node {
-	return core.Dynamic(func(cx *core.Scope) core.Node {
+	return dynamicShape(cx, func() int {
+		f := get()
+		if f == nil {
+			return -1
+		}
+		return len(f.Images)
+	}, func(cx *core.Scope, _ int) core.Node {
 		f := core.Untracked(cx, get)
 		if f == nil {
 			return core.Group{}

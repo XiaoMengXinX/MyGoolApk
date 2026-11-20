@@ -124,7 +124,7 @@ func (u *userPageState) header(cx *core.Scope) core.Node {
 	}
 	info := []core.Node{
 		row(core.Style{Gap: 8, AlignItems: core.AlignCenter}, "",
-			authorName(author, textTitle),
+			authorName(cx, author, textTitle),
 			core.Dynamic(func(cx *core.Scope) core.Node {
 				if p().Level <= 0 {
 					return core.Group{}
@@ -212,7 +212,7 @@ func (u *userPageState) toggleFollow() {
 func (a *App) personRow(cx *core.Scope, get func() backend.Author) core.Node {
 	return tap("用户", func() { a.openUser(get()) }, core.Style{Direction: core.Row, Height: core.Pt(72), Padding: core.Symmetric(0, 16), Gap: 16, AlignItems: core.AlignCenter}, "bg-background",
 		a.avatar(cx, get, 40),
-		column(fill, "", authorName(get, textBody)),
+		column(fill, "", authorName(cx, get, textBody)),
 		icon(&symbols.ChevronRight, 24, "text-on-surface-variant"),
 	)
 }

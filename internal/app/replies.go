@@ -38,9 +38,9 @@ func (d *detail) replyRow(cx *core.Scope, get func() backend.Reply) core.Node {
 			a.avatar(cx, author, 36)),
 		column(fill.Merge(core.Style{Gap: 6}), "",
 			row(core.Style{Gap: 8, AlignItems: core.AlignCenter}, "",
-				authorName(author, textSecondary),
-				core.Dynamic(func(cx *core.Scope) core.Node {
-					if !core.Untracked(cx, get).IsAuthor {
+				authorName(cx, author, textSecondary),
+				dynamicShape(cx, func() bool { return get().IsAuthor }, func(cx *core.Scope, owner bool) core.Node {
+					if !owner {
 						return core.Group{}
 					}
 					return tonalPill(func() string { return "楼主" })

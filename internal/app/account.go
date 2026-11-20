@@ -184,7 +184,7 @@ func (a *App) profileCard(cx *core.Scope) core.Node {
 			a.avatar(cx, author, 56),
 			column(fill.Merge(core.Style{Gap: 4}), "",
 				row(core.Style{Gap: 8, AlignItems: core.AlignCenter}, "",
-					authorName(author, textTitle),
+					authorName(cx, author, textTitle),
 					core.Dynamic(func(cx *core.Scope) core.Node {
 						if profile().Level <= 0 {
 							return core.Group{}
