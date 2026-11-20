@@ -18,7 +18,16 @@ func Root(newBackend func(dir string) (backend.Backend, error)) func(cx *core.Sc
 		if err != nil {
 			panic(err)
 		}
-		a := &App{backend: b, nav: base.NewNav(cx, route{}), images: newImageStore(filepath.Join(cx.CacheDir(), "img"), b.UserAgent())}
+		a := &App{
+			cx: cx, dir: cx.DataDir(), backend: b, nav: base.NewNav(cx, route{}),
+			images:  newImageStore(filepath.Join(cx.CacheDir(), "img"), b.UserAgent()),
+			seeds:   make(map[string]backend.Feed),
+			viewers: make(map[string]*viewer),
+			local:   loadLocalState(cx.DataDir()),
+			toasts:  ui.NewToaster(cx),
+		}
+		a.newAccountState(cx)
+		a.messages = a.newMessageCenter(cx)
 		return a.view(cx)
 	}
 }
@@ -27,10 +36,20 @@ type route struct{ kind, id string }
 
 // App owns the state the pages share.
 type App struct {
-	backend backend.Backend
-	images  *imageStore
-	nav     *base.Nav[route]
-	tab     *core.Signal[int]
+	cx           *core.Scope
+	dir          string
+	backend      backend.Backend
+	images       *imageStore
+	nav          *base.Nav[route]
+	tab          *core.Signal[int]
+	seeds        map[string]backend.Feed // posts a card shows, until the page loads the full post
+	local        localState
+	toasts       *ui.Toaster
+	account      accountState
+	messages     *messageCenter
+	viewers      map[string]*viewer
+	viewerSeq    int
+	loginOpening bool
 
 	home, digital, discovery *tabGroup
 }
@@ -52,11 +71,9 @@ func (a *App) view(cx *core.Scope) core.Node {
 		groupTab("发现", &symbols.Explore, func(cx *core.Scope) core.Node {
 			return column(fill, "bg-background", a.rootTopBar("发现"), a.discovery.view(cx, topics))
 		}),
-		groupTab("我的", &symbols.Person, func(cx *core.Scope) core.Node {
-			return core.Text{Content: "我的", Style: textStyle(textTitle, 500), Class: "text-on-surface p-4"}
-		}),
+		groupTab("我的", &symbols.Person, a.mePage),
 	}
-	return a.nav.Stack(core.Style{FlexGrow: 1}, func(cx *core.Scope, r route, _ func() int) base.NavPage {
+	stack := a.nav.Stack(core.Style{FlexGrow: 1}, func(cx *core.Scope, r route, _ func() int) base.NavPage {
 		if r.kind != "" {
 			return a.page(cx, r)
 		}
@@ -64,9 +81,29 @@ func (a *App) view(cx *core.Scope) core.Node {
 			ui.TabShell{Tabs: tabs, Selected: a.tab.Get, OnChange: a.tab.Set, Label: "酷安"},
 		}}
 	})
+	return core.Group{stack, ui.Toasts{Toaster: a.toasts, Placement: ui.ToastBottom, Inset: 72}}
 }
 
 // page builds the page of a route pushed over the tabs.
 func (a *App) page(cx *core.Scope, r route) base.NavPage {
-	return base.NavPage{Title: r.kind, Class: "bg-background", Children: []core.Node{core.Text{Content: r.kind + " " + r.id, Class: "text-on-surface p-4"}}}
+	switch r.kind {
+	case routeFeed:
+		return a.detailPage(cx, r.id)
+	case routeLogin:
+		return a.loginPage(cx)
+	case routeImages:
+		return a.viewerPage(cx, r.id)
+	case routeMessages:
+		return base.NavPage{Title: "消息", HeaderStyleFunc: a.headerStyle(cx), Class: "bg-background", Children: []core.Node{a.messagesPage(cx)}}
+	}
+	return base.NavPage{Title: r.kind, HeaderStyleFunc: a.headerStyle(cx), Class: "bg-background",
+		Children: []core.Node{core.Text{Content: r.kind + " " + r.id, Class: "text-on-surface p-4"}}}
+}
+
+// headerStyle colors the system header from the theme.
+func (a *App) headerStyle(cx *core.Scope) func() core.Style {
+	return func() core.Style {
+		p := cx.Palette()
+		return core.Style{Background: p.Background, Color: p.Text, TintColor: p.Text}
+	}
 }

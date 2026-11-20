@@ -202,6 +202,8 @@ type listSpec struct {
 	header core.Node
 	// padding below the last row.
 	bottom core.Points
+	// onRefresh runs on a pull to refresh; nil reloads the pager.
+	onRefresh func()
 }
 
 // pagerList shows a pager as a virtual list with its loading, empty, error
@@ -283,9 +285,16 @@ func pagerList[T any](cx *core.Scope, p *pager[T], spec listSpec, item func(cx *
 		},
 		OnLoadMore:        p.loadMore,
 		LoadMoreThreshold: 1.5,
-		OnRefresh:         func() { p.refreshing.Set(true); p.reload() },
-		Refreshing:        p.refreshing.Get,
-		Style:             fill,
+		OnRefresh: func() {
+			p.refreshing.Set(true)
+			if spec.onRefresh != nil {
+				spec.onRefresh()
+			} else {
+				p.reload()
+			}
+		},
+		Refreshing: p.refreshing.Get,
+		Style:      fill,
 	}
 }
 

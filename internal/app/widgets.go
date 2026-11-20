@@ -61,3 +61,121 @@ func textButtonOn(text string, fn func(), class string) core.Node {
 	return tap(text, fn, core.Style{Padding: core.Symmetric(8, 12), CornerRadius: 20, Overflow: core.Hidden}, "",
 		label(text, textSecondary, 500, class))
 }
+
+// listItem is a Material 3 one-line list item: a leading icon, a title and
+// a trailing node.
+func listItem(glyph *symbol, title string, trailing core.Node, fn func()) core.Node {
+	kids := []core.Node{icon(glyph, 24, "text-on-surface-variant"),
+		core.Text{Content: title, MaxLines: 1, Class: "text-on-surface", Style: fill.Merge(textStyle(textBody, 400))}}
+	if trailing != nil {
+		kids = append(kids, trailing)
+	}
+	return tap(title, fn, core.Style{Direction: core.Row, Height: core.Pt(56), Padding: core.Symmetric(0, 16), Gap: 16, AlignItems: core.AlignCenter}, "", kids...)
+}
+
+// badge is a small count in the error color.
+func badge(n func() int) core.Node {
+	return core.Dynamic(func(cx *core.Scope) core.Node {
+		if n() <= 0 {
+			return core.Group{}
+		}
+		return core.Text{ContentFunc: func() string { return formatCount(n()) }, Class: "bg-error text-on-error", Style: func() core.Style {
+			s := textStyle(textCaption, 500)
+			s.Padding, s.CornerRadius, s.MinWidth = core.Symmetric(0, 6), 8, core.Pt(16)
+			s.TextAlign = core.TextAlignCenter
+			return s
+		}()}
+	})
+}
+
+// toggleRow is a row with a Material 3 switch.
+func toggleRow(title string, on func() bool, set func(bool)) core.Node {
+	return row(core.Style{Height: core.Pt(56), Padding: core.Symmetric(0, 16), Gap: 16, AlignItems: core.AlignCenter}, "",
+		core.Text{Content: title, Class: "text-on-surface", Style: fill.Merge(textStyle(textBody, 400))},
+		ui.Switch{Checked: on, OnChange: set, Variant: ui.SwitchSystem, Label: title},
+	)
+}
+
+// simpleTabs are Material 3 primary tabs: equal-width labels, the selected
+// one in primary with an indicator as wide as its label, over a rule.
+func simpleTabs(selected *core.Signal[int], titles ...string) core.Node {
+	tabs := make([]core.Node, len(titles))
+	for i, title := range titles {
+		i := i
+		on := func() bool { return selected.Get() == i }
+		tabs[i] = core.View{
+			Role: core.RoleTab, Label: title,
+			Style:   fill.Merge(core.Style{Height: core.Pct(100), JustifyContent: core.JustifyEnd, AlignItems: core.AlignCenter}),
+			OnPress: func(core.PressEvent) { selected.Set(i) },
+			Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
+			Children: []core.Node{column(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
+				core.Text{Content: title, Style: textStyle(textSecondary, 500), Class: "text-on-surface-variant", ClassFunc: func() string {
+					if on() {
+						return "text-primary"
+					}
+					return "text-on-surface-variant"
+				}},
+				core.View{Class: "bg-primary", Style: core.Style{Height: core.Pt(3), CornerRadii: core.Corners{TopLeft: 3, TopRight: 3}},
+					StyleFunc: func() core.Style {
+						if on() {
+							return core.Style{Width: core.Pt(32)}
+						}
+						return core.Style{Width: core.Pt(0)}
+					}},
+			)},
+		}
+	}
+	return column(core.Style{FlexShrink: 0}, "bg-background",
+		row(core.Style{Height: core.Pt(48), Padding: core.Symmetric(0, 8)}, "", tabs...),
+		core.View{Style: core.Style{Height: core.Pt(1)}, Class: "bg-surface-container-highest"})
+}
+
+// filterChip is a Material 3 filter chip.
+func filterChip(name string, on func() bool, fn func()) core.Node {
+	return core.View{
+		Role: core.RoleButton, Label: name, OnPress: func(core.PressEvent) { fn() },
+		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
+		ClassFunc: func() string {
+			if on() {
+				return "bg-secondary-container"
+			}
+			return "border-outline-variant"
+		},
+		StyleFunc: func() core.Style {
+			if on() {
+				return core.Style{}
+			}
+			return core.Style{BorderWidth: 1}
+		},
+		Style: core.Style{Height: core.Pt(32), Padding: core.Symmetric(0, 12), CornerRadius: 8, AlignItems: core.AlignCenter,
+			JustifyContent: core.JustifyCenter, Overflow: core.Hidden},
+		Children: []core.Node{core.Text{Content: name, Style: textStyle(textSecondary, 500), ClassFunc: func() string {
+			if on() {
+				return "text-on-secondary-container"
+			}
+			return "text-on-surface-variant"
+		}}},
+	}
+}
+
+// filledButton is a Material 3 filled button, dimmed while enabled says no.
+func filledButton(text string, enabled func() bool, fn func()) core.Node {
+	return core.View{
+		Role: core.RoleButton, Label: text,
+		OnPress: func(core.PressEvent) {
+			if enabled() {
+				fn()
+			}
+		},
+		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
+		Class:   "bg-primary",
+		StyleFunc: func() core.Style {
+			if enabled() {
+				return core.Style{}
+			}
+			return core.Style{Opacity: core.Alpha(0.4)}
+		},
+		Style:    core.Style{Padding: core.Symmetric(10, 24), CornerRadius: 20, Overflow: core.Hidden, FlexShrink: 0},
+		Children: []core.Node{label(text, textSecondary, 500, "text-on-primary")},
+	}
+}

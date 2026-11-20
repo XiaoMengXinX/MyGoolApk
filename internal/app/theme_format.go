@@ -105,3 +105,6 @@ func thumbURL(im backend.Image, size string) string {
 	}
 	return im.URL + "." + size + ".jpg"
 }
+
+// formatTimeNow is formatTime relative to the present.
+func formatTimeNow(t time.Time) string { return formatTime(time.Now(), t) }

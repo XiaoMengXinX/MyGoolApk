@@ -11,9 +11,11 @@ import (
 
 // richOptions styles one rich paragraph.
 type richOptions struct {
-	size     core.Points
-	class    string // text color
-	maxLines int
+	size       core.Points
+	class      string // text color
+	maxLines   int
+	selectable bool
+	press      func() // runs on a press outside the links, which the text would otherwise take
 }
 
 // richText renders what get reads as one paragraph, falling back to the
@@ -24,9 +26,15 @@ func (a *App) richText(cx *core.Scope, get func() ([]backend.RichSpan, string), 
 	style := textStyle(o.size, 400)
 	style.LineHeight = lineHeight(o.size)
 	return core.Text{
-		Class:    o.class,
-		Style:    style,
-		MaxLines: o.maxLines,
+		Class:      o.class,
+		Style:      style,
+		MaxLines:   o.maxLines,
+		Selectable: selectable(o.selectable),
+		OnPress: func(core.PressEvent) {
+			if o.press != nil {
+				o.press()
+			}
+		},
 		SpansFunc: func() []core.Span {
 			spans, fallback := get()
 			if len(spans) == 0 {
@@ -124,4 +132,11 @@ func joinNonEmpty(parts []string, sep string) string {
 		}
 	}
 	return strings.Join(kept, sep)
+}
+
+func selectable(on bool) core.Selectable {
+	if on {
+		return core.SelectableOn
+	}
+	return core.SelectableAuto
 }

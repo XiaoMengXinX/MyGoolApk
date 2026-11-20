@@ -94,7 +94,7 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 		tap("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 0, CornerRadius: size / 2, Overflow: core.Hidden}, "",
 			a.avatar(cx, author, size)),
 		column(fill.Merge(core.Style{Gap: 2}), "",
-			authorName(cx, author, textSecondary),
+			authorName(author, textSecondary),
 			core.Text{ContentFunc: meta, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
 		),
 		core.Dynamic(func(cx *core.Scope) core.Node {
@@ -112,7 +112,7 @@ func (a *App) avatar(cx *core.Scope, get func() backend.Author, size core.Points
 		core.Style{Width: core.Pt(size), Height: core.Pt(size), CornerRadius: size / 2})
 }
 
-func authorName(cx *core.Scope, get func() backend.Author, size core.Points) core.Node {
+func authorName(get func() backend.Author, size core.Points) core.Node {
 	return row(core.Style{Gap: 4, AlignItems: core.AlignCenter}, "",
 		core.Text{ContentFunc: func() string { return displayName(get().Name) }, MaxLines: 1, Class: "text-on-surface",
 			Style: func() core.Style { s := textStyle(size, 500); s.FlexShrink = 1; return s }()},
@@ -165,11 +165,11 @@ func (a *App) feedBody(cx *core.Scope, get func() backend.Feed, s feedShape) cor
 			}
 			return column(core.Style{Padding: core.Symmetric(10, 12), CornerRadius: 8}, "bg-surface-container-high",
 				core.Text{ContentFunc: func() string { return get().Title }, MaxLines: 2, Class: "text-on-surface", Style: textStyle(textSecondary, 600)})
-		}), a.feedContent(cx, get, s, 5), a.feedMedia(cx, get, s))
+		}), a.feedContent(cx, get, s, 5), a.feedMedia(cx, get, s, false))
 	case backend.PostVideo, backend.PostVote:
-		return column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), a.feedMedia(cx, get, s))
+		return column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), a.feedMedia(cx, get, s, false))
 	}
-	return column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 6), a.feedMedia(cx, get, s))
+	return column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 6), a.feedMedia(cx, get, s, false))
 }
 
 func countLabel(n int, unit string) string {
@@ -182,7 +182,7 @@ func countLabel(n int, unit string) string {
 // feedContent shows the text of a post, cut to lines, with the link that
 // opens the rest.
 func (a *App) feedContent(cx *core.Scope, get func() backend.Feed, s feedShape, lines int) core.Node {
-	text := a.feedRich(cx, get, richOptions{size: textBody, class: "text-on-surface", maxLines: lines})
+	text := a.feedRich(cx, get, richOptions{size: textBody, class: "text-on-surface", maxLines: lines, press: func() { a.openFeed(get()) }})
 	if !s.more {
 		return text
 	}
@@ -205,31 +205,35 @@ func (a *App) coverImage(cx *core.Scope, get func() backend.Feed, s feedShape) c
 }
 
 // feedMedia shows a post's video, images, link, vote and repost.
-func (a *App) feedMedia(cx *core.Scope, get func() backend.Feed, s feedShape) core.Node {
+func (a *App) feedMedia(cx *core.Scope, get func() backend.Feed, s feedShape, detail bool) core.Node {
 	var kids []core.Node
 	switch {
 	case s.video:
-		kids = append(kids, a.videoCover(cx, func() *backend.Video { return get().Video }, false))
+		kids = append(kids, a.videoCover(cx, func() *backend.Video { return get().Video }, detail))
 	case s.images > 0:
-		kids = append(kids, a.imageSet(cx, func() []backend.Image { return get().Images }, s.images))
+		kids = append(kids, a.imageSet(cx, func() []backend.Image { return get().Images }, s.images, detail))
 	}
 	if s.link {
-		kids = append(kids, a.linkCard(cx, func() *backend.Link { return get().Link }, false))
+		kids = append(kids, a.linkCard(cx, func() *backend.Link { return get().Link }, detail))
 	}
 	if s.vote {
 		kids = append(kids, voteCard(func() *backend.Vote { return get().Vote }))
 	}
 	if s.fw {
-		kids = append(kids, a.forwardCard(cx, func() *backend.Forward { return get().Forward }))
+		var open func()
+		if !detail {
+			open = func() { a.openFeed(get()) }
+		}
+		kids = append(kids, a.forwardCard(cx, func() *backend.Forward { return get().Forward }, open))
 	}
 	return column(core.Style{Gap: 12}, "", kids...)
 }
 
 // imageSet lays out one image at its ratio, and several in a square grid
 // of two columns for two or four, three otherwise.
-func (a *App) imageSet(cx *core.Scope, get func() []backend.Image, n int) core.Node {
+func (a *App) imageSet(cx *core.Scope, get func() []backend.Image, n int, detail bool) core.Node {
 	if n == 1 {
-		return a.singleImage(cx, func() backend.Image { return get()[0] }, func() { a.openImages(get(), 0) })
+		return a.singleImage(cx, func() backend.Image { return get()[0] }, detail, func() { a.openImages(get(), 0) })
 	}
 	cols := 3
 	if n == 2 || n == 4 {
@@ -245,8 +249,8 @@ func (a *App) imageGrid(cx *core.Scope, get func() []backend.Image, n, cols int)
 	for i := 0; i < n; i++ {
 		i := i
 		cells = append(cells, tap(fmt.Sprintf("查看第 %d 张图片", i+1), func() { a.openImages(get(), i) },
-			core.Style{Width: core.Pct(100 / float32(cols)), AspectRatio: 1}, "",
-			core.View{Style: core.Style{Margin: core.All(gap / 2), Width: core.Pct(100), Height: core.Pct(100), CornerRadius: 8, Overflow: core.Hidden}, Children: []core.Node{
+			core.Style{Width: core.Pct(100 / float32(cols)), AspectRatio: 1, Padding: core.All(gap / 2)}, "",
+			core.View{Style: core.Style{Width: core.Pct(100), Height: core.Pct(100), CornerRadius: 8, Overflow: core.Hidden}, Children: []core.Node{
 				a.pic(cx, func() string {
 					if im := get(); i < len(im) {
 						return thumbURL(im[i], thumbSquare)
@@ -268,7 +272,7 @@ const longImageRatio = 9.0 / 22
 // card), a square or a portrait up to 3:2 two thirds wide, a taller portrait
 // one third wide up to 22:9 tall, and a taller one whole and centered in a
 // third by 22:9 frame, marked 长图.
-func (a *App) singleImage(cx *core.Scope, get func() backend.Image, open func()) core.Node {
+func (a *App) singleImage(cx *core.Scope, get func() backend.Image, detail bool, open func()) core.Node {
 	frame := func() (width, ratio float32) {
 		r := mediaRatio(get(), 4.0/3, 0, 1e6)
 		ratio = r
@@ -289,7 +293,7 @@ func (a *App) singleImage(cx *core.Scope, get func() backend.Image, open func())
 			w, r := frame()
 			return core.Style{Width: core.Pct(w), AspectRatio: r, Direction: core.Row, JustifyContent: core.JustifyCenter}
 		},
-		Children: []core.Node{a.pictureButton(cx, get, thumbSmall, open)},
+		Children: []core.Node{a.pictureButton(cx, get, pictureSize(detail), open)},
 	})
 }
 
@@ -441,7 +445,7 @@ func progressBar(fraction float32) core.Node {
 		Children: []core.Node{core.View{Class: "bg-primary", Style: core.Style{Height: core.Pct(100), Width: core.Pct(fraction * 100)}}}}
 }
 
-func (a *App) forwardCard(cx *core.Scope, get func() *backend.Forward) core.Node {
+func (a *App) forwardCard(cx *core.Scope, get func() *backend.Forward, open func()) core.Node {
 	return core.Dynamic(func(cx *core.Scope) core.Node {
 		f := core.Untracked(cx, get)
 		if f == nil {
@@ -456,7 +460,7 @@ func (a *App) forwardCard(cx *core.Scope, get func() *backend.Forward) core.Node
 		kids := []core.Node{
 			tap("作者主页", func() { a.openUser(fw().Author) }, core.Style{}, "",
 				core.Text{ContentFunc: func() string { return "@" + displayName(fw().Author.Name) }, MaxLines: 1, Class: "text-primary", Style: textStyle(textSecondary, 500)}),
-			a.richText(cx, func() ([]backend.RichSpan, string) { f := fw(); return f.Rich, f.Content }, richOptions{size: textSecondary, class: "text-on-surface", maxLines: 4}),
+			a.richText(cx, func() ([]backend.RichSpan, string) { f := fw(); return f.Rich, f.Content }, richOptions{size: textSecondary, class: "text-on-surface", maxLines: 4, press: open}),
 		}
 		if n := len(f.Images); n > 0 {
 			kids = append(kids, a.imageGrid(cx, func() []backend.Image { return fw().Images }, n, 3))
@@ -487,4 +491,12 @@ func statCount(glyph *symbol, class string, n func() int) core.Node {
 		icon(glyph, 18, ""),
 		core.Text{ContentFunc: func() string { return formatCount(n()) }, Style: textStyle(textCaption, 400)},
 	)
+}
+
+// pictureSize is the variant of a picture shown in a list or on a post page.
+func pictureSize(detail bool) string {
+	if detail {
+		return thumbMedium
+	}
+	return thumbSmall
 }

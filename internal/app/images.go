@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -135,8 +136,10 @@ func (a *App) pic(cx *core.Scope, url func() string, fit core.ResizeMode, class 
 		go func() {
 			p, err := a.images.fetch(u)
 			if err != nil {
+				log.Printf("image: %v", err)
 				return
 			}
+			log.Printf("image ok: %s -> %s", u, p)
 			cx.Post(func() {
 				if url() == u {
 					src.Set(p)
@@ -148,6 +151,7 @@ func (a *App) pic(cx *core.Scope, url func() string, fit core.ResizeMode, class 
 		Class:      class,
 		Style:      style,
 		ResizeMode: fit,
+		OnError:    func(err error) { log.Printf("image view: %v", err) },
 		SourceFunc: func() core.ImageSource { return core.Src(src.Get()) },
 	}
 }
