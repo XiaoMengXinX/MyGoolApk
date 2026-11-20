@@ -109,7 +109,7 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 // avatar is a user's picture in a circle, or a gray disc without one.
 func (a *App) avatar(cx *core.Scope, get func() backend.Author, size core.Points) core.Node {
 	return core.View{Class: "bg-surface-container-highest", Style: core.Style{Width: core.Pt(size), Height: core.Pt(size), CornerRadius: size / 2, Overflow: core.Hidden, FlexShrink: 0},
-		Children: []core.Node{a.pic(cx, func() string { return get().AvatarURL }, core.Cover, "", core.Style{Width: core.Pct(100), Height: core.Pct(100)})}}
+		Children: []core.Node{a.pic(cx, func() string { return get().AvatarURL }, core.Cover, "", fillAbs)}}
 }
 
 func authorName(get func() backend.Author, size core.Points) core.Node {
@@ -250,13 +250,13 @@ func (a *App) imageGrid(cx *core.Scope, get func() []backend.Image, n, cols int)
 		i := i
 		cells = append(cells, tap(fmt.Sprintf("查看第 %d 张图片", i+1), func() { a.openImages(get(), i) },
 			core.Style{Width: core.Pct(100 / float32(cols)), AspectRatio: 1, Padding: core.All(gap / 2)}, "",
-			core.View{Style: core.Style{Width: core.Pct(100), Height: core.Pct(100), CornerRadius: 8, Overflow: core.Hidden}, Children: []core.Node{
+			core.View{Style: insetAbs(gap / 2).Merge(core.Style{CornerRadius: 8, Overflow: core.Hidden}), Children: []core.Node{
 				a.pic(cx, func() string {
 					if im := get(); i < len(im) {
 						return thumbURL(im[i], thumbSquare)
 					}
 					return ""
-				}, core.Cover, "bg-surface-container-highest", core.Style{Width: core.Pct(100), Height: core.Pct(100)}),
+				}, core.Cover, "bg-surface-container-highest", fillAbs),
 			}}))
 	}
 	return core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, Margin: core.All(-gap / 2)}, Children: cells}
@@ -302,20 +302,34 @@ func (a *App) singleImage(cx *core.Scope, get func() backend.Image, detail bool,
 // height, and is marked 长图.
 func (a *App) pictureButton(cx *core.Scope, get func() backend.Image, size string, open func()) core.Node {
 	ratio := func() float32 { return mediaRatio(get(), 4.0/3, 0, 1e6) }
-	return tap("查看图片", open, core.Style{Height: core.Pct(100), CornerRadius: 12, Overflow: core.Hidden}, "bg-surface-container-highest",
-		a.pic(cx, func() string { return thumbURL(get(), size) }, core.Cover, "", core.Style{Width: core.Pct(100), Height: core.Pct(100)}),
-		core.Dynamic(func(cx *core.Scope) core.Node {
-			if ratio() >= longImageRatio {
-				return core.Group{}
+	return core.View{
+		Role: core.RoleButton, Label: "查看图片", OnPress: func(core.PressEvent) { open() },
+		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
+		Class:   "bg-surface-container-highest",
+		Style:   core.Style{CornerRadius: 12, Overflow: core.Hidden},
+		StyleFunc: func() core.Style {
+			s := fillAbs
+			if r := ratio(); r < longImageRatio {
+				side := core.Pct((1 - r/longImageRatio) * 50)
+				s.Left, s.Right = side, side
 			}
-			return core.Text{Content: "长图", Class: "bg-scrim text-white", Style: func() core.Style {
-				s := textStyle(textCaption, 400)
-				s.Position, s.Right, s.Bottom = core.Absolute, core.Pt(6), core.Pt(6)
-				s.Padding, s.CornerRadius = core.Symmetric(2, 8), 8
-				return s
-			}()}
-		}),
-	)
+			return s
+		},
+		Children: []core.Node{
+			a.pic(cx, func() string { return thumbURL(get(), size) }, core.Cover, "", fillAbs),
+			core.Dynamic(func(cx *core.Scope) core.Node {
+				if ratio() >= longImageRatio {
+					return core.Group{}
+				}
+				return core.Text{Content: "长图", Class: "bg-black/60 text-white", Style: func() core.Style {
+					s := textStyle(textCaption, 400)
+					s.Position, s.Right, s.Bottom = core.Absolute, core.Pt(6), core.Pt(6)
+					s.Padding, s.CornerRadius = core.Symmetric(2, 8), 8
+					return s
+				}()}
+			}),
+		},
+	}
 }
 
 // videoCover shows a video's cover with a play mark and its length. The
@@ -333,8 +347,8 @@ func (a *App) videoCover(cx *core.Scope, get func() *backend.Video, open bool) c
 		}
 	}
 	return tap("播放视频", onPress, core.Style{Width: core.Pct(100), AspectRatio: 16.0 / 9, CornerRadius: 12, Overflow: core.Hidden}, "bg-surface-container-highest",
-		a.pic(cx, cover, core.Cover, "", core.Style{Width: core.Pct(100), Height: core.Pct(100), Position: core.Absolute}),
-		core.View{Class: "bg-scrim/50", Style: core.Style{Position: core.Absolute, Width: core.Pt(56), Height: core.Pt(56), CornerRadius: 28,
+		a.pic(cx, cover, core.Cover, "", fillAbs),
+		core.View{Class: "bg-black/50", Style: core.Style{Position: core.Absolute, Width: core.Pt(56), Height: core.Pt(56), CornerRadius: 28,
 			Top: core.Pct(50), Left: core.Pct(50), Margin: core.Edges{Top: -28, Left: -28}, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter},
 			Children: []core.Node{icon(&symbols.PlayArrow, 32, "text-white")}},
 		core.Dynamic(func(cx *core.Scope) core.Node {
@@ -347,7 +361,7 @@ func (a *App) videoCover(cx *core.Scope, get func() *backend.Video, open bool) c
 					return formatDuration(v.Duration)
 				}
 				return ""
-			}, Class: "bg-scrim/60 text-white", Style: func() core.Style {
+			}, Class: "bg-black/60 text-white", Style: func() core.Style {
 				s := textStyle(textCaption, 400)
 				s.Position, s.Right, s.Bottom = core.Absolute, core.Pt(8), core.Pt(8)
 				s.Padding, s.CornerRadius = core.Symmetric(2, 8), 8

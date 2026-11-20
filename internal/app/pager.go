@@ -245,6 +245,7 @@ func pagerList[T any](cx *core.Scope, p *pager[T], spec listSpec, item func(cx *
 	}
 	return core.List{
 		Ref:           &p.list,
+		TestID:        "list",
 		Count:         count,
 		EstimatedSize: 220,
 		Header:        core.Group(header),

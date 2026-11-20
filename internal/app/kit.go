@@ -38,3 +38,13 @@ var fill = core.Style{FlexGrow: 1, FlexShrink: 1, FlexBasis: core.Pt(0), MinHeig
 
 // spacer pushes its siblings apart.
 var spacer core.Node = core.View{Style: core.Style{FlexGrow: 1}}
+
+// fillAbs fills the padding box of its parent whatever size the parent has
+// got from, which a percentage of an aspect-ratio box does not always: a
+// picture sized so came out 0 by 0 in some rows.
+var fillAbs = core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0)}
+
+// insetAbs is fillAbs inset by d on every side.
+func insetAbs(d core.Points) core.Style {
+	return core.Style{Position: core.Absolute, Top: core.Pt(d), Left: core.Pt(d), Right: core.Pt(d), Bottom: core.Pt(d)}
+}

@@ -91,8 +91,8 @@ func (a *App) viewerPage(cx *core.Scope, id string) base.NavPage {
 							saving.Set(true)
 						},
 						Children: []core.Node{
-							a.picOf(cx, thumbURL(im, thumbSmall), core.Contain, "", core.Style{Position: core.Absolute, Width: core.Pct(100), Height: core.Pct(100)}),
-							a.picOf(cx, im.URL, core.Contain, "", core.Style{Position: core.Absolute, Width: core.Pct(100), Height: core.Pct(100)}),
+							a.picOf(cx, thumbURL(im, thumbSmall), core.Contain, "", fillAbs),
+							a.picOf(cx, im.URL, core.Contain, "", fillAbs),
 						},
 					}},
 				}

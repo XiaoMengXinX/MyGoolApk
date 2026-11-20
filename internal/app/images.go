@@ -139,7 +139,6 @@ func (a *App) pic(cx *core.Scope, url func() string, fit core.ResizeMode, class 
 				log.Printf("image: %v", err)
 				return
 			}
-			log.Printf("image ok: %s -> %s", u, p)
 			cx.Post(func() {
 				if url() == u {
 					src.Set(p)
@@ -151,8 +150,10 @@ func (a *App) pic(cx *core.Scope, url func() string, fit core.ResizeMode, class 
 		Class:      class,
 		Style:      style,
 		ResizeMode: fit,
-		OnError:    func(err error) { log.Printf("image view: %v", err) },
-		SourceFunc: func() core.ImageSource { return core.Src(src.Get()) },
+		// A picture that is already on disk should not fade in: Android fades over 300 ms
+		// by default, and a view that is rebound mid-fade can be left transparent.
+		FadeDuration: time.Millisecond,
+		SourceFunc:   func() core.ImageSource { return core.Src(src.Get()) },
 	}
 }
 

@@ -119,7 +119,7 @@ func (u *userPageState) header(cx *core.Scope) core.Node {
 				return thumbURL(backend.Image{URL: c}, thumbMedium)
 			}
 			return ""
-		}, core.Cover, "", core.Style{Width: core.Pct(100), Height: core.Pct(100)})}}
+		}, core.Cover, "", fillAbs)}}
 	stat := func(i int, n func() int, name string) core.Node {
 		return tap(name, func() { u.tab.Set(i) }, core.Style{Direction: core.Row, Gap: 4, AlignItems: core.AlignBaseline}, "",
 			core.Text{ContentFunc: func() string { return formatCount(n()) }, Class: "text-on-surface", Style: textStyle(textBody, 600)},
