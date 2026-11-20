@@ -242,9 +242,9 @@ func (d *detail) actionBar(cx *core.Scope) core.Node {
 			label("说点什么…", textSecondary, 400, "text-on-surface-variant")),
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			if likes.Get() {
-				return barAction(&symbols.Favorite, "text-primary", func() string { return formatCount(feed().Stats.Likes) }, "赞", d.toggleLike)
+				return barAction(&symbols.Favorite, "text-primary", func() string { return formatCount(feed().Stats.Likes) }, "取消点赞", d.toggleLike)
 			}
-			return barAction(&symbols.FavoriteOutline, "text-on-surface-variant", func() string { return formatCount(feed().Stats.Likes) }, "赞", d.toggleLike)
+			return barAction(&symbols.FavoriteOutline, "text-on-surface-variant", func() string { return formatCount(feed().Stats.Likes) }, "点赞", d.toggleLike)
 		}),
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			if marked.Get() {

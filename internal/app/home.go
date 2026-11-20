@@ -30,8 +30,7 @@ func (a *App) homePage(cx *core.Scope) core.Node {
 func (a *App) homeTopBar(cx *core.Scope) core.Node {
 	return topBar(
 		tap("账号", func() { a.tab.Set(3) }, core.Style{Width: core.Pt(40), Height: core.Pt(40), CornerRadius: 20, AlignItems: core.AlignCenter,
-			JustifyContent: core.JustifyCenter, FlexShrink: 0, Overflow: core.Hidden}, "bg-surface-container-highest",
-			icon(&symbols.Person, 24, "text-on-surface-variant")),
+			JustifyContent: core.JustifyCenter, FlexShrink: 0, Overflow: core.Hidden}, "", a.accountAvatar(cx, 32)),
 		tap("搜索", a.openSearch, fill.Merge(core.Style{Direction: core.Row, Height: core.Pt(48), CornerRadius: 24, Padding: core.Symmetric(0, 16),
 			Gap: 12, AlignItems: core.AlignCenter, Overflow: core.Hidden}), "bg-surface-container-high",
 			icon(&symbols.Search, 24, "text-on-surface-variant"),

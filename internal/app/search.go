@@ -63,7 +63,7 @@ func (a *App) searchPage(cx *core.Scope) base.NavPage {
 	}
 	bar := topBar(
 		iconAction(&symbols.Back, "返回", func() { a.nav.Pop(1) }),
-		row(fill.Merge(core.Style{Height: core.Pt(48), Padding: core.Edges{Right: 4, Left: 20}, CornerRadius: 24, AlignItems: core.AlignCenter}), "bg-surface-container-high",
+		row(fill.Merge(core.Style{Height: core.Pt(48), Padding: core.Edges{Right: 4, Left: 20}, Margin: core.Edges{Right: 12}, CornerRadius: 24, AlignItems: core.AlignCenter}), "bg-surface-container-high",
 			field,
 			core.Dynamic(func(cx *core.Scope) core.Node {
 				if s.input.Get() == "" {

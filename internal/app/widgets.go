@@ -92,7 +92,7 @@ func badge(n func() int) core.Node {
 func toggleRow(title string, on func() bool, set func(bool)) core.Node {
 	return row(core.Style{Height: core.Pt(56), Padding: core.Symmetric(0, 16), Gap: 16, AlignItems: core.AlignCenter}, "",
 		core.Text{Content: title, Class: "text-on-surface", Style: fill.Merge(textStyle(textBody, 400))},
-		ui.Switch{Checked: on, OnChange: set, Variant: ui.SwitchSystem, Label: title},
+		ui.Switch{Checked: on, OnChange: set, Label: title},
 	)
 }
 

@@ -69,7 +69,7 @@ func (a *App) composePage(cx *core.Scope) base.NavPage {
 				}),
 				spacer,
 				core.Text{Content: "仅自己可见", Class: "text-on-surface", Style: textStyle(textSecondary, 400)},
-				ui.Switch{Checked: private.Get, OnChange: private.Set, Variant: ui.SwitchSystem, Label: "仅自己可见", Disabled: publishing.Get},
+				ui.Switch{Checked: private.Get, OnChange: private.Set, Label: "仅自己可见", Disabled: publishing.Get},
 			),
 		)},
 	}

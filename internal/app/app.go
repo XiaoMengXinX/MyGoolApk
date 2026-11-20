@@ -30,6 +30,11 @@ func Root(newBackend func(dir string) (backend.Backend, error)) func(cx *core.Sc
 		a.history = core.NewSignalFunc(cx, a.local.History, nil)
 		a.topics = a.newTopicHome(cx)
 		a.applyAppearance()
+		cx.OnOpenLinks(func(links []string) {
+			for _, l := range links {
+				a.openLink(l)
+			}
+		})
 		a.newAccountState(cx)
 		a.messages = a.newMessageCenter(cx)
 		return a.view(cx)
