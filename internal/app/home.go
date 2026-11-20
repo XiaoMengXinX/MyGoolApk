@@ -23,7 +23,7 @@ func iconAction(glyph *symbol, name string, fn func()) core.Node {
 func (a *App) homePage(cx *core.Scope) core.Node {
 	return column(fill, "bg-background",
 		a.homeTopBar(cx),
-		a.home.view(cx, func(cx *core.Scope) core.Node { return statusBlock("话题", "", "", nil) }),
+		a.home.view(cx, a.topics.view),
 	)
 }
 

@@ -26,6 +26,10 @@ func Root(newBackend func(dir string) (backend.Backend, error)) func(cx *core.Sc
 			local:   loadLocalState(cx.DataDir()),
 			toasts:  ui.NewToaster(cx),
 		}
+		a.searchHistory = core.NewSignalFunc(cx, []string(nil), nil)
+		a.history = core.NewSignalFunc(cx, a.local.History, nil)
+		a.topics = a.newTopicHome(cx)
+		a.applyAppearance()
 		a.newAccountState(cx)
 		a.messages = a.newMessageCenter(cx)
 		return a.view(cx)
@@ -36,20 +40,23 @@ type route struct{ kind, id string }
 
 // App owns the state the pages share.
 type App struct {
-	cx           *core.Scope
-	dir          string
-	backend      backend.Backend
-	images       *imageStore
-	nav          *base.Nav[route]
-	tab          *core.Signal[int]
-	seeds        map[string]backend.Feed // posts a card shows, until the page loads the full post
-	local        localState
-	toasts       *ui.Toaster
-	account      accountState
-	messages     *messageCenter
-	viewers      map[string]*viewer
-	viewerSeq    int
-	loginOpening bool
+	cx            *core.Scope
+	dir           string
+	backend       backend.Backend
+	images        *imageStore
+	nav           *base.Nav[route]
+	tab           *core.Signal[int]
+	seeds         map[string]backend.Feed // posts a card shows, until the page loads the full post
+	local         localState
+	toasts        *ui.Toaster
+	account       accountState
+	messages      *messageCenter
+	viewers       map[string]*viewer
+	searchHistory *core.Signal[[]string]
+	history       *core.Signal[[]historyEntry]
+	topics        *topicHome
+	viewerSeq     int
+	loginOpening  bool
 
 	home, digital, discovery *tabGroup
 }
@@ -62,7 +69,7 @@ func (a *App) view(cx *core.Scope) core.Node {
 	groupTab := func(title string, glyph *symbol, content func(cx *core.Scope) core.Node) ui.ShellTab {
 		return ui.ShellTab{Text: title, Icon: glyph.SVG, Content: content}
 	}
-	topics := func(cx *core.Scope) core.Node { return statusBlock("话题", "", "", nil) }
+	topics := a.topics.view
 	tabs := []ui.ShellTab{
 		groupTab("首页", &symbols.Home, a.homePage),
 		groupTab("数码", &symbols.Devices, func(cx *core.Scope) core.Node {
@@ -91,6 +98,22 @@ func (a *App) page(cx *core.Scope, r route) base.NavPage {
 		return a.detailPage(cx, r.id)
 	case routeLogin:
 		return a.loginPage(cx)
+	case routeUser:
+		return a.userPage(cx, r.id)
+	case routeTopic:
+		return a.topicPage(cx, r.id)
+	case routeList:
+		return a.listPage(cx, r.id)
+	case routeCompose:
+		return a.composePage(cx)
+	case routeHistory:
+		return a.historyPage(cx)
+	case routeSettings:
+		return a.settingsPage(cx)
+	case routeDevice:
+		return a.devicePage(cx)
+	case routeSearch:
+		return a.searchPage(cx)
 	case routeImages:
 		return a.viewerPage(cx, r.id)
 	case routeMessages:

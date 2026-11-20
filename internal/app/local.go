@@ -81,5 +81,6 @@ func (a *App) recordHistory(feed backend.Feed) {
 		}
 	}
 	a.local.History = history
+	a.history.Set(history)
 	a.saveLocalState()
 }
