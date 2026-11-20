@@ -31,6 +31,7 @@ func (a *App) richText(cx *core.Scope, get func() ([]backend.RichSpan, string), 
 }
 
 func (a *App) richTextNode(cx *core.Scope, get func() ([]backend.RichSpan, string), o richOptions, style core.Style) core.Node {
+	emoji := map[string][]*core.Image{}
 	return core.Text{
 		Class:      o.class,
 		Style:      style,
@@ -42,6 +43,7 @@ func (a *App) richTextNode(cx *core.Scope, get func() ([]backend.RichSpan, strin
 			}
 		},
 		SpansFunc: func() []core.Span {
+			used := map[string]int{}
 			spans, fallback := get()
 			if len(spans) == 0 {
 				return []core.Span{{Content: fallback}}
@@ -52,11 +54,20 @@ func (a *App) richTextNode(cx *core.Scope, get func() ([]backend.RichSpan, strin
 				switch sp.Kind {
 				case backend.SpanEmoji:
 					if sp.Name != "" {
-						size := o.size * 1.3
-						out = append(out, core.Span{Content: sp.Text, Attachment: core.Image{
-							Source: core.ImageSource{URI: "asset:emoji/" + sp.Name + ".png"},
-							Style:  core.Style{Width: core.Pt(size), Height: core.Pt(size)},
-						}})
+						size := o.size * 1.25
+						// The picture is the same view each time the spans are made
+						// again, as it is the same pointer: new ones are laid out in
+						// the corner of the text until its next layout.
+						n := used[sp.Name]
+						used[sp.Name]++
+						if n >= len(emoji[sp.Name]) {
+							emoji[sp.Name] = append(emoji[sp.Name], &core.Image{
+								Source: core.ImageSource{URI: "asset:emoji/" + sp.Name + ".png"},
+								Style:  core.Style{Width: core.Pt(size), Height: core.Pt(size)},
+							})
+						}
+						out = append(out, core.Span{Content: sp.Text, Attachment: emoji[sp.Name][n],
+							Style: core.Style{VerticalAlign: core.VerticalAlignMiddle}})
 						continue
 					}
 					out = append(out, core.Span{Content: sp.Text})

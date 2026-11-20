@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/nsgo-dev/nsgo/core"
-	"github.com/nsgo-dev/nsgo/ui"
 
 	"app/internal/backend"
 )
@@ -265,11 +264,11 @@ func (c *composer) sheet(d *detail) core.Node {
 		}
 		return "评论"
 	}
-	return ui.Sheet{Open: c.isOpen.Get, OnClose: func() {
+	return d.a.bottomSheet(c.isOpen.Get, func() {
 		if !c.submitting.GetUntracked() {
 			c.isOpen.Set(false)
 		}
-	}, Children: []core.Node{
+	},
 		core.Text{ContentFunc: title, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 500)},
 		core.Input{
 			Multiline: true, AutoFocus: true, Placeholder: "说点什么…", Label: "评论",
@@ -284,7 +283,7 @@ func (c *composer) sheet(d *detail) core.Node {
 		row(core.Style{Gap: 8, AlignItems: core.AlignCenter}, "",
 			core.Text{ContentFunc: c.err.Get, MaxLines: 2, Class: "text-error", Style: fill.Merge(textStyle(textCaption, 400))},
 			filledButton("发送", func() bool { return !c.submitting.Get() && strings.TrimSpace(c.text.Get()) != "" }, d.submitReply)),
-	}}
+	)
 }
 
 func (d *detail) submitReply() {
@@ -346,14 +345,13 @@ func (f *favorites) open() {
 }
 
 func (f *favorites) sheet() core.Node {
-	return ui.Sheet{Open: f.isOpen.Get, OnClose: func() { f.isOpen.Set(false) }, Children: []core.Node{
+	return f.d.a.bottomSheet(f.isOpen.Get, func() { f.isOpen.Set(false) },
 		core.Show{When: f.isOpen.Get, Then: func(cx *core.Scope) core.Node {
 			return column(core.Style{Height: core.Pt(360)}, "",
 				label("收藏到", textBody, 500, "text-on-surface"),
 				pagerList(cx, f.folders, listSpec{empty: "暂无收藏夹", emptyHint: "在酷安中创建收藏夹后可在这里选择。"},
 					func(cx *core.Scope, get func() backend.Collection, r core.ListRow) core.Node { return f.folderRow(get) }))
-		}},
-	}}
+		}})
 }
 
 func (f *favorites) folderRow(get func() backend.Collection) core.Node {

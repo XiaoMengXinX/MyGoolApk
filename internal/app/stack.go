@@ -93,8 +93,12 @@ func (s *pageStack) view(shell core.Node, page func(cx *core.Scope, r route) cor
 				return core.View{Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0)},
 					Children: []core.Node{shell}}
 			}
+			class := "bg-background"
+			if e.route.kind == routeImages {
+				class = "" // the viewer draws its own black, which fades as a picture is dragged away
+			}
 			return core.View{
-				Class: "bg-background",
+				Class: class,
 				Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0), Transition: pageTransition},
 				StyleFunc: func() core.Style {
 					if e.shown.Get() && !e.leaving.Get() {

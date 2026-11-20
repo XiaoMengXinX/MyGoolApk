@@ -53,7 +53,9 @@ func (a *App) searchPage(cx *core.Scope) core.Node {
 	}, func(u backend.Author) string { return u.ID })
 	s.loadHot()
 
-	field := core.Input{
+	var field core.Ref
+	input := core.Input{
+		Ref:   &field,
 		Value: s.input.Get, Placeholder: "搜索动态和用户", Label: "搜索", AutoFocus: true,
 		ReturnKeyType: core.ReturnKeySearch,
 		OnChange:      s.typed, OnSubmit: func(q string) { s.submit(q) },
@@ -61,9 +63,12 @@ func (a *App) searchPage(cx *core.Scope) core.Node {
 		Style: func() core.Style { st := textStyle(textBody, 400); st.FlexGrow, st.MinWidth = 1, core.Pt(0); return st }(),
 	}
 	bar := topBar(
-		iconAction(&symbols.Back, "返回", func() { a.nav.Pop() }),
+		iconAction(&symbols.Back, "返回", func() {
+			field.Blur()
+			a.nav.Pop()
+		}),
 		row(fill.Merge(core.Style{Height: core.Pt(48), Padding: core.Edges{Right: 4, Left: 20}, Margin: core.Edges{Right: 12}, CornerRadius: 24, AlignItems: core.AlignCenter}), "bg-surface-container-high",
-			field,
+			input,
 			core.Dynamic(func(cx *core.Scope) core.Node {
 				if s.input.Get() == "" {
 					return core.Group{}

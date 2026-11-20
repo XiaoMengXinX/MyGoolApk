@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/nsgo-dev/nsgo/core"
-	"github.com/nsgo-dev/nsgo/ui"
 
 	"app/internal/backend"
 )
@@ -65,7 +64,11 @@ func (a *App) composePage(cx *core.Scope) core.Node {
 			}),
 			spacer,
 			core.Text{Content: "仅自己可见", Class: "text-on-surface", Style: textStyle(textSecondary, 400)},
-			ui.Switch{Checked: private.Get, OnChange: private.Set, Label: "仅自己可见", Disabled: publishing.Get},
+			m3Switch(private.Get, func(b bool) {
+				if !publishing.GetUntracked() {
+					private.Set(b)
+				}
+			}, "仅自己可见"),
 		),
 	)
 }

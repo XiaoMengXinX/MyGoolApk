@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
-	"github.com/nsgo-dev/nsgo/ui"
 
 	"app/internal/backend"
 )
@@ -38,8 +37,13 @@ func (a *App) openImages(images []backend.Image, index int) {
 	a.push(routeImages, id)
 }
 
+// dismissDistance is how far a picture is dragged down before letting go
+// closes the viewer.
+const dismissDistance core.Points = 120
+
 // viewerPage is the full-screen picture viewer: black, a page per picture
-// that pinches to zoom, a tap to close and a long press that offers to save.
+// that pinches and double taps to zoom, a tap to close, a drag down to close
+// and a long press that offers to save.
 func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
 	v := a.viewers[id]
 	cx.Cleanup(func() { delete(a.viewers, id) })
@@ -48,6 +52,10 @@ func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
 	pos := core.NewSignal(cx, float32(v.index))
 	saving := core.NewSignal(cx, false)
 	held := core.NewSignal(cx, 0)
+	// zoomed says a picture is magnified, whose drags pan it instead.
+	zoomed := core.NewSignal(cx, false)
+	dragY := core.NewSignal(cx, core.Points(0))
+	dragging := core.NewSignal(cx, false)
 	var pager core.Ref
 	opened := false
 
@@ -58,28 +66,29 @@ func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
 		pages[i] = core.Show{
 			When: func() bool { return width.Get() > 0 && abs32(pos.Get()-float32(i)) < 1.6 },
 			Then: func(cx *core.Scope) core.Node {
-				zoomed := core.NewSignal(cx, false)
+				var zoom core.Ref
+				scale := float32(1)
 				var closing func() bool
 				// A single tap closes the viewer once the double tap's window has
-				// passed; a second tap zooms instead.
+				// passed; a second tap zooms in on its point, or out again.
 				press := func(e core.PressEvent) {
 					if closing != nil {
 						closing()
 						closing = nil
-					}
-					if e.Clicks >= 2 {
-						zoomed.Set(!zoomed.GetUntracked())
+						if scale > 1.05 {
+							zoom.ZoomTo(1, nil, true)
+						} else {
+							zoom.ZoomTo(2.5, &e.Position, true)
+						}
 						return
 					}
-					closing = cx.AfterFunc(tapWindow, func() { a.nav.Pop() })
+					closing = cx.AfterFunc(tapWindow, func() { closing = nil; a.nav.Pop() })
 				}
 				return core.Scroll{
-					MinZoomScale: 1, MaxZoomScale: 4, CenterContent: true, HideIndicator: true,
-					ZoomScaleFunc: func() float32 {
-						if zoomed.Get() {
-							return 2.5
-						}
-						return 1
+					Ref: &zoom, MinZoomScale: 1, MaxZoomScale: 4, CenterContent: true, HideIndicator: true,
+					OnScroll: func(e core.ScrollEvent) {
+						scale = e.ZoomScale
+						zoomed.Set(e.ZoomScale > 1.05)
 					},
 					StyleFunc: func() core.Style { return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get())} },
 					Children: []core.Node{core.View{
@@ -103,7 +112,6 @@ func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
 		pages[i] = core.View{StyleFunc: func() core.Style {
 			return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get()), Overflow: core.Hidden}
 		}, Children: []core.Node{pages[i]}}
-		_ = i
 	}
 	paged := core.Scroll{
 		Horizontal: true, HideIndicator: true, Ref: &pager,
@@ -124,27 +132,77 @@ func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
 		},
 		Children: []core.Node{core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}},
 	}
+
+	// A drag down moves the pictures with the finger and fades the black
+	// behind them, which closes the viewer past dismissDistance or on a fling,
+	// and springs back before it. Horizontal drags are the pager's and
+	// magnified pictures' own.
+	onPan := func(e core.PanEvent) {
+		switch e.Phase {
+		case core.GestureBegan:
+			if zoomed.GetUntracked() {
+				return
+			}
+			dragging.Set(true)
+		case core.GestureChanged:
+			if dragging.GetUntracked() {
+				dragY.Set(max(e.Translation.Y, 0))
+			}
+		case core.GestureEnded, core.GestureCancelled:
+			if !dragging.GetUntracked() {
+				return
+			}
+			dragging.Set(false)
+			if dragY.GetUntracked() >= dismissDistance || e.Velocity.Y > 900 {
+				a.nav.Pop()
+				return
+			}
+			dragY.Set(0)
+		}
+	}
+	fade := func() float32 { return 1 - min(float32(dragY.Get())/500, 0.7) }
+	black := core.View{Class: "bg-black", Style: fillAbs, PointerEvents: core.PointerEventsNone,
+		StyleFunc: func() core.Style {
+			s := core.Style{Opacity: core.Alpha(fade())}
+			if !dragging.Get() {
+				s.Transition = core.Transition{Duration: 200 * time.Millisecond, Easing: emphasized, Properties: core.TransitionOpacity}
+			}
+			return s
+		}}
+	content := core.View{
+		Style: fill, OnPan: onPan, PanActivation: core.PanActivation{ActiveOffsetY: 10, FailOffsetX: 10},
+		StyleFunc: func() core.Style {
+			s := core.Style{Transform: core.Transform{TranslateY: dragY.Get()}}
+			if !dragging.Get() {
+				s.Transition = core.Transition{Duration: 200 * time.Millisecond, Easing: emphasized, Properties: core.TransitionTransform}
+			}
+			return s
+		},
+		Children: []core.Node{paged},
+	}
 	counter := core.Dynamic(func(cx *core.Scope) core.Node {
 		if len(v.images) < 2 {
 			return core.Group{}
 		}
-		return core.Text{ContentFunc: func() string { return fmt.Sprintf("%d / %d", int(pos.Get()+0.5)+1, len(v.images)) },
-			Class: "bg-black/60 text-white", Style: func() core.Style {
-				s := textStyle(textSecondary, 500)
-				s.Position, s.Bottom, s.Left, s.Right = core.Absolute, core.Pt(32), core.Pt(0), core.Pt(0)
-				s.AlignSelf, s.Padding, s.CornerRadius = core.AlignCenter, core.Symmetric(4, 12), 12
-				s.Width = core.Pt(72)
-				s.TextAlign = core.TextAlignCenter
-				s.Margin = core.Edges{Left: 0}
-				return s
-			}()}
+		// The counter sits above the system's bottom bar, whichever the user's
+		// navigation setting makes it.
+		return core.View{
+			PointerEvents: core.PointerEventsNone,
+			Style: core.Style{Position: core.Absolute, Left: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0), AlignItems: core.AlignCenter,
+				Padding: core.Edges{Bottom: 16}, PaddingEnv: core.EnvEdges{Bottom: core.EnvSafeArea}},
+			Children: []core.Node{core.Text{ContentFunc: func() string { return fmt.Sprintf("%d / %d", int(pos.Get()+0.5)+1, len(v.images)) },
+				Class: "bg-black/60 text-white", Style: func() core.Style {
+					s := textStyle(textSecondary, 500)
+					s.Padding, s.CornerRadius = core.Symmetric(4, 12), 12
+					return s
+				}()}},
+		}
 	})
-	save := ui.Sheet{Open: saving.Get, OnClose: func() { saving.Set(false) }, Children: []core.Node{
+	save := a.bottomSheet(saving.Get, func() { saving.Set(false) },
 		listItem(&symbols.Download, "保存图片", nil, func() {
 			saving.Set(false)
 			a.saveImage(v.images[held.GetUntracked()])
-		}),
-	}}
+		}))
 	cx.SetStatusBar(core.StatusBarSetting{Foreground: core.StatusBarLight})
 	cx.Cleanup(func() {
 		if cx.Dark() {
@@ -152,7 +210,7 @@ func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
 		}
 		cx.SetStatusBar(core.StatusBarSetting{Foreground: core.StatusBarDark})
 	})
-	return column(fill, "bg-black", column(fill, "bg-black", paged), counter, save)
+	return column(fill, "", black, content, counter, save)
 }
 
 // saveImage keeps the original of a picture where the user chooses.

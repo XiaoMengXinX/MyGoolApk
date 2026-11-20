@@ -1,6 +1,8 @@
 package app
 
 import (
+	"time"
+
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/ui"
 )
@@ -10,13 +12,13 @@ func spinner() core.Node { return ui.Spinner{Size: 28, LineWidth: 3} }
 
 // textButton is a Material 3 text button.
 func textButton(text string, fn func()) core.Node {
-	return tap(text, fn, core.Style{Padding: core.Symmetric(8, 12), CornerRadius: 20, Overflow: core.Hidden}, "",
+	return tap(text, fn, core.Style{Padding: core.Symmetric(8, 12), CornerRadius: 20, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, "",
 		label(text, textSecondary, 500, "text-primary"))
 }
 
 // tonalButton is a Material 3 filled tonal button.
 func tonalButton(text string, fn func()) core.Node {
-	return tap(text, fn, core.Style{Padding: core.Symmetric(10, 24), CornerRadius: 20, Overflow: core.Hidden}, "bg-secondary-container",
+	return tap(text, fn, core.Style{Padding: core.Symmetric(10, 24), CornerRadius: 20, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, "bg-secondary-container",
 		label(text, textSecondary, 500, "text-on-secondary-container"))
 }
 
@@ -58,7 +60,7 @@ func errorBanner(text string, retry, dismiss func()) core.Node {
 }
 
 func textButtonOn(text string, fn func(), class string) core.Node {
-	return tap(text, fn, core.Style{Padding: core.Symmetric(8, 12), CornerRadius: 20, Overflow: core.Hidden}, "",
+	return tap(text, fn, core.Style{Padding: core.Symmetric(8, 12), CornerRadius: 20, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, "",
 		label(text, textSecondary, 500, class))
 }
 
@@ -92,7 +94,7 @@ func badge(n func() int) core.Node {
 func toggleRow(title string, on func() bool, set func(bool)) core.Node {
 	return row(core.Style{Height: core.Pt(56), Padding: core.Symmetric(0, 16), Gap: 16, AlignItems: core.AlignCenter}, "",
 		core.Text{Content: title, Class: "text-on-surface", Style: fill.Merge(textStyle(textBody, 400))},
-		ui.Switch{Checked: on, OnChange: set, Label: title},
+		m3Switch(on, set, title),
 	)
 }
 
@@ -175,7 +177,51 @@ func filledButton(text string, enabled func() bool, fn func()) core.Node {
 			}
 			return core.Style{Opacity: core.Alpha(0.4)}
 		},
-		Style:    core.Style{Padding: core.Symmetric(10, 24), CornerRadius: 20, Overflow: core.Hidden, FlexShrink: 0},
+		Style:    core.Style{Padding: core.Symmetric(10, 24), CornerRadius: 20, Overflow: core.Hidden, FlexShrink: 0, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter},
 		Children: []core.Node{label(text, textSecondary, 500, "text-on-primary")},
 	}
+}
+
+// m3Switch is a Material 3 switch: a 52x32 track whose thumb grows from 16 to
+// 24dp and slides across as it turns on, the track filling with the primary
+// color; off, it is outlined.
+func m3Switch(on func() bool, set func(bool), name string) core.Node {
+	move := core.Transition{Duration: 200 * time.Millisecond, Easing: emphasized,
+		Properties: core.TransitionTransform | core.TransitionBackground | core.TransitionOpacity}
+	track := core.View{
+		Role: core.RoleSwitch, Label: name, Checked: on,
+		OnPress: func(core.PressEvent) { set(!on()) },
+		ClassFunc: func() string {
+			if on() {
+				return "bg-primary"
+			}
+			return "bg-outline"
+		},
+		Style: core.Style{Width: core.Pt(52), Height: core.Pt(32), CornerRadius: 16, FlexShrink: 0, Overflow: core.Hidden,
+			Transition: move},
+		Children: []core.Node{
+			core.View{Class: "bg-surface-container-highest", Style: insetAbs(2).Merge(core.Style{CornerRadius: 14, Transition: move}),
+				StyleFunc: func() core.Style {
+					if on() {
+						return core.Style{Opacity: core.Alpha(0)}
+					}
+					return core.Style{Opacity: core.Alpha(1)}
+				}},
+			core.View{
+				ClassFunc: func() string {
+					if on() {
+						return "bg-on-primary"
+					}
+					return "bg-outline"
+				},
+				Style: core.Style{Position: core.Absolute, Top: core.Pt(4), Left: core.Pt(4), Width: core.Pt(24), Height: core.Pt(24), CornerRadius: 12, Transition: move},
+				StyleFunc: func() core.Style {
+					if on() {
+						return core.Style{Transform: core.Transform{TranslateX: 20, Scale: 1}}
+					}
+					return core.Style{Transform: core.Transform{TranslateX: 0, Scale: 16.0 / 24}}
+				}},
+		},
+	}
+	return track
 }
