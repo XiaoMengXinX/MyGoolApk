@@ -4,7 +4,6 @@ go 1.27.3
 
 require (
 	github.com/XiaoMengXinX/CoolapkApi-Go v0.0.0
-	github.com/egoist/mygo v0.10.0
 	github.com/nsgo-dev/nsgo v0.2.1-0.20261120181228-891ee30704c0
 	golang.org/x/net v0.62.0
 )
@@ -16,7 +15,6 @@ require (
 	github.com/ebitengine/purego v0.11.3 // indirect
 	github.com/evanw/esbuild v0.28.2 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
-	github.com/go-text/typesetting v0.3.5 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/makiuchi-d/gozxing v0.1.1 // indirect
 	github.com/modelcontextprotocol/go-sdk v1.8.0 // indirect
