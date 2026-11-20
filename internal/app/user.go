@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 
-	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
 
 	"app/internal/backend"
@@ -27,7 +26,7 @@ type userPageState struct {
 	fans      *pager[backend.Author]
 }
 
-func (a *App) userPage(cx *core.Scope, uid string) base.NavPage {
+func (a *App) userPage(cx *core.Scope, uid string) core.Node {
 	u := &userPageState{
 		a: a, uid: uid,
 		profile: core.NewSignalFunc(cx, backend.UserProfile{Author: backend.Author{ID: uid}}, nil),
@@ -66,24 +65,22 @@ func (a *App) userPage(cx *core.Scope, uid string) base.NavPage {
 		}
 		switch u.tab.Get() {
 		case 1:
-			return pagerList(cx, u.following, listSpec{header: header, empty: "暂无关注", onRefresh: refresh, bottom: 24},
+			return pagerList(cx, u.following, listSpec{pushed: true, header: header, empty: "暂无关注", onRefresh: refresh, bottom: 24},
 				func(cx *core.Scope, get func() backend.Author, r core.ListRow) core.Node { return a.personRow(cx, get) })
 		case 2:
-			return pagerList(cx, u.fans, listSpec{header: header, empty: "暂无粉丝", onRefresh: refresh, bottom: 24},
+			return pagerList(cx, u.fans, listSpec{pushed: true, header: header, empty: "暂无粉丝", onRefresh: refresh, bottom: 24},
 				func(cx *core.Scope, get func() backend.Author, r core.ListRow) core.Node { return a.personRow(cx, get) })
 		}
-		return pagerList(cx, u.feeds, listSpec{header: header, empty: "暂无动态", onRefresh: refresh, bottom: 24, skeleton: skeletonCard},
+		return pagerList(cx, u.feeds, listSpec{pushed: true, header: header, empty: "暂无动态", onRefresh: refresh, bottom: 24, skeleton: skeletonCard},
 			func(cx *core.Scope, get func() backend.Feed, r core.ListRow) core.Node { return a.feedCard(cx, get) })
 	})
-	return base.NavPage{
-		TitleFunc: func() string { return u.profile.Get().Author.Name }, HeaderStyleFunc: a.headerStyle(cx), Class: "bg-background",
-		Children: []core.Node{column(fill, "", core.Dynamic(func(cx *core.Scope) core.Node {
+	return a.screen(func() string { return u.profile.Get().Author.Name }, nil,
+		core.Dynamic(func(cx *core.Scope) core.Node {
 			if u.loaded.Get() && u.err.Get() != "" {
 				return errorBanner(u.err.Get(), u.load, func() { u.err.Set("") })
 			}
 			return core.Group{}
-		}), body)},
-	}
+		}), body)
 }
 
 func (u *userPageState) load() {

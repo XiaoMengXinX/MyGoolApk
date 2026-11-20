@@ -182,6 +182,7 @@ func TestTopicChipOpensTheTopicPage(t *testing.T) {
 		t.Fatalf("the topic page is not shown:\n%s", app.Dump())
 	}
 	app.Back()
+	app.FastForward(time.Second)
 	settle(app)
 	if !shows(app, "text:第一条") {
 		t.Error("back does not return to the home page")
@@ -259,6 +260,7 @@ func TestPicturesOpenInTheViewer(t *testing.T) {
 		t.Fatalf("the viewer is not shown:\n%s", app.Dump())
 	}
 	app.Back()
+	app.FastForward(time.Second)
 	settle(app)
 	if shows(app, "text:2 / 2") {
 		t.Error("back does not close the viewer")

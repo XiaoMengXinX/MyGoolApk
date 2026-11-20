@@ -1,7 +1,6 @@
 package app
 
 import (
-	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
 
 	"app/internal/backend"
@@ -9,7 +8,7 @@ import (
 
 // devicePage edits the identity requests carry: the model fields and the
 // two-step confirmation of a new device ID.
-func (a *App) devicePage(cx *core.Scope) base.NavPage {
+func (a *App) devicePage(cx *core.Scope) core.Node {
 	// info is the identity as of the last load: X-App-Token is made from the
 	// clock, so reading it on every frame would have it change at the frame
 	// rate.
@@ -90,8 +89,8 @@ func (a *App) devicePage(cx *core.Scope) base.NavPage {
 		return "设备 ID（随机 UUID）"
 	}
 	_ = idKind
-	return base.NavPage{Title: "设备信息", HeaderStyleFunc: a.headerStyle(cx), Class: "bg-background", Children: []core.Node{
-		core.Scroll{Style: fill, Children: []core.Node{column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 24, Left: 16}, Gap: 8}, "",
+	return a.screen(titled("设备信息"), nil,
+		core.Scroll{Style: fill, Children: []core.Node{column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Left: 16}, Gap: 8}, "",
 			settingsLabel("设备标识"),
 			listGroup(
 				value("设备 ID", func(d backend.DeviceInfo) string { return d.ID }),
@@ -116,6 +115,6 @@ func (a *App) devicePage(cx *core.Scope) base.NavPage {
 					s.Padding = core.Symmetric(4, 8)
 					return s
 				}()},
-		)}},
-	}}
+			bottomSpace(24, true),
+		)}})
 }

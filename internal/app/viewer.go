@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/ui"
 
@@ -41,7 +40,7 @@ func (a *App) openImages(images []backend.Image, index int) {
 
 // viewerPage is the full-screen picture viewer: black, a page per picture
 // that pinches to zoom, a tap to close and a long press that offers to save.
-func (a *App) viewerPage(cx *core.Scope, id string) base.NavPage {
+func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
 	v := a.viewers[id]
 	cx.Cleanup(func() { delete(a.viewers, id) })
 	width := core.NewSignal(cx, core.Points(0))
@@ -72,7 +71,7 @@ func (a *App) viewerPage(cx *core.Scope, id string) base.NavPage {
 						zoomed.Set(!zoomed.GetUntracked())
 						return
 					}
-					closing = cx.AfterFunc(tapWindow, func() { a.nav.Pop(1) })
+					closing = cx.AfterFunc(tapWindow, func() { a.nav.Pop() })
 				}
 				return core.Scroll{
 					MinZoomScale: 1, MaxZoomScale: 4, CenterContent: true, HideIndicator: true,
@@ -146,11 +145,14 @@ func (a *App) viewerPage(cx *core.Scope, id string) base.NavPage {
 			a.saveImage(v.images[held.GetUntracked()])
 		}),
 	}}
-	return base.NavPage{
-		HeaderHidden: true, Animation: core.ScreenFade, Class: "bg-black",
-		StatusBar: core.StatusBarSetting{Foreground: core.StatusBarLight},
-		Children:  []core.Node{column(fill, "bg-black", paged), counter, save},
-	}
+	cx.SetStatusBar(core.StatusBarSetting{Foreground: core.StatusBarLight})
+	cx.Cleanup(func() {
+		if cx.Dark() {
+			return
+		}
+		cx.SetStatusBar(core.StatusBarSetting{Foreground: core.StatusBarDark})
+	})
+	return column(fill, "bg-black", column(fill, "bg-black", paged), counter, save)
 }
 
 // saveImage keeps the original of a picture where the user chooses.

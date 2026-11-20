@@ -5,7 +5,6 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
 
 	"app/internal/backend"
@@ -18,7 +17,7 @@ const routeList = "list"
 func (a *App) openDevice() { a.push(routeDevice, "") }
 
 // historyPage lists the posts opened on this device.
-func (a *App) historyPage(cx *core.Scope) base.NavPage {
+func (a *App) historyPage(cx *core.Scope) core.Node {
 	clear := core.Dynamic(func(cx *core.Scope) core.Node {
 		if len(a.history.Get()) == 0 {
 			return core.Group{}
@@ -41,7 +40,7 @@ func (a *App) historyPage(cx *core.Scope) base.NavPage {
 				}
 				return i
 			},
-			Footer: core.View{Style: core.Style{Height: core.Pt(24)}},
+			Footer: bottomSpace(24, true),
 			Row: func(cx *core.Scope, r core.ListRow) core.Node {
 				entry := func() historyEntry {
 					if h := a.history.Get(); r.Index() < len(h) {
@@ -59,7 +58,7 @@ func (a *App) historyPage(cx *core.Scope) base.NavPage {
 			},
 		}
 	})
-	return base.NavPage{Title: "浏览历史", HeaderStyleFunc: a.headerStyle(cx), HeaderRight: clear, Class: "bg-background", Children: []core.Node{body}}
+	return a.screen(titled("浏览历史"), clear, body)
 }
 
 func settingsLabel(text string) core.Node {
@@ -76,7 +75,7 @@ func listGroup(items ...core.Node) core.Node {
 
 // settingsPage holds the appearance, the history and cache switches, and
 // the way to the device identity.
-func (a *App) settingsPage(cx *core.Scope) base.NavPage {
+func (a *App) settingsPage(cx *core.Scope) core.Node {
 	mode := core.NewSignal(cx, a.local.ThemeMode)
 	history := core.NewSignal(cx, a.local.HistoryEnabled)
 	setMode := func(m int) {
@@ -89,8 +88,8 @@ func (a *App) settingsPage(cx *core.Scope) base.NavPage {
 		filterChip("跟随系统", func() bool { return mode.Get() == 0 }, func() { setMode(0) }),
 		filterChip("浅色", func() bool { return mode.Get() == 1 }, func() { setMode(1) }),
 		filterChip("深色", func() bool { return mode.Get() == 2 }, func() { setMode(2) }))
-	return base.NavPage{Title: "设置", HeaderStyleFunc: a.headerStyle(cx), Class: "bg-background", Children: []core.Node{
-		core.Scroll{Style: fill, Children: []core.Node{column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 24, Left: 16}, Gap: 8}, "",
+	return a.screen(titled("设置"), nil,
+		core.Scroll{Style: fill, Children: []core.Node{column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Left: 16}, Gap: 8}, "",
 			settingsLabel("外观"), modes,
 			settingsLabel("隐私与存储"),
 			listGroup(
@@ -114,8 +113,8 @@ func (a *App) settingsPage(cx *core.Scope) base.NavPage {
 			listGroup(column(core.Style{Padding: core.Symmetric(12, 16), Gap: 2}, "",
 				label("酷安 MyGO", textBody, 400, "text-on-surface"),
 				label(buildLabel(), textSecondary, 400, "text-on-surface-variant"))),
-		)}},
-	}}
+			bottomSpace(24, true),
+		)}})
 }
 
 // applyAppearance follows the system's light or dark, or forces one.

@@ -46,3 +46,21 @@ func (a *App) rootTopBar(title string) core.Node {
 		iconAction(&symbols.Search, "搜索", a.openSearch),
 	)
 }
+
+func titled(s string) func() string { return func() string { return s } }
+
+// screen is a page pushed over the destinations: a small top app bar with
+// the way back, the title and what trails it, over body. The bar is the
+// app's, 56dp high as Google Play's is, so every page has the same one.
+func (a *App) screen(title func() string, trailing core.Node, body ...core.Node) core.Node {
+	bar := []core.Node{
+		iconAction(&symbols.Back, "返回", func() { a.nav.Pop() }),
+		core.Text{ContentFunc: title, MaxLines: 1, Class: "text-on-surface", Style: fill.Merge(textStyle(textTitle, 400))},
+	}
+	if trailing != nil {
+		bar = append(bar, trailing)
+	}
+	top := column(core.Style{FlexShrink: 0, PaddingEnv: core.EnvEdges{Top: core.EnvSafeArea}}, "bg-background",
+		row(core.Style{Height: core.Pt(topBarHeight), Padding: core.Edges{Right: 12, Left: 4}, Gap: 4, AlignItems: core.AlignCenter}, "", bar...))
+	return column(fill, "bg-background", append([]core.Node{top}, body...)...)
+}

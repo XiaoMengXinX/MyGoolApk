@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/ui"
 
@@ -18,7 +17,7 @@ func (a *App) openCompose() {
 }
 
 // composePage writes a text post.
-func (a *App) composePage(cx *core.Scope) base.NavPage {
+func (a *App) composePage(cx *core.Scope) core.Node {
 	text := core.NewSignal(cx, "")
 	private := core.NewSignal(cx, false)
 	publishing := core.NewSignal(cx, false)
@@ -34,43 +33,39 @@ func (a *App) composePage(cx *core.Scope) base.NavPage {
 					errText.Set("发布失败：" + err.Error())
 					return
 				}
-				a.nav.Pop(1)
+				a.nav.Pop()
 				a.openFeed(backend.Feed{ID: id})
 			})
 	}
 	canPublish := func() bool { return !publishing.Get() && strings.TrimSpace(text.Get()) != "" }
-	return base.NavPage{
-		Title: "发帖", HeaderStyleFunc: a.headerStyle(cx), Class: "bg-background",
-		HeaderRight: filledButton("发布", canPublish, publish),
-		Children: []core.Node{column(fill, "",
-			core.Input{
-				Multiline: true, AutoFocus: true, Placeholder: "分享新鲜事…", Label: "正文",
-				Value: text.Get, OnChange: func(s string) { text.Set(s); errText.Set("") }, Disabled: publishing.Get,
-				Class: "text-on-surface",
-				Style: func() core.Style {
-					s := textStyle(textBody, 400)
-					s.FlexGrow, s.FlexShrink, s.FlexBasis, s.Padding = 1, 1, core.Pt(0), core.Symmetric(8, 16)
-					return s
-				}(),
-			},
+	return a.screen(titled("发帖"), filledButton("发布", canPublish, publish),
+		core.Input{
+			Multiline: true, AutoFocus: true, Placeholder: "分享新鲜事…", Label: "正文",
+			Value: text.Get, OnChange: func(s string) { text.Set(s); errText.Set("") }, Disabled: publishing.Get,
+			Class: "text-on-surface",
+			Style: func() core.Style {
+				s := textStyle(textBody, 400)
+				s.FlexGrow, s.FlexShrink, s.FlexBasis, s.Padding = 1, 1, core.Pt(0), core.Symmetric(8, 16)
+				return s
+			}(),
+		},
+		core.Dynamic(func(cx *core.Scope) core.Node {
+			if errText.Get() == "" {
+				return core.Group{}
+			}
+			return errorBanner(errText.Get(), nil, func() { errText.Set("") })
+		}),
+		row(core.Style{Padding: core.Symmetric(8, 16), Gap: 8, AlignItems: core.AlignCenter, FlexShrink: 0,
+			PaddingEnv: core.EnvEdges{Bottom: core.EnvSafeArea}}, "bg-surface-container",
 			core.Dynamic(func(cx *core.Scope) core.Node {
-				if errText.Get() == "" {
-					return core.Group{}
+				if publishing.Get() {
+					return spinner()
 				}
-				return errorBanner(errText.Get(), nil, func() { errText.Set("") })
+				return core.Group{}
 			}),
-			row(core.Style{Padding: core.Symmetric(8, 16), Gap: 8, AlignItems: core.AlignCenter, FlexShrink: 0,
-				PaddingEnv: core.EnvEdges{Bottom: core.EnvSafeArea}}, "bg-surface-container",
-				core.Dynamic(func(cx *core.Scope) core.Node {
-					if publishing.Get() {
-						return spinner()
-					}
-					return core.Group{}
-				}),
-				spacer,
-				core.Text{Content: "仅自己可见", Class: "text-on-surface", Style: textStyle(textSecondary, 400)},
-				ui.Switch{Checked: private.Get, OnChange: private.Set, Label: "仅自己可见", Disabled: publishing.Get},
-			),
-		)},
-	}
+			spacer,
+			core.Text{Content: "仅自己可见", Class: "text-on-surface", Style: textStyle(textSecondary, 400)},
+			ui.Switch{Checked: private.Get, OnChange: private.Set, Label: "仅自己可见", Disabled: publishing.Get},
+		),
+	)
 }

@@ -47,7 +47,7 @@ func (a *App) messagesPage(cx *core.Scope) core.Node {
 		simpleTabs(m.tab, "通知", "私信"),
 		core.Show{When: func() bool { return m.tab.Get() == 0 },
 			Then: func(cx *core.Scope) core.Node {
-				return pagerList(cx, m.notifications, listSpec{empty: "暂无通知", emptyHint: "评论、点赞和关注会显示在这里。"},
+				return pagerList(cx, m.notifications, listSpec{pushed: true, empty: "暂无通知", emptyHint: "评论、点赞和关注会显示在这里。"},
 					func(cx *core.Scope, get func() backend.Notification, r core.ListRow) core.Node {
 						return a.messageRow(cx,
 							func() backend.Author { n := get(); return backend.Author{Name: n.Title, AvatarURL: n.AvatarURL} },
@@ -61,7 +61,7 @@ func (a *App) messagesPage(cx *core.Scope) core.Node {
 					})
 			},
 			Else: func(cx *core.Scope) core.Node {
-				return pagerList(cx, m.conversations, listSpec{empty: "暂无私信"},
+				return pagerList(cx, m.conversations, listSpec{pushed: true, empty: "暂无私信"},
 					func(cx *core.Scope, get func() backend.Conversation, r core.ListRow) core.Node {
 						return a.messageRow(cx,
 							func() backend.Author { c := get(); return backend.Author{Name: c.Title, AvatarURL: c.AvatarURL} },

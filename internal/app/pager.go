@@ -202,6 +202,9 @@ type listSpec struct {
 	header core.Node
 	// padding below the last row.
 	bottom core.Points
+	// pushed says the list is on a page pushed over the shell, which draws under
+	// the system bars.
+	pushed bool
 	// onRefresh runs on a pull to refresh; nil reloads the pager.
 	onRefresh func()
 }
@@ -249,7 +252,7 @@ func pagerList[T any](cx *core.Scope, p *pager[T], spec listSpec, item func(cx *
 		Count:         count,
 		EstimatedSize: 220,
 		Header:        core.Group(header),
-		Footer:        core.View{Style: core.Style{Height: core.Pt(spec.bottom)}},
+		Footer:        bottomSpace(spec.bottom, spec.pushed),
 		Key: func(i int) any {
 			switch kind(i) {
 			case rowItem:

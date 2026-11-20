@@ -86,6 +86,27 @@ type tabGroup struct {
 	width    *core.Signal[core.Points]
 	pages    core.Ref
 	tabRefs  []*core.Ref
+	// jump shows page i, as the strip's taps and the back key do.
+	jump func(i int, animated bool)
+}
+
+// scrollToTop shows the first row of the selected tab.
+func (g *tabGroup) scrollToTop() {
+	i := g.selected.GetUntracked()
+	if g.tabs[i].Kind == tabTopics {
+		return
+	}
+	if p := g.pagers[i]; p != nil {
+		p.list.ScrollTo(core.Point{}, true)
+	}
+}
+
+// select shows tab i.
+func (g *tabGroup) selectTab(i int) {
+	if g.selected.GetUntracked() != i && g.jump != nil {
+		g.selected.Set(i)
+		g.jump(i, true)
+	}
 }
 
 func (a *App) newTabGroup(cx *core.Scope, tabs []pageTab, selected int) *tabGroup {
@@ -163,7 +184,7 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 					if g.tabs[i].Kind == tabTopics {
 						return topics(cx)
 					}
-					return g.a.entryPane(cx, g.pager(cx, i))
+					return g.a.entryPane(cx, g.pager(cx, i), false)
 				},
 			}},
 		}
@@ -171,6 +192,7 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 	jump := func(i int, animated bool) {
 		g.pages.ScrollTo(core.Point{X: core.Points(i) * g.width.GetUntracked()}, animated)
 	}
+	g.jump = jump
 	opened := false
 	pager := core.Scroll{
 		Horizontal: true, HideIndicator: true, Ref: &g.pages,
@@ -253,8 +275,8 @@ func abs32(x float32) float32 {
 }
 
 // entryPane lists the rows of a server page.
-func (a *App) entryPane(cx *core.Scope, p *pager[backend.PageEntry]) core.Node {
-	return pagerList(cx, p, listSpec{empty: "暂无内容", emptyHint: "这里还没有可显示的内容。", bottom: 24, skeleton: skeletonCard},
+func (a *App) entryPane(cx *core.Scope, p *pager[backend.PageEntry], pushed bool) core.Node {
+	return pagerList(cx, p, listSpec{pushed: pushed, empty: "暂无内容", emptyHint: "这里还没有可显示的内容。", bottom: 24, skeleton: skeletonCard},
 		func(cx *core.Scope, get func() backend.PageEntry, r core.ListRow) core.Node {
 			kind := core.NewMemo(cx, func() backend.EntryKind { return get().Kind })
 			return core.Dynamic(func(cx *core.Scope) core.Node {

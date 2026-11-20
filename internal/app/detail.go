@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 
-	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
 
 	"app/internal/backend"
@@ -96,7 +95,7 @@ func (d *detail) refresh() {
 	d.replies.reload()
 }
 
-func (a *App) detailPage(cx *core.Scope, id string) base.NavPage {
+func (a *App) detailPage(cx *core.Scope, id string) core.Node {
 	d := a.newDetail(cx, id, a.seeds[id])
 	delete(a.seeds, id)
 	content := core.Dynamic(func(cx *core.Scope) core.Node {
@@ -113,7 +112,7 @@ func (a *App) detailPage(cx *core.Scope, id string) base.NavPage {
 				}
 				return errorBanner(d.err.Get(), func() { d.err.Set(""); d.load() }, func() { d.err.Set("") })
 			}),
-			pagerList(cx, d.replies, listSpec{
+			pagerList(cx, d.replies, listSpec{pushed: true,
 				empty: "暂无评论", emptyHint: "来说点什么吧。", bottom: 24, skeleton: skeletonCard,
 				header:    column(core.Style{}, "", d.postBody(cx), d.commentsHeader()),
 				onRefresh: d.refresh,
@@ -121,9 +120,7 @@ func (a *App) detailPage(cx *core.Scope, id string) base.NavPage {
 			d.actionBar(cx),
 		)
 	})
-	return base.NavPage{Title: "帖子", HeaderStyleFunc: a.headerStyle(cx), Class: "bg-background", Children: []core.Node{
-		content, d.composer.sheet(d), d.favorites.sheet(),
-	}}
+	return a.screen(titled("帖子"), nil, content, d.composer.sheet(d), d.favorites.sheet())
 }
 
 func (d *detail) postBody(cx *core.Scope) core.Node {

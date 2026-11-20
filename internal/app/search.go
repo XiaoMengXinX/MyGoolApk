@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
 
 	"app/internal/backend"
@@ -33,7 +32,7 @@ type searchPageState struct {
 	stopTimer   func() bool
 }
 
-func (a *App) searchPage(cx *core.Scope) base.NavPage {
+func (a *App) searchPage(cx *core.Scope) core.Node {
 	s := &searchPageState{
 		a: a, cx: cx,
 		input:       core.NewSignal(cx, ""),
@@ -62,7 +61,7 @@ func (a *App) searchPage(cx *core.Scope) base.NavPage {
 		Style: func() core.Style { st := textStyle(textBody, 400); st.FlexGrow, st.MinWidth = 1, core.Pt(0); return st }(),
 	}
 	bar := topBar(
-		iconAction(&symbols.Back, "返回", func() { a.nav.Pop(1) }),
+		iconAction(&symbols.Back, "返回", func() { a.nav.Pop() }),
 		row(fill.Merge(core.Style{Height: core.Pt(48), Padding: core.Edges{Right: 4, Left: 20}, Margin: core.Edges{Right: 12}, CornerRadius: 24, AlignItems: core.AlignCenter}), "bg-surface-container-high",
 			field,
 			core.Dynamic(func(cx *core.Scope) core.Node {
@@ -82,14 +81,14 @@ func (a *App) searchPage(cx *core.Scope) base.NavPage {
 		}
 		return column(fill, "", simpleTabs(s.tab, "动态", "用户"), core.Dynamic(func(cx *core.Scope) core.Node {
 			if s.tab.Get() == 0 {
-				return pagerList(cx, s.feeds, listSpec{empty: "没有找到相关动态", emptyHint: "换个关键词试试。", bottom: 24, skeleton: skeletonCard},
+				return pagerList(cx, s.feeds, listSpec{pushed: true, empty: "没有找到相关动态", emptyHint: "换个关键词试试。", bottom: 24, skeleton: skeletonCard},
 					func(cx *core.Scope, get func() backend.Feed, r core.ListRow) core.Node { return a.feedCard(cx, get) })
 			}
-			return pagerList(cx, s.users, listSpec{empty: "没有找到相关用户", emptyHint: "换个关键词试试。"},
+			return pagerList(cx, s.users, listSpec{pushed: true, empty: "没有找到相关用户", emptyHint: "换个关键词试试。"},
 				func(cx *core.Scope, get func() backend.Author, r core.ListRow) core.Node { return a.personRow(cx, get) })
 		}))
 	})
-	return base.NavPage{HeaderHidden: true, Class: "bg-background", Children: []core.Node{column(fill, "bg-background", bar, body)}}
+	return column(fill, "bg-background", bar, body)
 }
 
 func (s *searchPageState) loadHot() {

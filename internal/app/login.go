@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
 
 	coolapk "github.com/XiaoMengXinX/CoolapkApi-Go"
@@ -36,7 +35,7 @@ func (a *App) openLogin() {
 // loginPage is the web view of the login page. It looks for the session's
 // cookies after each page and every second, as some steps finish in the
 // page's scripts without a navigation.
-func (a *App) loginPage(cx *core.Scope) base.NavPage {
+func (a *App) loginPage(cx *core.Scope) core.Node {
 	importing := core.NewSignal(cx, false)
 	failed := false
 	errText := core.NewSignal(cx, "")
@@ -72,7 +71,7 @@ func (a *App) loginPage(cx *core.Scope) base.NavPage {
 					a.resetAccount()
 					a.loadAccount()
 					a.home.reload(tabFollow, tabHeadline)
-					a.nav.Pop(1)
+					a.nav.Pop()
 				})
 			}()
 		})
@@ -101,12 +100,11 @@ func (a *App) loginPage(cx *core.Scope) base.NavPage {
 		}
 		return core.View{Class: "bg-primary", Style: core.Style{Height: core.Pt(3), Width: core.Pct(100)}}
 	})
-	return base.NavPage{Title: "登录酷安", HeaderStyleFunc: a.headerStyle(cx), Class: "bg-background", Children: []core.Node{
+	return a.screen(titled("登录酷安"), nil,
 		column(fill, "", progress, banner, core.WebView{
 			Source:    core.WebSource{Src: coolapk.LoginURL},
 			UserAgent: a.backend.UserAgent(),
 			OnLoad:    func(core.WebNavigation) { check() },
 			Style:     fill,
-		}),
-	}}
+		}))
 }

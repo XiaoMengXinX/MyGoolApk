@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"strings"
 
-	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
 
 	"app/internal/backend"
@@ -30,7 +29,7 @@ func (a *App) openTarget(t *backend.Target) {
 }
 
 // topicPage lists the posts of one topic or product.
-func (a *App) topicPage(cx *core.Scope, param string) base.NavPage {
+func (a *App) topicPage(cx *core.Scope, param string) core.Node {
 	raw, _ := base64.RawURLEncoding.DecodeString(param)
 	productID, name, _ := strings.Cut(string(raw), "\x00")
 	feeds := newPager(cx, func(ctx context.Context, page int) ([]backend.Feed, bool, error) {
@@ -41,22 +40,21 @@ func (a *App) topicPage(cx *core.Scope, param string) base.NavPage {
 	if productID != "" {
 		title = name
 	}
-	return base.NavPage{Title: title, HeaderStyleFunc: a.headerStyle(cx), Class: "bg-background", Children: []core.Node{
-		pagerList(cx, feeds, listSpec{empty: "暂无内容", emptyHint: "这里还没有帖子。", bottom: 24, skeleton: skeletonCard},
-			func(cx *core.Scope, get func() backend.Feed, r core.ListRow) core.Node { return a.feedCard(cx, get) }),
-	}}
+	return a.screen(titled(title), nil,
+		pagerList(cx, feeds, listSpec{pushed: true, empty: "暂无内容", emptyHint: "这里还没有帖子。", bottom: 24, skeleton: skeletonCard},
+			func(cx *core.Scope, get func() backend.Feed, r core.ListRow) core.Node { return a.feedCard(cx, get) }))
 }
 
 // listPage shows a server list that a row opened, such as the products of a
 // category.
-func (a *App) listPage(cx *core.Scope, param string) base.NavPage {
+func (a *App) listPage(cx *core.Scope, param string) core.Node {
 	raw, _ := base64.RawURLEncoding.DecodeString(param)
 	title, url, _ := strings.Cut(string(raw), "\x00")
 	entries := newPager(cx, func(ctx context.Context, page int) ([]backend.PageEntry, bool, error) {
 		r, err := a.backend.PageEntries(ctx, backend.PageQuery{URL: url, Title: title, Page: page})
 		return r.Entries, r.HasMore, err
 	}, entryKey)
-	return base.NavPage{Title: title, HeaderStyleFunc: a.headerStyle(cx), Class: "bg-background", Children: []core.Node{a.entryPane(cx, entries)}}
+	return a.screen(titled(title), nil, a.entryPane(cx, entries, true))
 }
 
 func (a *App) openList(title, url string) {
@@ -165,7 +163,7 @@ func (t *topicHome) view(cx *core.Scope) core.Node {
 			core.Scroll{HideIndicator: true, Style: core.Style{Width: core.Pt(88), FlexShrink: 0}, Class: "bg-surface-container-low",
 				Children: []core.Node{column(core.Style{Padding: core.Symmetric(8, 8), Gap: 4}, "", rail...)}},
 			core.Dynamic(func(cx *core.Scope) core.Node {
-				return column(fill, "", pagerList(cx, t.pager(t.selected.Get()), listSpec{empty: "暂无话题"},
+				return column(fill, "", pagerList(cx, t.pager(t.selected.Get()), listSpec{pushed: true, empty: "暂无话题"},
 					func(cx *core.Scope, get func() topicRow, r core.ListRow) core.Node { return a.topicGridRow(cx, get) }))
 			}),
 		)

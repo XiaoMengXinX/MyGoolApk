@@ -156,7 +156,7 @@ func (a *App) mePage(cx *core.Scope) core.Node {
 	return column(fill, "bg-background",
 		topBar(label("我的", textTitle, 400, "text-on-surface")),
 		core.Scroll{Style: fill, Children: []core.Node{
-			column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 24, Left: 16}, Gap: 16}, "", head, group, logout),
+			column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Left: 16}, Gap: 16}, "", head, group, logout, bottomSpace(24, false)),
 		}},
 	)
 }

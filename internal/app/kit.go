@@ -48,3 +48,15 @@ var fillAbs = core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt
 func insetAbs(d core.Points) core.Style {
 	return core.Style{Position: core.Absolute, Top: core.Pt(d), Left: core.Pt(d), Right: core.Pt(d), Bottom: core.Pt(d)}
 }
+
+// bottomSpace is room below the last row of a page. A pushed page draws under
+// the system's bottom bar, so it adds the bar's room too; a destination of the
+// shell ends above its own bar.
+func bottomSpace(h core.Points, pushed bool) core.Node {
+	if !pushed {
+		return core.View{Style: core.Style{Height: core.Pt(h), FlexShrink: 0}}
+	}
+	return column(core.Style{FlexShrink: 0}, "",
+		core.View{Style: core.Style{Height: core.Pt(h)}},
+		core.View{Style: core.Style{PaddingEnv: core.EnvEdges{Bottom: core.EnvSafeArea}}})
+}
