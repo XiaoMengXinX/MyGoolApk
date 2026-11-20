@@ -16,6 +16,10 @@ import (
 
 const routeImages = "images"
 
+// tapWindow is how long a tap waits for a second one before it closes the
+// viewer.
+const tapWindow = 220 * time.Millisecond
+
 // viewer is the pictures a viewer page shows.
 type viewer struct {
 	images []backend.Image
@@ -55,12 +59,33 @@ func (a *App) viewerPage(cx *core.Scope, id string) base.NavPage {
 		pages[i] = core.Show{
 			When: func() bool { return width.Get() > 0 && abs32(pos.Get()-float32(i)) < 1.6 },
 			Then: func(cx *core.Scope) core.Node {
+				zoomed := core.NewSignal(cx, false)
+				var closing func() bool
+				// A single tap closes the viewer once the double tap's window has
+				// passed; a second tap zooms instead.
+				press := func(e core.PressEvent) {
+					if closing != nil {
+						closing()
+						closing = nil
+					}
+					if e.Clicks >= 2 {
+						zoomed.Set(!zoomed.GetUntracked())
+						return
+					}
+					closing = cx.AfterFunc(tapWindow, func() { a.nav.Pop(1) })
+				}
 				return core.Scroll{
 					MinZoomScale: 1, MaxZoomScale: 4, CenterContent: true, HideIndicator: true,
+					ZoomScaleFunc: func() float32 {
+						if zoomed.Get() {
+							return 2.5
+						}
+						return 1
+					},
 					StyleFunc: func() core.Style { return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get())} },
 					Children: []core.Node{core.View{
 						StyleFunc: func() core.Style { return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get())} },
-						OnPress:   func(core.PressEvent) { a.nav.Pop(1) },
+						OnPress:   press,
 						OnLongPress: func(core.PressEvent) {
 							held.Set(i)
 							saving.Set(true)
@@ -151,5 +176,4 @@ func (a *App) saveImage(im backend.Image) {
 			})
 		})
 	}()
-	_ = time.Second
 }

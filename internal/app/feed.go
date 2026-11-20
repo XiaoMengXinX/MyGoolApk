@@ -108,8 +108,8 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 
 // avatar is a user's picture in a circle, or a gray disc without one.
 func (a *App) avatar(cx *core.Scope, get func() backend.Author, size core.Points) core.Node {
-	return a.pic(cx, func() string { return get().AvatarURL }, core.Cover, "bg-surface-container-highest",
-		core.Style{Width: core.Pt(size), Height: core.Pt(size), CornerRadius: size / 2})
+	return core.View{Class: "bg-surface-container-highest", Style: core.Style{Width: core.Pt(size), Height: core.Pt(size), CornerRadius: size / 2, Overflow: core.Hidden, FlexShrink: 0},
+		Children: []core.Node{a.pic(cx, func() string { return get().AvatarURL }, core.Cover, "", core.Style{Width: core.Pct(100), Height: core.Pct(100)})}}
 }
 
 func authorName(get func() backend.Author, size core.Points) core.Node {
