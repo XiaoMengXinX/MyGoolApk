@@ -35,7 +35,11 @@ func dynamicOnShape(cx *core.Scope, shape func() feedShape, body func(cx *core.S
 // feedCard is a post in a list: author, text and media, then the topic and
 // counts. Cards sit edge to edge on the surface, split by an 8dp band.
 func (a *App) feedCard(cx *core.Scope, get func() backend.Feed) core.Node {
-	return column(core.Style{}, "", tap("查看帖子", func() { a.openFeed(get()) }, core.Style{}, "bg-background",
+	open := func() { a.openFeed(get()) }
+	// The pressable parts are siblings: Android gives a press to the outermost
+	// view that takes one, so a card that is itself pressable would open its
+	// post whatever was pressed in it.
+	return column(core.Style{}, "bg-background",
 		column(core.Style{Padding: core.Edges{Top: 16, Right: 16, Bottom: 8, Left: 16}, Gap: 12}, "",
 			a.feedHeader(cx, get, 40),
 			dynamicOnShape(cx, func() feedShape { return shapeOfFeed(get(), 6) },
@@ -48,10 +52,10 @@ func (a *App) feedCard(cx *core.Scope, get func() backend.Feed) core.Node {
 				}
 				return a.targetChip(cx, func() *backend.Target { return get().Target })
 			}),
-			spacer,
-			feedStats(get),
+			tap("查看帖子", open, fill.Merge(core.Style{Direction: core.Row, JustifyContent: core.JustifyEnd, Height: core.Pt(32), AlignItems: core.AlignCenter}), "",
+				feedStats(get)),
 		),
-	), core.View{Style: core.Style{Height: core.Pt(8)}, Class: "bg-surface-container-low"})
+		core.View{Style: core.Style{Height: core.Pt(8)}, Class: "bg-surface-container-low"})
 }
 
 // targetChip is an assist chip with the logo of the topic or product a post
@@ -93,7 +97,7 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 	return row(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
 		tap("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 0, CornerRadius: size / 2, Overflow: core.Hidden}, "",
 			a.avatar(cx, author, size)),
-		column(fill.Merge(core.Style{Gap: 2}), "",
+		tap("作者主页", func() { a.openUser(author()) }, fill.Merge(core.Style{Gap: 2}), "",
 			authorName(author, textSecondary),
 			core.Text{ContentFunc: meta, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
 		),
@@ -207,23 +211,24 @@ func (a *App) coverImage(cx *core.Scope, get func() backend.Feed, s feedShape) c
 // feedMedia shows a post's video, images, link, vote and repost.
 func (a *App) feedMedia(cx *core.Scope, get func() backend.Feed, s feedShape, detail bool) core.Node {
 	var kids []core.Node
+	// A card opens its post from the media that has no page of its own.
+	var open func()
+	if !detail {
+		open = func() { a.openFeed(get()) }
+	}
 	switch {
 	case s.video:
-		kids = append(kids, a.videoCover(cx, func() *backend.Video { return get().Video }, detail))
+		kids = append(kids, a.videoCover(cx, func() *backend.Video { return get().Video }, detail, open))
 	case s.images > 0:
 		kids = append(kids, a.imageSet(cx, func() []backend.Image { return get().Images }, s.images, detail))
 	}
 	if s.link {
-		kids = append(kids, a.linkCard(cx, func() *backend.Link { return get().Link }, detail))
+		kids = append(kids, a.linkCard(cx, func() *backend.Link { return get().Link }, detail, open))
 	}
 	if s.vote {
-		kids = append(kids, voteCard(func() *backend.Vote { return get().Vote }))
+		kids = append(kids, voteCard(func() *backend.Vote { return get().Vote }, open))
 	}
 	if s.fw {
-		var open func()
-		if !detail {
-			open = func() { a.openFeed(get()) }
-		}
 		kids = append(kids, a.forwardCard(cx, func() *backend.Forward { return get().Forward }, open))
 	}
 	return column(core.Style{Gap: 12}, "", kids...)
@@ -334,7 +339,7 @@ func (a *App) pictureButton(cx *core.Scope, get func() backend.Image, size strin
 
 // videoCover shows a video's cover with a play mark and its length. The
 // sources are other sites' players, so a tap on the post page opens the page.
-func (a *App) videoCover(cx *core.Scope, get func() *backend.Video, open bool) core.Node {
+func (a *App) videoCover(cx *core.Scope, get func() *backend.Video, detail bool, card func()) core.Node {
 	cover := func() string {
 		if v := get(); v != nil && v.CoverURL != "" {
 			return thumbURL(backend.Image{URL: v.CoverURL}, thumbSmall)
@@ -342,7 +347,13 @@ func (a *App) videoCover(cx *core.Scope, get func() *backend.Video, open bool) c
 		return ""
 	}
 	onPress := func() {
-		if v := get(); open && v != nil && v.URL != "" {
+		if !detail {
+			if card != nil {
+				card()
+			}
+			return
+		}
+		if v := get(); v != nil && v.URL != "" {
 			cx.OpenURL(v.URL, nil)
 		}
 	}
@@ -380,7 +391,7 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%d:%02d", s/60, s%60)
 }
 
-func (a *App) linkCard(cx *core.Scope, get func() *backend.Link, detail bool) core.Node {
+func (a *App) linkCard(cx *core.Scope, get func() *backend.Link, detail bool, card func()) core.Node {
 	kids := []core.Node{
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			if l := core.Untracked(cx, get); l != nil && l.CoverURL != "" {
@@ -413,14 +424,20 @@ func (a *App) linkCard(cx *core.Scope, get func() *backend.Link, detail bool) co
 	}
 	style := core.Style{Direction: core.Row, Padding: core.All(12), Gap: 12, AlignItems: core.AlignCenter, CornerRadius: 12, Overflow: core.Hidden}
 	onPress := func() {
-		if l := get(); detail && l != nil && l.URL != "" {
+		if !detail {
+			if card != nil {
+				card()
+			}
+			return
+		}
+		if l := get(); l != nil && l.URL != "" {
 			cx.OpenURL(l.URL, nil)
 		}
 	}
 	return tap("链接", onPress, style, "bg-surface-container-high", kids...)
 }
 
-func voteCard(get func() *backend.Vote) core.Node {
+func voteCard(get func() *backend.Vote, card func()) core.Node {
 	return core.Dynamic(func(cx *core.Scope) core.Node {
 		v := core.Untracked(cx, get)
 		if v == nil {
@@ -449,7 +466,11 @@ func voteCard(get func() *backend.Vote) core.Node {
 		if total > 0 {
 			kids = append(kids, label(formatCount(total)+" 人参与", textCaption, 400, "text-on-surface-variant"))
 		}
-		return column(core.Style{Padding: core.All(16), Gap: 12, CornerRadius: 12}, "bg-surface-container-high", kids...)
+		body := column(core.Style{Padding: core.All(16), Gap: 12, CornerRadius: 12}, "bg-surface-container-high", kids...)
+		if card == nil {
+			return body
+		}
+		return tap("投票", card, core.Style{}, "", body)
 	})
 }
 

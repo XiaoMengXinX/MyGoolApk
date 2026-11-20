@@ -6,6 +6,12 @@ import (
 
 // tap makes a view that runs fn when pressed, with Android's ripple.
 func tap(label string, fn func(), s core.Style, class string, children ...core.Node) core.Node {
+	// A pressable that clips its content takes touches only within its bounds:
+	// Android hands a touch outside every child to the last child that does not
+	// clip, which would take it from the pressables before it.
+	if s.Overflow == 0 {
+		s.Overflow = core.Hidden
+	}
 	return core.View{
 		Class: class, Style: s, Role: core.RoleButton, Label: label,
 		OnPress:  func(core.PressEvent) { fn() },

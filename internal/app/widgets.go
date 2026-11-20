@@ -105,7 +105,7 @@ func simpleTabs(selected *core.Signal[int], titles ...string) core.Node {
 		on := func() bool { return selected.Get() == i }
 		tabs[i] = core.View{
 			Role: core.RoleTab, Label: title,
-			Style:   fill.Merge(core.Style{Height: core.Pct(100), JustifyContent: core.JustifyEnd, AlignItems: core.AlignCenter}),
+			Style:   fill.Merge(core.Style{Height: core.Pct(100), JustifyContent: core.JustifyEnd, AlignItems: core.AlignCenter, Overflow: core.Hidden}),
 			OnPress: func(core.PressEvent) { selected.Set(i) },
 			Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 			Children: []core.Node{column(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",

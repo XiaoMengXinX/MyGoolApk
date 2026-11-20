@@ -89,7 +89,7 @@ func (a *App) navItem(i int, d destination) core.Node {
 			a.tab.Set(i)
 		},
 		Style: core.Style{FlexGrow: 1, FlexBasis: core.Pt(0), Height: core.Pct(100), Padding: core.Edges{Top: 6, Bottom: 6}, Gap: 4,
-			AlignItems: core.AlignCenter},
+			AlignItems: core.AlignCenter, Overflow: core.Hidden},
 		Children: []core.Node{
 			core.View{Style: core.Style{Width: core.Pt(56), Height: core.Pt(32), AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter},
 				Children: []core.Node{pill, glyph}},

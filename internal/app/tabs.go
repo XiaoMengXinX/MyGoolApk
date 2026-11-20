@@ -233,7 +233,7 @@ func (g *tabGroup) strip(cx *core.Scope, jump func(i int, animated bool)) core.N
 		near := func() float32 { return min(1, max(0, 1-abs32(g.pos.Get()-float32(i)))) }
 		tabs[i] = core.View{
 			Ref: g.tabRefs[i], Role: core.RoleTab, Label: tab.Title,
-			Style: core.Style{Height: core.Pct(100), Padding: core.Symmetric(0, 16), JustifyContent: core.JustifyEnd, AlignItems: core.AlignCenter},
+			Style: core.Style{Height: core.Pct(100), Padding: core.Symmetric(0, 16), JustifyContent: core.JustifyEnd, AlignItems: core.AlignCenter, Overflow: core.Hidden},
 			OnPress: func(core.PressEvent) {
 				if g.selected.GetUntracked() == i {
 					g.pager(cx, i).list.ScrollTo(core.Point{}, true)

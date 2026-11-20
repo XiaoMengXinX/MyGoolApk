@@ -190,7 +190,7 @@ func (a *App) articleBlocks(cx *core.Scope, f backend.Feed) core.Node {
 			kids = append(kids, column(core.Style{Gap: 6}, "", part...))
 		case backend.BlockLink:
 			link := b.Link
-			kids = append(kids, a.linkCard(cx, func() *backend.Link { return link }, true))
+			kids = append(kids, a.linkCard(cx, func() *backend.Link { return link }, true, nil))
 		}
 	}
 	return column(core.Style{Gap: 16}, "", kids...)

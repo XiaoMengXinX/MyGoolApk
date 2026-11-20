@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -264,5 +265,27 @@ func TestPicturesOpenInTheViewer(t *testing.T) {
 	settle(app)
 	if shows(app, "text:2 / 2") {
 		t.Error("back does not close the viewer")
+	}
+}
+
+func TestPressingAnAuthorOpensTheirPage(t *testing.T) {
+	app := start(t, newFakeBackend())
+	app.Press("role:button 作者主页 >> nth=1")
+	app.FastForward(time.Second)
+	settle(app)
+	if !shows(app, "text:用户 9") {
+		t.Fatalf("the author's page is not shown:\n%s", app.Dump())
+	}
+}
+
+func TestPressingACommenterOpensTheirPage(t *testing.T) {
+	app := start(t, newFakeBackend())
+	openCard(app)
+	// The commenter's avatar is the last of the page's.
+	app.Press(fmt.Sprintf("role:button 作者主页 >> nth=%d", len(app.Query("role:button 作者主页"))-1))
+	app.FastForward(time.Second)
+	settle(app)
+	if !shows(app, "text:用户 8") {
+		t.Fatalf("the commenter's page is not shown:\n%s", app.Dump())
 	}
 }

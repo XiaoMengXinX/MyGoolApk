@@ -25,6 +25,12 @@ type richOptions struct {
 func (a *App) richText(cx *core.Scope, get func() ([]backend.RichSpan, string), o richOptions) core.Node {
 	style := textStyle(o.size, 400)
 	style.LineHeight = lineHeight(o.size)
+	// The text takes touches only within its own box: it does not clip its
+	// content, and Android would hand it touches meant for what is before it.
+	return core.View{Style: core.Style{Overflow: core.Hidden}, Children: []core.Node{a.richTextNode(cx, get, o, style)}}
+}
+
+func (a *App) richTextNode(cx *core.Scope, get func() ([]backend.RichSpan, string), o richOptions, style core.Style) core.Node {
 	return core.Text{
 		Class:      o.class,
 		Style:      style,
