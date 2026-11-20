@@ -1,0 +1,697 @@
+package live
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"app/internal/backend"
+	coolapk "github.com/XiaoMengXinX/CoolapkApi-Go"
+)
+
+type coolapkBackend struct {
+	client      *coolapk.Coolapk
+	dir         string // where identity.json lives
+	installTime int64
+
+	mu          sync.Mutex
+	cursors     map[string]apiCursor
+	productTags map[string]string // product id -> the tag its feed is listed under
+	followURL   string
+	followTitle string
+}
+
+// followFeedURL is the page of the follow tab's posts. The newer
+// V15_HOME_TAB_FOLLOW page answers with its header cards only (friends with
+// updates, the tab selector) and no posts.
+const followFeedURL = coolapk.HomeTabFollowFeedURL
+
+// followSource returns the url and title the follow tab's posts are asked
+// for. As the iOS client does, the first page asks the V15 page for its
+// tab selector (selectorLinkCard) and takes the entry the server marks as
+// remembered, or the first, whose url and title the later pages repeat. A
+// page without a selector, as a guest gets, lists the V9 page, which holds
+// the posts of followed accounts.
+func (b *coolapkBackend) followSource(ctx context.Context, page int) (url, title string) {
+	b.mu.Lock()
+	url, title = b.followURL, b.followTitle
+	b.mu.Unlock()
+	if page > 1 && url != "" {
+		return url, title
+	}
+	url, title = followFeedURL, "关注"
+	if response, err := b.client.GetPageDataListWithCtx(ctx, coolapk.PageDataListRequest{
+		URL: coolapk.HomeTabFollowURL, Title: "关注", Page: 1,
+	}); err == nil {
+		if objects, err := decodeAPIObjects(response.Data); err == nil {
+			if u, t := selectorEntry(objects); u != "" {
+				url, title = u, t
+			}
+		}
+	}
+	b.mu.Lock()
+	b.followURL, b.followTitle = url, title
+	b.mu.Unlock()
+	return url, title
+}
+
+// selectorEntry returns the url and title of the entry a selectorLinkCard
+// marks as remembered, or of its first.
+func selectorEntry(objects []map[string]any) (url, title string) {
+	for _, card := range objects {
+		if firstAPIString(card, "entityTemplate") != "selectorLinkCard" {
+			continue
+		}
+		for i, entry := range apiObjects(card, "entities") {
+			u := firstAPIString(entry, "url")
+			remembered := firstAPIString(apiObject(entry, "extraData"), "rememberSelected") == "1"
+			if u != "" && (i == 0 || remembered) {
+				url, title = u, firstAPIString(entry, "title")
+				if remembered {
+					return url, title
+				}
+			}
+		}
+	}
+	return url, title
+}
+
+type apiCursor struct {
+	first string
+	last  string
+}
+
+// New returns the backend that talks to the Coolapk API with the device and
+// account saved in dir.
+func New(dir string) (backend.Backend, error) {
+	identity, err := loadCoolapkIdentity(dir)
+	if err != nil {
+		return nil, fmt.Errorf("初始化设备身份失败: %w", err)
+	}
+	client := coolapk.New()
+	// Spaced like a person's taps; see MinRequestInterval.
+	client.MinRequestInterval = 80 * time.Millisecond
+	client.Device = identity.Device
+	client.SetSession(identity.Session)
+	return &coolapkBackend{
+		client:      client,
+		dir:         dir,
+		installTime: identity.InstallTime,
+		cursors:     make(map[string]apiCursor),
+		productTags: make(map[string]string),
+	}, nil
+}
+
+func (b *coolapkBackend) Feed(ctx context.Context, q backend.FeedQuery) (backend.FeedPage, error) {
+	key := fmt.Sprintf("feed:%d:%s", q.Kind, q.Topic)
+	cursor := b.cursor(key, q.Page)
+	if q.Kind == backend.FeedRecommend {
+		// A refresh also names the first and last post of the list it
+		// replaces, and the server answers with posts it has not sent.
+		cursor = b.lastCursor(key)
+	}
+
+	var response *coolapk.RawResponse
+	var err error
+	switch q.Kind {
+	case backend.FeedRecommend:
+		response, err = b.client.GetHomeFeedWithCtx(ctx, coolapk.HomeFeedRequest{
+			Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last,
+		})
+	case backend.FeedFollow:
+		url, title := b.followSource(ctx, q.Page)
+		response, err = b.client.GetPageDataListWithCtx(ctx, coolapk.PageDataListRequest{
+			URL: url, Title: title, Page: q.Page, LastItem: cursor.last,
+		})
+	case backend.FeedHot:
+		response, err = b.client.GetPageDataListWithCtx(ctx, coolapk.PageDataListRequest{
+			URL: coolapk.HomeTabRankURL, Title: "热榜", Page: q.Page, LastItem: cursor.last,
+		})
+	case backend.FeedTopic:
+		if strings.TrimSpace(q.Topic) == "" {
+			return backend.FeedPage{}, fmt.Errorf("话题不能为空")
+		}
+		tag := q.Topic
+		if q.ProductID != "" {
+			if tag, err = b.productTag(ctx, q.ProductID, q.Topic); err != nil {
+				return backend.FeedPage{}, err
+			}
+		}
+		response, err = b.client.GetTopicFeedWithCtx(ctx, coolapk.TopicFeedRequest{
+			Tag: tag, Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last,
+		})
+	default:
+		return backend.FeedPage{}, fmt.Errorf("未知帖子列表")
+	}
+	objects, err := listObjects(response, err)
+	if err != nil {
+		return backend.FeedPage{}, err
+	}
+	feeds := feedsFromObjects(objects)
+	if q.Kind == backend.FeedRecommend {
+		b.storeCursor(key, q.Page, feedEntityCursor(objects))
+	} else {
+		b.storeCursor(key, q.Page, feedCursor(objects))
+	}
+	return backend.FeedPage{Feeds: feeds, HasMore: len(objects) > 0}, nil
+}
+
+// productTag returns the tag a product's posts are listed under: tagFeedList
+// finds none by the product's title, which holds spaces, but by its alias.
+func (b *coolapkBackend) productTag(ctx context.Context, id, title string) (string, error) {
+	b.mu.Lock()
+	tag, ok := b.productTags[id]
+	b.mu.Unlock()
+	if ok {
+		return tag, nil
+	}
+	n, err := strconv.Atoi(id)
+	if err != nil {
+		return "", fmt.Errorf("无效的产品编号")
+	}
+	response, err := b.client.GetRawWithCtx(ctx, "/product/detail", map[string]interface{}{"id": n})
+	if err != nil {
+		return "", err
+	}
+	object, err := decodeAPIObject(response.Data)
+	if err != nil {
+		return "", err
+	}
+	tag = firstAPIString(object, "alias_title", "index_title", "title")
+	if tag == "" {
+		tag = title
+	}
+	b.mu.Lock()
+	b.productTags[id] = tag
+	b.mu.Unlock()
+	return tag, nil
+}
+
+func (b *coolapkBackend) FeedDetail(ctx context.Context, id string) (backend.Feed, error) {
+	feedID, err := strconv.Atoi(id)
+	if err != nil || feedID <= 0 {
+		return backend.Feed{}, fmt.Errorf("无效的帖子编号")
+	}
+	response, err := b.client.GetFeedDetailRawWithCtx(ctx, feedID, 0)
+	if err != nil {
+		return backend.Feed{}, err
+	}
+	object, err := decodeAPIObject(response.Data)
+	if err != nil {
+		return backend.Feed{}, err
+	}
+	feed := feedFromObject(object)
+	if feed.ID == "" {
+		return backend.Feed{}, fmt.Errorf("帖子响应缺少编号")
+	}
+	return feed, nil
+}
+
+func (b *coolapkBackend) Replies(ctx context.Context, q backend.ReplyQuery) (backend.ReplyPage, error) {
+	key := fmt.Sprintf("reply:%s:%s:%d", q.FeedID, q.ParentID, q.Sort)
+	cursor := b.cursor(key, q.Page)
+	id := q.FeedID
+	if q.ParentID != "" {
+		id = q.ParentID
+	}
+	numericID, err := strconv.Atoi(id)
+	if err != nil || numericID <= 0 {
+		return backend.ReplyPage{}, fmt.Errorf("无效的评论编号")
+	}
+
+	var response *coolapk.RawResponse
+	if q.ParentID != "" {
+		response, err = b.client.GetChildRepliesWithCtx(ctx, numericID, coolapk.ReplyPage{
+			Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last,
+		})
+	} else if q.Sort == backend.RepliesHot {
+		response, err = b.client.GetHotRepliesWithCtx(ctx, numericID, q.Page)
+	} else {
+		response, err = b.client.GetFeedRepliesWithCtx(ctx, numericID, coolapk.ReplyPage{
+			Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last,
+		}, "dateline_desc", false)
+	}
+	objects, err := listObjects(response, err)
+	if err != nil {
+		return backend.ReplyPage{}, err
+	}
+	// A page can end with a card that is no comment.
+	objects = slices.DeleteFunc(objects, func(o map[string]any) bool { return firstAPIString(o, "entityType") != "feed_reply" })
+	replies := make([]backend.Reply, 0, len(objects))
+	for _, object := range objects {
+		replies = append(replies, replyFromObject(object))
+	}
+	b.storeCursor(key, q.Page, feedCursor(objects))
+	return backend.ReplyPage{Replies: replies, HasMore: len(objects) > 0}, nil
+}
+
+func (b *coolapkBackend) cursor(key string, page int) apiCursor {
+	if page == 1 {
+		return apiCursor{}
+	}
+	return b.lastCursor(key)
+}
+
+func (b *coolapkBackend) lastCursor(key string) apiCursor {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.cursors[key]
+}
+
+func (b *coolapkBackend) storeCursor(key string, page int, cursor apiCursor) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.cursors[key] = cursor
+}
+
+// listObjects decodes the list that a request answered with, or returns the
+// error of the request.
+func listObjects(response *coolapk.RawResponse, err error) ([]map[string]any, error) {
+	if err != nil {
+		return nil, err
+	}
+	return decodeAPIObjects(response.Data)
+}
+
+func decodeAPIObjects(data json.RawMessage) ([]map[string]any, error) {
+	var objects []map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&objects); err != nil {
+		return nil, fmt.Errorf("解析列表响应: %w", err)
+	}
+	return objects, nil
+}
+
+func decodeAPIObject(data json.RawMessage) (map[string]any, error) {
+	var object map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&object); err != nil {
+		return nil, fmt.Errorf("解析帖子响应: %w", err)
+	}
+	if object == nil {
+		return nil, fmt.Errorf("帖子响应为空")
+	}
+	return object, nil
+}
+
+func feedsFromObjects(objects []map[string]any) []backend.Feed {
+	feeds := make([]backend.Feed, 0, len(objects))
+	seen := make(map[string]bool)
+	var appendObject func(map[string]any)
+	appendObject = func(object map[string]any) {
+		if firstAPIString(object, "entityType") == "feed" {
+			feed := feedFromObject(object)
+			if feed.ID != "" && !seen[feed.ID] {
+				seen[feed.ID] = true
+				feeds = append(feeds, feed)
+			}
+		}
+		for _, child := range apiObjects(object, "entities") {
+			appendObject(child)
+		}
+	}
+	for _, object := range objects {
+		appendObject(object)
+	}
+	return feeds
+}
+
+func feedFromObject(object map[string]any) backend.Feed {
+	action := apiObject(object, "userAction")
+	content, rich := backend.RichTextFromAPI(firstAPIString(object, "message", "message_raw_output"))
+	feed := backend.Feed{
+		ID:          apiID(object),
+		Title:       firstAPIString(object, "message_title"),
+		Content:     content,
+		Rich:        rich,
+		IsArticle:   firstAPIString(object, "feedType") == "feedArticle" || apiInt(object, "is_html_article") == 1,
+		Device:      firstAPIString(object, "device_title", "device_name"),
+		Location:    firstAPIString(object, "ip_location", "location"),
+		Target:      targetFromObject(object),
+		Tags:        tagsFromAPI(firstAPIString(object, "tags")),
+		PublishedAt: apiTime(object, "dateline"),
+		Author:      authorFromObject(object),
+		Stats: backend.Stats{
+			Likes:    apiInt(object, "likenum"),
+			Comments: apiInt(object, "commentnum", "replynum"),
+			Forwards: apiInt(object, "forwardnum"),
+		},
+		Liked:     apiInt(action, "like") != 0,
+		Favorited: apiInt(action, "collect") == 1 || apiInt(action, "favorite") == 1,
+	}
+	feed.Kind = postKindFromAPI(firstAPIString(object, "feedType"))
+	if feed.Title == "" && feed.Kind != backend.PostText {
+		feed.Title = firstAPIString(object, "title")
+	}
+	switch feed.Kind {
+	case backend.PostArticle, backend.PostTrade:
+		if covers := imagesFromURLs(firstAPIString(object, "message_cover"), firstAPIString(object, "pic")); len(covers) > 0 {
+			feed.Cover = &covers[0]
+		}
+	case backend.PostVideo:
+		// Its picture is the video's cover, read from media_info below.
+	default:
+		feed.Images = imagesFromObject(object)
+	}
+	if feed.Kind == backend.PostArticle || feed.Kind == backend.PostTrade {
+		feed.Blocks = blocksFromObject(object)
+	}
+	feed.Answers, feed.Followers = apiInt(object, "question_answer_num"), apiInt(object, "question_follow_num")
+	if link := firstAPIString(object, "extra_url"); link != "" {
+		feed.Link = &backend.Link{
+			URL: link, Title: firstAPIString(object, "extra_title"),
+			Subtitle: firstAPIString(object, "extra_info"), CoverURL: normalizeCoolapkImage(firstAPIString(object, "extra_pic")),
+		}
+	}
+	if feed.Kind == backend.PostVideo || apiInt(object, "media_type") == 2 {
+		feed.Video = videoFromObject(object)
+	}
+	if vote := apiObject(object, "vote"); vote != nil {
+		parsed := &backend.Vote{Title: firstAPIString(vote, "message_title"), Expired: apiTime(vote, "end_time").Before(time.Now()) && apiInt(vote, "end_time") > 0}
+		for _, option := range apiObjects(vote, "options") {
+			parsed.Options = append(parsed.Options, backend.VoteOption{Text: firstAPIString(option, "title"), Votes: apiInt(option, "total_select_num")})
+		}
+		feed.Vote = parsed
+	}
+	if forward := apiObject(object, "forwardSourceFeed"); forward != nil {
+		forwardContent, forwardRich := backend.RichTextFromAPI(firstAPIString(forward, "message"))
+		feed.Forward = &backend.Forward{
+			Author: authorFromObject(forward), Content: forwardContent, Rich: forwardRich,
+			Images: imagesFromObject(forward),
+		}
+	}
+	return feed
+}
+
+// blocksFromObject reads an article's body: message_raw_output is a JSON
+// list of blocks, each a paragraph (type text, message), a picture (image,
+// url, description) or a link card (shareUrl, url, title, subTitle, logo).
+func blocksFromObject(object map[string]any) []backend.Block {
+	raw := firstAPIString(object, "message_raw_output")
+	if raw == "" {
+		return nil
+	}
+	var items []struct {
+		Type        string `json:"type"`
+		Message     string `json:"message"`
+		URL         string `json:"url"`
+		Description string `json:"description"`
+		Title       string `json:"title"`
+		SubTitle    string `json:"subTitle"`
+		Logo        string `json:"logo"`
+	}
+	if json.Unmarshal([]byte(raw), &items) != nil {
+		return nil
+	}
+	var blocks []backend.Block
+	for _, item := range items {
+		switch item.Type {
+		case "text":
+			// <!--break--> marks where the summary ends.
+			text, rich := backend.RichTextFromAPI(strings.ReplaceAll(item.Message, "<!--break-->", ""))
+			if text != "" {
+				blocks = append(blocks, backend.Block{Kind: backend.BlockText, Text: text, Rich: rich})
+			}
+		case "image":
+			if images := imagesFromURLs(item.URL); len(images) > 0 {
+				blocks = append(blocks, backend.Block{Kind: backend.BlockImage, Image: images[0], Caption: strings.TrimSpace(item.Description)})
+			}
+		case "shareUrl":
+			if item.URL != "" {
+				blocks = append(blocks, backend.Block{Kind: backend.BlockLink, Link: &backend.Link{
+					URL: item.URL, Title: item.Title, Subtitle: item.SubTitle, CoverURL: normalizeCoolapkImage(item.Logo),
+				}})
+			}
+		}
+	}
+	return blocks
+}
+
+// postKindFromAPI maps the feedType of a post.
+func postKindFromAPI(feedType string) backend.PostKind {
+	switch feedType {
+	case "feedArticle":
+		return backend.PostArticle
+	case "picture":
+		return backend.PostPicture
+	case "video":
+		return backend.PostVideo
+	case "question":
+		return backend.PostQuestion
+	case "answer":
+		return backend.PostAnswer
+	case "vote":
+		return backend.PostVote
+	case "trade":
+		return backend.PostTrade
+	}
+	return backend.PostText
+}
+
+// videoFromObject reads a video post: media_info is JSON of the cover, the
+// length in milliseconds and the name, and media_url the page it plays on.
+func videoFromObject(object map[string]any) *backend.Video {
+	v := &backend.Video{URL: firstAPIString(object, "media_url"), CoverURL: normalizeCoolapkImage(firstAPIString(object, "media_pic"))}
+	var info struct {
+		Name     string      `json:"name"`
+		Cover    string      `json:"cover"`
+		Duration json.Number `json:"duration"`
+	}
+	if raw := firstAPIString(object, "media_info"); raw != "" && json.Unmarshal([]byte(raw), &info) == nil {
+		if v.CoverURL == "" {
+			v.CoverURL = info.Cover
+		}
+		if ms, err := info.Duration.Int64(); err == nil {
+			v.Duration = time.Duration(ms) * time.Millisecond
+		}
+		v.Title = info.Name
+	}
+	if v.CoverURL == "" {
+		v.CoverURL = normalizeCoolapkImage(firstAPIString(object, "pic"))
+	}
+	return v
+}
+
+// imagesFromURLs makes the pictures of urls, skipping empty ones and
+// repeats.
+func imagesFromURLs(urls ...string) []backend.Image {
+	var images []backend.Image
+	seen := make(map[string]bool, len(urls))
+	for _, value := range urls {
+		if value = normalizeCoolapkImage(value); value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		image := backend.Image{URL: value}
+		if match := imageSizePattern.FindStringSubmatch(value); len(match) == 3 {
+			image.Width, _ = strconv.Atoi(match[1])
+			image.Height, _ = strconv.Atoi(match[2])
+		}
+		images = append(images, image)
+	}
+	return images
+}
+
+func replyFromObject(object map[string]any) backend.Reply {
+	content, rich := backend.RichTextFromAPI(firstAPIString(object, "message"))
+	reply := backend.Reply{
+		ID:            apiID(object),
+		Author:        authorFromObject(object),
+		Content:       content,
+		Rich:          rich,
+		CreatedAt:     apiTime(object, "dateline"),
+		ReplyToName:   firstAPIString(object, "rusername"),
+		ReplyToID:     firstAPIString(object, "ruid"),
+		Images:        imagesFromObject(object),
+		Likes:         apiInt(object, "likenum"),
+		Liked:         apiInt(apiObject(object, "userAction"), "like") != 0,
+		IsAuthor:      apiInt(object, "isFeedAuthor") == 1,
+		ChildrenTotal: apiInt(object, "replynum"),
+	}
+	for _, child := range apiObjects(object, "replyRows") {
+		reply.Children = append(reply.Children, replyFromObject(child))
+	}
+	reply.ChildrenHasMore = apiInt(object, "replyRowsMore") > 0 || reply.ChildrenTotal > len(reply.Children)
+	return reply
+}
+
+func authorFromObject(object map[string]any) backend.Author {
+	user := apiObject(object, "userInfo")
+	if user == nil {
+		user = object
+	}
+	return backend.Author{
+		ID:        firstAPIString(user, "uid", "entityId"),
+		Name:      firstAPIString(user, "displayUsername", "username"),
+		AvatarURL: normalizeCoolapkImage(firstAPIString(user, "userAvatar", "userSmallAvatar")),
+		Verified:  apiInt(user, "verify_status") > 0,
+	}
+}
+
+var imageSizePattern = regexp.MustCompile(`@(\d+)x(\d+)`)
+
+func imagesFromObject(object map[string]any) []backend.Image {
+	values := apiStrings(object, "picArr")
+	if len(values) == 0 {
+		for _, key := range []string{"pic", "message_cover", "cover"} {
+			if value := firstAPIString(object, key); value != "" {
+				values = append(values, value)
+				break
+			}
+		}
+	}
+	return imagesFromURLs(values...)
+}
+
+func feedCursor(objects []map[string]any) apiCursor {
+	if len(objects) == 0 {
+		return apiCursor{}
+	}
+	return apiCursor{first: apiID(objects[0]), last: apiID(objects[len(objects)-1])}
+}
+
+// feedEntityCursor is the cursor of the first and last post of a page that
+// mixes posts with cards, which hold no post id of their own.
+func feedEntityCursor(objects []map[string]any) apiCursor {
+	var cursor apiCursor
+	var visit func(map[string]any)
+	visit = func(object map[string]any) {
+		if firstAPIString(object, "entityType") == "feed" {
+			if id := apiID(object); id != "" {
+				if cursor.first == "" {
+					cursor.first = id
+				}
+				cursor.last = id
+			}
+		}
+		for _, child := range apiObjects(object, "entities") {
+			visit(child)
+		}
+	}
+	for _, object := range objects {
+		visit(object)
+	}
+	return cursor
+}
+
+func apiID(object map[string]any) string {
+	for _, key := range []string{"id", "fid", "entityId"} {
+		if value := firstAPIString(object, key); value != "" && value != "0" {
+			return value
+		}
+	}
+	return ""
+}
+
+func apiObject(object map[string]any, key string) map[string]any {
+	value, _ := object[key].(map[string]any)
+	return value
+}
+
+func apiObjects(object map[string]any, key string) []map[string]any {
+	array, _ := object[key].([]any)
+	objects := make([]map[string]any, 0, len(array))
+	for _, value := range array {
+		if child, ok := value.(map[string]any); ok {
+			objects = append(objects, child)
+		}
+	}
+	return objects
+}
+
+func apiStrings(object map[string]any, key string) []string {
+	array, _ := object[key].([]any)
+	values := make([]string, 0, len(array))
+	for _, item := range array {
+		if value, ok := item.(string); ok && value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func firstAPIString(object map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := object[key]; ok {
+			switch value := value.(type) {
+			case string:
+				if value != "" {
+					return value
+				}
+			case json.Number:
+				return value.String()
+			case float64:
+				return strconv.FormatFloat(value, 'f', -1, 64)
+			}
+		}
+	}
+	return ""
+}
+
+func apiInt(object map[string]any, keys ...string) int {
+	for _, key := range keys {
+		value := firstAPIString(object, key)
+		if value == "" {
+			continue
+		}
+		if number, err := strconv.ParseFloat(value, 64); err == nil {
+			return int(number)
+		}
+	}
+	return 0
+}
+
+func apiTime(object map[string]any, key string) time.Time {
+	seconds := int64(apiInt(object, key))
+	if seconds <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(seconds, 0)
+}
+
+func cleanAPIText(raw string) string {
+	text, _ := backend.RichTextFromAPI(raw)
+	return text
+}
+
+// targetFromObject reads the topic or product a post is filed under: the
+// targetRow with its logo, else the bare ttitle.
+func targetFromObject(object map[string]any) *backend.Target {
+	if row := apiObject(object, "targetRow"); row != nil {
+		if title := firstAPIString(row, "title"); title != "" {
+			t := &backend.Target{
+				Title:   title,
+				LogoURL: normalizeCoolapkImage(firstAPIString(row, "logo")),
+				Product: firstAPIString(row, "targetType") == "product",
+			}
+			if t.Product {
+				t.ID = apiID(row)
+			}
+			return t
+		}
+	}
+	if title := firstAPIString(object, "ttitle"); title != "" {
+		return &backend.Target{Title: title}
+	}
+	return nil
+}
+
+// tagsFromAPI splits "#a#,#b#" into topic names.
+func tagsFromAPI(raw string) []string {
+	var tags []string
+	for _, part := range strings.Split(raw, ",") {
+		if name := strings.Trim(strings.TrimSpace(part), "#"); name != "" {
+			tags = append(tags, name)
+		}
+	}
+	return tags
+}

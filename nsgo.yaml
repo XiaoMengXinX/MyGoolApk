@@ -1,0 +1,12 @@
+name: CoolApk MyGO
+id: com.lemonfish.mycoolapkgo
+version: 1.0.0
+
+icon:
+  png: assets/Icon.png
+
+url_schemes: [coolmarket]
+
+build:
+  output: dist
+  targets: [android_arm64, ios, macos_universal]
