@@ -117,12 +117,14 @@ func (a *App) page(cx *core.Scope, r route) core.Node {
 	return a.screen(titled(r.kind), nil)
 }
 
-// rootBack takes back only while no page is pushed. The engine previews the
-// system's back gesture, the top page following the finger, only while no
-// handler takes back, so the handler must not outlive the shell being in view.
+// rootBack takes back while no page is pushed, and for the pages too where
+// Android's back is a button. The engine previews the system's back gesture,
+// the top page following the finger, only while no handler takes back, so
+// with gesture navigation the stack alone takes it; a button has no gesture
+// to follow, so Pop gives the page its way out.
 func (a *App) rootBack() core.Node {
 	return core.Show{
-		When: func() bool { return a.nav.Depth() == 0 },
+		When: func() bool { return a.nav.Depth() == 0 || a.buttonNavigation() },
 		Then: func(cx *core.Scope) core.Node {
 			cx.OnBackPress(a.backFromRoot)
 			return core.Group{}
@@ -130,13 +132,25 @@ func (a *App) rootBack() core.Node {
 	}
 }
 
+// threeButtonBar is the least height in points of Android's navigation bar
+// with buttons; the gesture navigation's bar is 24 or less.
+const threeButtonBar = 36
+
+// buttonNavigation reports whether Android's bar has back as a button.
+func (a *App) buttonNavigation() bool {
+	env := a.cx.Env()
+	return env.OS() == core.OSAndroid && env.SafeArea().Bottom > threeButtonBar
+}
+
 // headlineTab is the home tab the app opens on, and back leads to.
 const headlineTab = 2
 
 // backFromRoot makes back leave the app from the headline tab only: from any
-// other tab or category it first shows that one. A pushed page is the
-// stack's, which pops it following the system's back gesture.
+// other tab or category it first shows that one.
 func (a *App) backFromRoot() bool {
+	if a.nav.Depth() > 0 {
+		return a.nav.Pop()
+	}
 	if a.tab.GetUntracked() != 0 {
 		a.tab.Set(0)
 		a.home.selectTab(headlineTab)

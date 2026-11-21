@@ -1,6 +1,7 @@
 package app
 
 import (
+	"slices"
 	"time"
 
 	"github.com/nsgo-dev/nsgo/base"
@@ -17,9 +18,16 @@ var pageTransition = core.Transition{Duration: pageMotion, Easing: emphasized, P
 
 type route struct{ kind, id string }
 
+// pageState is what Android draws of a pushed page's motion: it comes in as
+// shown turns true and goes out as leaving does.
+type pageState struct {
+	shown, leaving *core.Signal[bool]
+}
+
 type pageStack struct {
-	a   *App
-	nav *base.Nav[route]
+	a      *App
+	nav    *base.Nav[route]
+	states []*pageState // the pushed pages' on Android, the top one last
 }
 
 func (a *App) newPageStack(cx *core.Scope) *pageStack {
@@ -32,12 +40,28 @@ func (s *pageStack) Depth() int { return s.nav.Depth() }
 // Push shows a page over the others.
 func (s *pageStack) Push(r route) { s.nav.Push(r) }
 
-// Pop takes the top page away.
+// Pop takes the top page away. iOS animates a pop itself; on Android the page
+// goes out first, as a back gesture's does.
 func (s *pageStack) Pop() bool {
 	if s.nav.Depth() == 0 {
 		return false
 	}
-	s.nav.Pop(1)
+	i := len(s.states) - 1
+	for i >= 0 && s.states[i].leaving.GetUntracked() {
+		i--
+	}
+	if i < 0 {
+		s.nav.Pop(1)
+		return true
+	}
+	st := s.states[i]
+	st.leaving.Set(true)
+	s.a.cx.AfterFunc(pageMotion+30*time.Millisecond, func() {
+		// A back gesture may have popped it meanwhile.
+		if slices.Contains(s.states, st) {
+			s.nav.Pop(1)
+		}
+	})
 	return true
 }
 
@@ -55,19 +79,22 @@ func (s *pageStack) view(shell func(cx *core.Scope) core.Node, page func(cx *cor
 	})
 }
 
-// entering slides the page in from the right as it fades in, on Android; iOS's
-// navigation controller moves the whole screen itself.
+// entering slides the page in from the right as it fades in, and out again as
+// Pop takes it, on Android; iOS's navigation controller moves the whole screen
+// itself.
 func (s *pageStack) entering(cx *core.Scope, content core.Node) core.Node {
 	if s.a.cx.Env().OS() != core.OSAndroid {
 		return content
 	}
-	shown := core.NewSignal(cx, false)
+	st := &pageState{shown: core.NewSignal(cx, false), leaving: core.NewSignal(cx, false)}
+	s.states = append(s.states, st)
+	cx.Cleanup(func() { s.states = slices.DeleteFunc(s.states, func(x *pageState) bool { return x == st }) })
 	// The page comes in on the next frame, after it was laid out in place.
-	cx.AfterFunc(16*time.Millisecond, func() { shown.Set(true) })
+	cx.AfterFunc(16*time.Millisecond, func() { st.shown.Set(true) })
 	return core.View{
 		Style: fill.Merge(core.Style{Transition: pageTransition}),
 		StyleFunc: func() core.Style {
-			if shown.Get() {
+			if st.shown.Get() && !st.leaving.Get() {
 				return core.Style{Opacity: core.Alpha(1)}
 			}
 			return core.Style{Opacity: core.Alpha(0), Transform: core.Transform{TranslateXPercent: 30}}

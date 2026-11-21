@@ -118,9 +118,12 @@ func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
 		Behavior: core.ScrollBehavior{Paging: true},
 		Style:    fill.Merge(core.Style{Direction: core.Row}),
 		OnLayout: func(b core.Bounds) {
+			if b.Size.Width == 0 {
+				return // laid out under a page a back gesture previews
+			}
 			width.Set(b.Size.Width)
 			height.Set(b.Size.Height)
-			if !opened && b.Size.Width > 0 {
+			if !opened {
 				opened = true
 				pager.ScrollTo(core.Point{X: core.Points(v.index) * b.Size.Width}, false)
 			}
