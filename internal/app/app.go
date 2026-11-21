@@ -80,7 +80,7 @@ func (a *App) view(cx *core.Scope) core.Node {
 		}},
 		{"我的", &symbols.Person, &symbols.PersonFill, a.mePage},
 	}
-	stack := a.nav.view(func(cx *core.Scope) core.Node {
+	stack := a.nav.view(cx, func(cx *core.Scope) core.Node {
 		return core.Group{a.rootBack(), a.shell(cx, dests)}
 	}, a.page)
 	return core.Group{stack, ui.Toasts{Toaster: a.toasts, Placement: ui.ToastBottom, Inset: 72}}

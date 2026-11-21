@@ -193,21 +193,19 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 		g.pages.ScrollTo(core.Point{X: core.Points(i) * g.width.GetUntracked()}, animated)
 	}
 	g.jump = jump
-	opened := false
 	pager := core.Scroll{
 		Horizontal: true, HideIndicator: true, Ref: &g.pages,
 		Behavior: core.ScrollBehavior{Paging: true},
 		Style:    fill.Merge(core.Style{Direction: core.Row}),
 		// A page a back gesture previews is laid out at 0 for a moment; its
 		// pages keep the width they had, or they would empty and the offset
-		// would shrink to the first page.
+		// would shrink to the first page. A width that really changes, as
+		// turning the phone does, leaves the offset where the old width put it:
+		// it is set again to the selected tab.
 		OnLayout: func(b core.Bounds) {
 			if w := b.Size.Width; w > 0 && w != g.width.GetUntracked() {
 				g.width.Set(w)
-				if !opened {
-					opened = true
-					jump(g.selected.GetUntracked(), false)
-				}
+				jump(g.selected.GetUntracked(), false)
 			}
 		},
 		OnScroll: func(e core.ScrollEvent) {

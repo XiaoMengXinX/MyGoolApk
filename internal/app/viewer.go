@@ -57,7 +57,8 @@ func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
 	dragY := core.NewSignal(cx, core.Points(0))
 	dragging := core.NewSignal(cx, false)
 	var pager core.Ref
-	opened := false
+	page := v.index // the picture shown, which a new width keeps in view
+	var laidOut core.Points
 
 	pages := make([]core.Node, len(v.images))
 	for i := range v.images {
@@ -123,14 +124,17 @@ func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
 			}
 			width.Set(b.Size.Width)
 			height.Set(b.Size.Height)
-			if !opened {
-				opened = true
-				pager.ScrollTo(core.Point{X: core.Points(v.index) * b.Size.Width}, false)
+			if b.Size.Width != laidOut {
+				laidOut = b.Size.Width
+				pager.ScrollTo(core.Point{X: core.Points(page) * b.Size.Width}, false)
 			}
 		},
 		OnScroll: func(e core.ScrollEvent) {
 			if !e.Stale && e.Size.Width > 0 {
 				pos.Set(float32(e.Offset.X / e.Size.Width))
+				if e.Size.Width == laidOut {
+					page = int(e.Offset.X/e.Size.Width + 0.5)
+				}
 			}
 		},
 		Children: []core.Node{core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}},
