@@ -193,16 +193,17 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 		g.pages.ScrollTo(core.Point{X: core.Points(i) * g.width.GetUntracked()}, animated)
 	}
 	g.jump = jump
-	opened := false
 	pager := core.Scroll{
 		Horizontal: true, HideIndicator: true, Ref: &g.pages,
 		Behavior: core.ScrollBehavior{Paging: true},
 		Style:    fill.Merge(core.Style{Direction: core.Row}),
+		// The width is 0 while the page is under another a back gesture
+		// previews; the offset then shrinks to 0 and must return to the
+		// selected tab when the page is laid out again.
 		OnLayout: func(b core.Bounds) {
 			if w := b.Size.Width; w != g.width.GetUntracked() {
 				g.width.Set(w)
-				if !opened {
-					opened = true
+				if w > 0 {
 					jump(g.selected.GetUntracked(), false)
 				}
 			}

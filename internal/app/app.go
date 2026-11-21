@@ -80,8 +80,9 @@ func (a *App) view(cx *core.Scope) core.Node {
 		}},
 		{"我的", &symbols.Person, &symbols.PersonFill, a.mePage},
 	}
-	cx.OnBackPress(a.backFromRoot)
-	stack := a.nav.view(a.shell(cx, dests), a.page)
+	stack := a.nav.view(func(cx *core.Scope) core.Node {
+		return core.Group{a.rootBack(), a.shell(cx, dests)}
+	}, a.page)
 	return core.Group{stack, ui.Toasts{Toaster: a.toasts, Placement: ui.ToastBottom, Inset: 72}}
 }
 
@@ -116,15 +117,26 @@ func (a *App) page(cx *core.Scope, r route) core.Node {
 	return a.screen(titled(r.kind), nil)
 }
 
+// rootBack takes back only while no page is pushed. The engine previews the
+// system's back gesture, the top page following the finger, only while no
+// handler takes back, so the handler must not outlive the shell being in view.
+func (a *App) rootBack() core.Node {
+	return core.Show{
+		When: func() bool { return a.nav.Depth() == 0 },
+		Then: func(cx *core.Scope) core.Node {
+			cx.OnBackPress(a.backFromRoot)
+			return core.Group{}
+		},
+	}
+}
+
 // headlineTab is the home tab the app opens on, and back leads to.
 const headlineTab = 2
 
 // backFromRoot makes back leave the app from the headline tab only: from any
-// other tab or category it first shows that one. A pushed page pops first.
+// other tab or category it first shows that one. A pushed page is the
+// stack's, which pops it following the system's back gesture.
 func (a *App) backFromRoot() bool {
-	if a.nav.Depth() > 0 {
-		return a.nav.Pop()
-	}
 	if a.tab.GetUntracked() != 0 {
 		a.tab.Set(0)
 		a.home.selectTab(headlineTab)
