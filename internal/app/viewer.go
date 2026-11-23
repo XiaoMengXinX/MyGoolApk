@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"path"
-	"strconv"
 	"strings"
 	"time"
 
@@ -12,29 +11,74 @@ import (
 	"app/internal/backend"
 )
 
-const routeImages = "images"
-
 // tapWindow is how long a tap waits for a second one before it closes the
 // viewer.
 const tapWindow = 220 * time.Millisecond
 
-// viewer is the pictures a viewer page shows.
+// viewer is the pictures the viewer shows.
 type viewer struct {
-	images []backend.Image
-	index  int
+	images  []backend.Image
+	index   int
+	closing bool
 }
 
-// openImages shows the pictures of a post from the one at index.
+// viewerMotion is how long the viewer takes to fade in and out.
+const viewerMotion = 180 * time.Millisecond
+
+// openImages shows the pictures of a post from the one at index, over the
+// page that shows them: the viewer is no page of the stack, so a picture
+// dragged away shows that page behind it.
 func (a *App) openImages(images []backend.Image, index int) {
-	if len(images) == 0 {
+	if len(images) == 0 || a.viewing.GetUntracked() != nil {
 		return
 	}
-	a.viewerSeq++
-	id := strconv.Itoa(a.viewerSeq)
-	a.viewers[id] = &viewer{images: images, index: max(0, min(index, len(images)-1))}
-	// Start the first picture's thumbnail before the page is built.
+	index = max(0, min(index, len(images)-1))
+	// Start the first picture's thumbnail before the viewer is built.
 	go a.images.fetch(thumbURL(images[index], thumbSmall))
-	a.push(routeImages, id)
+	a.viewerShown.Set(false)
+	v := &viewer{images: images, index: index}
+	a.viewing.Set(v)
+	a.cx.AfterFunc(16*time.Millisecond, func() {
+		if !v.closing {
+			a.viewerShown.Set(true)
+		}
+	})
+}
+
+// closeViewer fades the viewer out, then takes it away.
+func (a *App) closeViewer() {
+	v := a.viewing.GetUntracked()
+	if v == nil || v.closing {
+		return
+	}
+	v.closing = true
+	a.viewerShown.Set(false)
+	a.cx.AfterFunc(viewerMotion, func() {
+		if a.viewing.GetUntracked() == v {
+			a.viewing.Set(nil)
+		}
+	})
+}
+
+// viewerLayer holds the viewer over everything else while it is open.
+func (a *App) viewerLayer() core.Node {
+	return core.Dynamic(func(cx *core.Scope) core.Node {
+		v := a.viewing.Get()
+		if v == nil {
+			return core.Group{}
+		}
+		cx.OnBackPress(func() bool { a.closeViewer(); return true })
+		return core.View{
+			Style: fillAbs.Merge(core.Style{Transition: core.Transition{Duration: viewerMotion, Easing: emphasized, Properties: core.TransitionOpacity | core.TransitionTransform}}),
+			StyleFunc: func() core.Style {
+				if a.viewerShown.Get() {
+					return core.Style{Opacity: core.Alpha(1)}
+				}
+				return core.Style{Opacity: core.Alpha(0), Transform: core.Transform{Scale: 0.96}}
+			},
+			Children: []core.Node{a.viewerPage(cx, v)},
+		}
+	})
 }
 
 // dismissDistance is how far a picture is dragged down before letting go
@@ -44,9 +88,7 @@ const dismissDistance core.Points = 120
 // viewerPage is the full-screen picture viewer: black, a page per picture
 // that pinches and double taps to zoom, a tap to close, a drag down to close
 // and a long press that offers to save.
-func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
-	v := a.viewers[id]
-	cx.Cleanup(func() { delete(a.viewers, id) })
+func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	width := core.NewSignal(cx, core.Points(0))
 	height := core.NewSignal(cx, core.Points(0))
 	pos := core.NewSignal(cx, float32(v.index))
@@ -83,7 +125,7 @@ func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
 						}
 						return
 					}
-					closing = cx.AfterFunc(tapWindow, func() { closing = nil; a.nav.Pop() })
+					closing = cx.AfterFunc(tapWindow, func() { closing = nil; a.closeViewer() })
 				}
 				return core.Scroll{
 					Ref: &zoom, MinZoomScale: 1, MaxZoomScale: 4, CenterContent: true, HideIndicator: true,
@@ -161,7 +203,7 @@ func (a *App) viewerPage(cx *core.Scope, id string) core.Node {
 			}
 			dragging.Set(false)
 			if dragY.GetUntracked() >= dismissDistance || e.Velocity.Y > 900 {
-				a.nav.Pop()
+				a.closeViewer()
 				return
 			}
 			dragY.Set(0)

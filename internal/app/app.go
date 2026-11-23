@@ -19,13 +19,14 @@ func Root(newBackend func(dir string) (backend.Backend, error)) func(cx *core.Sc
 		}
 		a := &App{
 			cx: cx, dir: cx.DataDir(), backend: b,
-			images:  newImageStore(filepath.Join(cx.CacheDir(), "img"), b.UserAgent()),
-			seeds:   make(map[string]backend.Feed),
-			viewers: make(map[string]*viewer),
-			local:   loadLocalState(cx.DataDir()),
-			toasts:  ui.NewToaster(cx),
+			images: newImageStore(filepath.Join(cx.CacheDir(), "img"), b.UserAgent()),
+			seeds:  make(map[string]backend.Feed),
+			local:  loadLocalState(cx.DataDir()),
+			toasts: ui.NewToaster(cx),
 		}
 		a.nav = a.newPageStack(cx)
+		a.viewing = core.NewSignalFunc(cx, (*viewer)(nil), nil)
+		a.viewerShown = core.NewSignal(cx, false)
 		a.searchHistory = core.NewSignalFunc(cx, []string(nil), nil)
 		a.history = core.NewSignalFunc(cx, a.local.History, nil)
 		a.topics = a.newTopicHome(cx)
@@ -49,17 +50,17 @@ type App struct {
 	images        *imageStore
 	nav           *pageStack
 	tab           *core.Signal[int]
-	lists         []*pageList // the server lists shown, which a post's page keeps current
+	lists         []*pageList             // the server lists shown, which a post's page keeps current
 	seeds         map[string]backend.Feed // posts a card shows, until the page loads the full post
 	local         localState
 	toasts        *ui.Toaster
 	account       accountState
 	messages      *messageCenter
-	viewers       map[string]*viewer
+	viewing       *core.Signal[*viewer] // the open viewer's pictures, nil when it is closed
+	viewerShown   *core.Signal[bool]
 	searchHistory *core.Signal[[]string]
 	history       *core.Signal[[]historyEntry]
 	topics        *topicHome
-	viewerSeq     int
 	loginOpening  bool
 
 	home, digital, discovery *tabGroup
@@ -84,7 +85,7 @@ func (a *App) view(cx *core.Scope) core.Node {
 	stack := a.nav.view(cx, func(cx *core.Scope) core.Node {
 		return core.Group{a.rootBack(), a.shell(cx, dests)}
 	}, a.page)
-	return core.Group{stack, ui.Toasts{Toaster: a.toasts, Placement: ui.ToastBottom, Inset: 72}}
+	return core.Group{stack, a.viewerLayer(), ui.Toasts{Toaster: a.toasts, Placement: ui.ToastBottom, Inset: 72}}
 }
 
 // page builds the page of a route pushed over the tabs.
@@ -110,8 +111,6 @@ func (a *App) page(cx *core.Scope, r route) core.Node {
 		return a.devicePage(cx)
 	case routeSearch:
 		return a.searchPage(cx, r.id)
-	case routeImages:
-		return a.viewerPage(cx, r.id)
 	case routeMessages:
 		return a.screen(titled("消息"), nil, a.messagesPage(cx))
 	}

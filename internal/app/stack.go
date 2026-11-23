@@ -108,11 +108,7 @@ func (s *pageStack) view(cx *core.Scope, shell func(cx *core.Scope) core.Node, p
 			return base.NavPage{HeaderHidden: true, Class: "bg-background", Children: []core.Node{shell(cx)}}
 		}
 		if !android {
-			class := "bg-background"
-			if r.kind == routeImages {
-				class = "" // the viewer draws its own black, which fades as a picture is dragged away
-			}
-			return base.NavPage{HeaderHidden: true, Class: class, Children: []core.Node{page(cx, r)}}
+			return base.NavPage{HeaderHidden: true, Class: "bg-background", Children: []core.Node{page(cx, r)}}
 		}
 		return base.NavPage{HeaderHidden: true, Children: []core.Node{s.moving(cx, r, page(cx, r))}}
 	})
@@ -164,12 +160,8 @@ func (s *pageStack) moving(cx *core.Scope, r route, content core.Node) core.Node
 		st.shown.Set(true)
 		s.refresh()
 	})
-	class := "bg-background"
-	if r.kind == routeImages {
-		class = "" // the viewer draws its own black, which fades as a picture is dragged away
-	}
 	return core.View{
-		Class: class,
+		Class: "bg-background",
 		Style: fill.Merge(core.Style{Transition: pageTransition}),
 		StyleFunc: func() core.Style {
 			if st.shown.Get() && !st.leaving.Get() {
