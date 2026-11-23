@@ -113,6 +113,9 @@ func (s *imageStore) download(url string) (string, error) {
 	if err := tmp.Close(); err != nil {
 		return "", err
 	}
+	if err := orientJPEG(tmp.Name()); err != nil {
+		log.Printf("image %s: orientation: %v", url, err)
+	}
 	p := s.pathOf(url)
 	return p, os.Rename(tmp.Name(), p)
 }
