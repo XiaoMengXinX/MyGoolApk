@@ -87,7 +87,7 @@ func (a *App) replyImage(cx *core.Scope, get func() backend.Image, open func()) 
 // compactAction is a 32dp icon action with an optional count, for rows
 // dense with actions such as comments.
 func compactAction(glyph *symbol, class string, count func() string, name string, fn func()) core.Node {
-	kids := []core.Node{icon(glyph, 18, "")}
+	kids := []core.Node{icon(glyph, 18, class)}
 	if count != nil {
 		kids = append(kids, core.Text{ContentFunc: count, Style: textStyle(textCaption, 400)})
 	}

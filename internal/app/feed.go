@@ -536,7 +536,7 @@ func feedStats(get func() backend.Feed) core.Node {
 
 func statCount(glyph *symbol, class string, n func() int) core.Node {
 	return row(core.Style{Gap: 6, AlignItems: core.AlignCenter}, class,
-		icon(glyph, 18, ""),
+		icon(glyph, 18, class),
 		core.Text{ContentFunc: func() string { return formatCount(n()) }, Style: textStyle(textCaption, 400)},
 	)
 }

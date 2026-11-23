@@ -262,7 +262,7 @@ func (d *detail) actionBar(cx *core.Scope) core.Node {
 }
 
 func barAction(glyph *symbol, class string, count func() string, name string, fn func()) core.Node {
-	kids := []core.Node{icon(glyph, 24, "")}
+	kids := []core.Node{icon(glyph, 24, class)}
 	if count != nil {
 		kids = append(kids, core.Text{ContentFunc: count, Style: textStyle(textCaption, 400)})
 	}
