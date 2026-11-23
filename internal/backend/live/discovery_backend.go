@@ -215,6 +215,8 @@ func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (
 			return backend.PageEntriesResult{}, err
 		}
 		return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: len(objects) > 0}, nil
+	case backend.MyLikesURL, backend.MyRepliesURL, backend.MyFootprintsURL:
+		return b.myList(ctx, q)
 	}
 	key := "pageEntries:" + q.URL
 	cursor := b.cursor(key, q.Page)
@@ -271,6 +273,14 @@ func entriesFromObjects(objects []map[string]any) []backend.PageEntry {
 				})
 			}
 			return
+		case "feed_reply":
+			// A comment of the account's own lists shows as the post it is on,
+			// which it opens.
+			if f := replyAsFeed(o); f.ID != "" && !seen["reply:"+apiID(o)] {
+				seen["reply:"+apiID(o)] = true
+				entries = append(entries, backend.PageEntry{Kind: backend.EntryFeed, ID: "reply:" + apiID(o), Feed: &f})
+			}
+			return
 		case "card":
 			if c := cardFromObject(o); c != nil {
 				id := "card:" + firstAPIString(o, "entityTemplate") + ":" + c.Title + ":" + apiID(o)
@@ -309,4 +319,45 @@ func productCount(n int) string {
 		return ""
 	}
 	return strconv.Itoa(n) + " 款"
+}
+
+// myList lists one of the signed-in account's own lists.
+func (b *coolapkBackend) myList(ctx context.Context, q backend.PageQuery) (backend.PageEntriesResult, error) {
+	uid := b.SessionUID()
+	if uid == "" {
+		return backend.PageEntriesResult{}, fmt.Errorf("请先登录")
+	}
+	key := "my:" + q.URL
+	cursor := b.cursor(key, q.Page)
+	r := coolapk.ListRequest{Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last}
+	var response *coolapk.RawResponse
+	var err error
+	switch q.URL {
+	case backend.MyLikesURL:
+		response, err = b.client.GetUserLikeListWithCtx(ctx, uid, r)
+	case backend.MyRepliesURL:
+		response, err = b.client.GetUserReplyListWithCtx(ctx, uid, r)
+	default:
+		response, err = b.client.GetHitHistoryWithCtx(ctx, q.Page, cursor.first, cursor.last)
+	}
+	objects, err := listObjects(response, err)
+	if err != nil {
+		return backend.PageEntriesResult{}, err
+	}
+	b.storeCursor(key, q.Page, feedCursor(objects))
+	return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: len(objects) > 0}, nil
+}
+
+// replyAsFeed reads a comment as a card of the post it is on: its author,
+// time and text, and the post's id.
+func replyAsFeed(o map[string]any) backend.Feed {
+	f := backend.Feed{ID: firstAPIString(o, "fid", "feedid"), Kind: backend.PostComment}
+	f.Author = backend.Author{
+		ID:        firstAPIString(o, "uid"),
+		Name:      firstAPIString(o, "username"),
+		AvatarURL: normalizeCoolapkImage(firstAPIString(o, "userAvatar")),
+	}
+	f.PublishedAt = apiTime(o, "dateline")
+	f.Content, f.Rich = backend.RichTextFromAPI(firstAPIString(o, "message"))
+	return f
 }

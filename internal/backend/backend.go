@@ -109,6 +109,14 @@ const (
 	FollowURL   = "follow"
 )
 
+// The signed-in account's own lists, which are no page urls either: what it
+// liked, its comments, and the posts it opened on any device.
+const (
+	MyLikesURL      = "my:likes"
+	MyRepliesURL    = "my:replies"
+	MyFootprintsURL = "my:footprints"
+)
+
 // PageQuery names a page of a server list: the url the clients ask
 // /v6/page/dataList for, or ProductCategoriesURL.
 type PageQuery struct {

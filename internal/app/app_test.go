@@ -66,6 +66,16 @@ func (b *fakeBackend) PageEntries(ctx context.Context, q backend.PageQuery) (bac
 		return backend.PageEntriesResult{Entries: []backend.PageEntry{{Kind: backend.EntryCategory, ID: "category:1000", Title: "手机分类", URL: "/page?url=cat"}}}, nil
 	}
 	f := b.feed
+	switch q.URL {
+	case "/page?url=V9_HOME_TAB_RANKING":
+		selector := &backend.Card{Kind: backend.CardSelector, Items: []backend.CardItem{
+			{Title: "今日热门", URL: "#/day"}, {Title: "手机榜", URL: "#/phone"}}}
+		return backend.PageEntriesResult{Entries: []backend.PageEntry{
+			{Kind: backend.EntryCard, ID: "card:selector", Card: selector},
+			{Kind: backend.EntryFeed, ID: f.ID, Feed: &f}}}, nil
+	case "#/phone":
+		f = backend.Feed{ID: "2", Author: backend.Author{ID: "9", Name: "作者"}, Content: "手机的帖子"}
+	}
 	return backend.PageEntriesResult{Entries: []backend.PageEntry{{Kind: backend.EntryFeed, ID: f.ID, Feed: &f}}}, nil
 }
 func (b *fakeBackend) TopicCategories(context.Context) ([]backend.TopicCategory, error) {
@@ -287,5 +297,20 @@ func TestPressingACommenterOpensTheirPage(t *testing.T) {
 	settle(app)
 	if !shows(app, "text:用户 8") {
 		t.Fatalf("the commenter's page is not shown:\n%s", app.Dump())
+	}
+}
+
+// A selector's chip lists its own posts under the cards above it.
+func TestASelectorChipSwapsTheListBelowIt(t *testing.T) {
+	app := start(t, newFakeBackend())
+	app.Press("role:tab 热榜")
+	settle(app)
+	app.Press("role:button 手机榜")
+	settle(app)
+	if !shows(app, "text:手机的帖子") {
+		t.Fatalf("the chosen list is not shown:\n%s", app.Dump())
+	}
+	if !shows(app, "role:button 今日热门") {
+		t.Error("the selector went with the list it replaced")
 	}
 }

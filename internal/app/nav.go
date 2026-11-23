@@ -22,7 +22,7 @@ func (a *App) openFeed(f backend.Feed) {
 	if f.ID == "" {
 		return
 	}
-	if f.Author.ID != "" {
+	if f.Author.ID != "" && f.Kind != backend.PostComment {
 		a.seeds[f.ID] = f
 	}
 	a.push(routeFeed, f.ID)

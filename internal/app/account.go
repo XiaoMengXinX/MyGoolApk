@@ -135,6 +135,12 @@ func (a *App) mePage(cx *core.Scope) core.Node {
 		}
 		return column(core.Style{Height: core.Pt(96), AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, "", spinner())
 	})
+	shortcuts := core.Dynamic(func(cx *core.Scope) core.Node {
+		if !signedIn() {
+			return core.Group{}
+		}
+		return a.myShortcuts()
+	})
 	group := core.Dynamic(func(cx *core.Scope) core.Node {
 		var items []core.Node
 		if signedIn() {
@@ -156,17 +162,32 @@ func (a *App) mePage(cx *core.Scope) core.Node {
 	return column(fill, "bg-background",
 		a.topBar(label("我的", textTitle, 400, "text-on-surface")),
 		core.Scroll{Style: fill, Children: []core.Node{
-			column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Left: 16}, Gap: 16}, "", head, group, logout, bottomSpace(24, false)),
+			column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Left: 16}, Gap: 16}, "", head, shortcuts, group, logout, bottomSpace(24, false)),
 		}},
+	)
+}
+
+// myShortcuts are the account's own lists, as c001apk's grid under the
+// profile has them.
+func (a *App) myShortcuts() core.Node {
+	item := func(glyph *symbol, name string, open func()) core.Node {
+		return tap(name, open, fill.Merge(core.Style{AlignItems: core.AlignCenter, Gap: 8, Padding: core.Symmetric(14, 0), CornerRadius: 16}), "",
+			icon(glyph, 24, "text-on-surface-variant"),
+			label(name, textCaption, 500, "text-on-surface"))
+	}
+	list := func(title, url string) func() { return func() { a.openList(title, url) } }
+	return row(core.Style{Padding: core.Symmetric(4, 4), CornerRadius: 28}, "bg-surface-container-low",
+		item(&symbols.Article, "我的动态", func() { a.openUser(backend.Author{ID: a.account.uid.GetUntracked()}) }),
+		item(&symbols.FavoriteOutline, "我的赞", list("我的赞", backend.MyLikesURL)),
+		item(&symbols.Comment, "我的回复", list("我的回复", backend.MyRepliesURL)),
+		item(&symbols.Footprint, "足迹", list("足迹", backend.MyFootprintsURL)),
 	)
 }
 
 func (a *App) guestCard() core.Node {
 	return row(core.Style{Padding: core.All(16), Gap: 16, AlignItems: core.AlignCenter, CornerRadius: 28}, "bg-surface-container-low",
 		guestAvatar(56),
-		column(fill.Merge(core.Style{Gap: 4}), "",
-			label("未登录", textBody, 500, "text-on-surface"),
-			label("登录后参与互动", textSecondary, 400, "text-on-surface-variant")),
+		column(fill, "", label("未登录", textBody, 500, "text-on-surface")),
 		tonalButton("登录", a.openLogin),
 	)
 }

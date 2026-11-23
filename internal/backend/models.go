@@ -223,6 +223,9 @@ const (
 	PostAnswer
 	PostVote
 	PostTrade
+	// PostComment is a comment shown as a card of the post it is on, as the
+	// account's own comments list: its text is the comment's, not the post's.
+	PostComment
 )
 
 // Label names the kind in the badge of a card; plain posts have none.
@@ -242,6 +245,8 @@ func (k PostKind) Label() string {
 		return "投票"
 	case PostTrade:
 		return "二手"
+	case PostComment:
+		return "评论"
 	}
 	return ""
 }

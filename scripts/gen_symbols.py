@@ -26,6 +26,7 @@ ICONS = [
     ("OpenInNew", "open_in_new", False), ("ChevronLeft", "chevron_left", False),
     ("ChevronRight", "chevron_right", False), ("Verified", "verified", True),
     ("More", "more_vert", False), ("Delete", "delete", False), ("PlayArrow", "play_arrow", True), ("Download", "download", False),
+    ("Article", "article", False), ("Footprint", "footprint", False),
 ]
 
 
