@@ -66,7 +66,7 @@ func (a *App) searchPage(cx *core.Scope, keyword string) core.Node {
 		Class: "text-on-surface",
 		Style: func() core.Style { st := textStyle(textBody, 400); st.FlexGrow, st.MinWidth = 1, core.Pt(0); return st }(),
 	}
-	bar := topBar(
+	bar := a.topBar(
 		iconAction(&symbols.Back, "返回", func() {
 			field.Blur()
 			a.nav.Pop()

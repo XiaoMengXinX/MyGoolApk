@@ -7,10 +7,10 @@ import (
 // topBarHeight is the Material 3 small top app bar, as Google Play draws it.
 const topBarHeight core.Points = 56
 
-// topBar is the strip above a root page: it keeps clear of the status bar
-// and holds a 56dp row.
-func topBar(content ...core.Node) core.Node {
-	return column(core.Style{FlexShrink: 0, PaddingEnv: core.EnvEdges{Top: core.EnvSafeArea}}, "bg-background",
+// topBar is the strip above a page: it keeps clear of the status bar and
+// holds a 56dp row.
+func (a *App) topBar(content ...core.Node) core.Node {
+	return a.underStatusBar(
 		row(core.Style{Height: core.Pt(topBarHeight), Padding: core.Edges{Right: 4, Left: 16}, Gap: 8, AlignItems: core.AlignCenter}, "", content...))
 }
 
@@ -28,7 +28,7 @@ func (a *App) homePage(cx *core.Scope) core.Node {
 }
 
 func (a *App) homeTopBar(cx *core.Scope) core.Node {
-	return topBar(
+	return a.topBar(
 		tap("账号", func() { a.tab.Set(3) }, core.Style{Width: core.Pt(40), Height: core.Pt(40), CornerRadius: 20, AlignItems: core.AlignCenter,
 			JustifyContent: core.JustifyCenter, FlexShrink: 0, Overflow: core.Hidden}, "", a.accountAvatar(cx, 32)),
 		tap("搜索", a.openSearch, fill.Merge(core.Style{Direction: core.Row, Height: core.Pt(48), CornerRadius: 24, Padding: core.Symmetric(0, 16),
@@ -41,10 +41,20 @@ func (a *App) homeTopBar(cx *core.Scope) core.Node {
 
 // pageHeader is the top bar of the digital and discovery pages.
 func (a *App) rootTopBar(title string) core.Node {
-	return topBar(
+	return a.topBar(
 		core.Text{Content: title, Class: "text-on-surface", Style: fill.Merge(textStyle(textTitle, 400))},
 		iconAction(&symbols.Search, "搜索", a.openSearch),
 	)
+}
+
+// underStatusBar is the strip at the top of a full-screen page, which keeps
+// its children clear of the window's status bar. It reads the window's safe
+// area itself: a screen pushed on the stack reports no inset at its top.
+func (a *App) underStatusBar(children ...core.Node) core.Node {
+	env := a.cx.Env()
+	return core.View{Class: "bg-background", Style: core.Style{FlexShrink: 0},
+		StyleFunc: func() core.Style { return core.Style{Padding: core.Edges{Top: env.SafeArea().Top}} },
+		Children:  children}
 }
 
 func titled(s string) func() string { return func() string { return s } }
@@ -60,7 +70,7 @@ func (a *App) screen(title func() string, trailing core.Node, body ...core.Node)
 	if trailing != nil {
 		bar = append(bar, trailing)
 	}
-	top := column(core.Style{FlexShrink: 0, PaddingEnv: core.EnvEdges{Top: core.EnvSafeArea}}, "bg-background",
+	top := a.underStatusBar(
 		row(core.Style{Height: core.Pt(topBarHeight), Padding: core.Edges{Right: 12, Left: 4}, Gap: 4, AlignItems: core.AlignCenter}, "", bar...))
 	return column(fill, "bg-background", append([]core.Node{top}, body...)...)
 }
