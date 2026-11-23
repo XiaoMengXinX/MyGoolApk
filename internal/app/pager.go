@@ -55,6 +55,13 @@ func (p *pager[T]) ensure() {
 
 func (p *pager[T]) reload() { p.load(false) }
 
+// restart loads the first page again even while one is on the way, as after
+// its source changed: the answer to the old one is dropped.
+func (p *pager[T]) restart() {
+	p.loading, p.more = false, false
+	p.load(false)
+}
+
 func (p *pager[T]) retry() {
 	p.err.Set("")
 	p.load(false)
@@ -86,9 +93,12 @@ func (p *pager[T]) reset() {
 }
 
 func (p *pager[T]) load(more bool) {
-	if p.loading || p.more {
+	// A first page waits for none: it drops a next page still on the way,
+	// whose answer the new generation ignores.
+	if p.loading || (more && p.more) {
 		return
 	}
+	p.more = false
 	page := 1
 	if more {
 		page = p.page + 1

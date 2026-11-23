@@ -145,7 +145,7 @@ func (u *userPageState) header(cx *core.Scope) core.Node {
 				column(core.Style{Width: core.Pt(80), Height: core.Pt(80), CornerRadius: 40, Padding: core.All(4), AlignItems: core.AlignCenter,
 					JustifyContent: core.JustifyCenter, FlexShrink: 0}, "bg-background", a.avatar(cx, author, 72)),
 				spacer,
-				u.followButton(),
+				u.followButton(cx),
 			),
 			column(core.Style{Gap: 4}, "", info...),
 			core.Dynamic(func(cx *core.Scope) core.Node {
@@ -167,9 +167,9 @@ func (u *userPageState) header(cx *core.Scope) core.Node {
 	)
 }
 
-func (u *userPageState) followButton() core.Node {
+func (u *userPageState) followButton(cx *core.Scope) core.Node {
 	a := u.a
-	followed := core.NewMemo(a.cx, func() bool { return u.profile.Get().IsFollowed })
+	followed := core.NewMemo(cx, func() bool { return u.profile.Get().IsFollowed })
 	return core.Dynamic(func(cx *core.Scope) core.Node {
 		if !u.loaded.Get() || u.uid == a.backend.SessionUID() {
 			return core.Group{}

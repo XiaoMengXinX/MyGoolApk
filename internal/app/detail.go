@@ -286,6 +286,7 @@ func (d *detail) toggleLike() {
 			f := d.feed.GetUntracked()
 			f.Liked, f.Stats.Likes = liked, likes
 			d.feed.Set(f)
+			d.a.feedChanged(f)
 		})
 }
 

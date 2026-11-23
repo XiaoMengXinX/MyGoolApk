@@ -66,7 +66,7 @@ func (d *detail) replyRow(cx *core.Scope, get func() backend.Reply) core.Node {
 				}),
 			row(core.Style{AlignItems: core.AlignCenter}, "",
 				core.Text{ContentFunc: func() string { return formatTimeNow(get().CreatedAt) }, Class: "text-on-surface-variant", Style: fill.Merge(textStyle(textCaption, 400))},
-				d.replyLike(get),
+				d.replyLike(cx, get),
 				compactAction(&symbols.Comment, "text-on-surface-variant", nil, "回复", func() { d.openComposer(get().ID, displayName(get().Author.Name)) }),
 			),
 		),
@@ -95,8 +95,8 @@ func compactAction(glyph *symbol, class string, count func() string, name string
 		AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, CornerRadius: 16, Overflow: core.Hidden}, class, kids...)
 }
 
-func (d *detail) replyLike(get func() backend.Reply) core.Node {
-	liked := core.NewMemo(d.cx, func() bool { return get().Liked })
+func (d *detail) replyLike(cx *core.Scope, get func() backend.Reply) core.Node {
+	liked := core.NewMemo(cx, func() bool { return get().Liked })
 	count := func() string {
 		if n := get().Likes; n > 0 {
 			return formatCount(n)

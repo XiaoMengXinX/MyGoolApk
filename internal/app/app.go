@@ -49,6 +49,7 @@ type App struct {
 	images        *imageStore
 	nav           *pageStack
 	tab           *core.Signal[int]
+	lists         []*pageList // the server lists shown, which a post's page keeps current
 	seeds         map[string]backend.Feed // posts a card shows, until the page loads the full post
 	local         localState
 	toasts        *ui.Toaster

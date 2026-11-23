@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -44,7 +45,24 @@ func (a *App) newPageList(cx *core.Scope, url, title string, head []backend.Page
 		}
 		return r.Entries, r.HasMore, err
 	}, entryKey)
+	a.lists = append(a.lists, l)
+	cx.Cleanup(func() { a.lists = slices.DeleteFunc(a.lists, func(x *pageList) bool { return x == l }) })
 	return l
+}
+
+// feedChanged shows what a post's page changed of it, as its likes, on the
+// cards of the lists that show it.
+func (a *App) feedChanged(f backend.Feed) {
+	for _, l := range a.lists {
+		l.p.update(entryKey(backend.PageEntry{Kind: backend.EntryFeed, ID: f.ID}), func(e backend.PageEntry) backend.PageEntry {
+			if e.Feed != nil {
+				g := *e.Feed
+				g.Liked, g.Stats.Likes = f.Liked, f.Stats.Likes
+				e.Feed = &g
+			}
+			return e
+		})
+	}
 }
 
 // keepHead keeps the rows up to the first selector of the list's own first
@@ -77,7 +95,7 @@ func (l *pageList) choose(c *backend.Card, i int) {
 	l.p.items.Set(head)
 	l.p.hasMore.Set(true)
 	l.p.moreErr.Set("")
-	l.p.reload()
+	l.p.restart()
 }
 
 // openCardItem follows an item of a card: to its page in the app where it has
