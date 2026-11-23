@@ -129,6 +129,12 @@ func (a *App) openInApp(target backend.LinkTarget) bool {
 		a.openUser(backend.Author{ID: target.Param})
 	case backend.LinkTopic:
 		a.openTopic(target.Param)
+	case backend.LinkProduct:
+		a.openTarget(&backend.Target{ID: target.Param, Title: target.Title, Product: true})
+	case backend.LinkPage:
+		a.openList(target.Title, target.Param)
+	case backend.LinkSearch:
+		a.searchFor(target.Param)
 	default:
 		return false
 	}

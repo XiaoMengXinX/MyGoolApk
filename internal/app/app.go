@@ -108,7 +108,7 @@ func (a *App) page(cx *core.Scope, r route) core.Node {
 	case routeDevice:
 		return a.devicePage(cx)
 	case routeSearch:
-		return a.searchPage(cx)
+		return a.searchPage(cx, r.id)
 	case routeImages:
 		return a.viewerPage(cx, r.id)
 	case routeMessages:

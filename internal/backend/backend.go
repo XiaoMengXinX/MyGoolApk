@@ -101,6 +101,14 @@ type TopicPage struct {
 // is no page url but an endpoint of its own.
 const ProductCategoriesURL = "/product/categoryList"
 
+// HeadlineURL and FollowURL are the PageQuery.URL of the home's headline and
+// follow tabs, which are no page urls: the headline has an endpoint of its
+// own, and the follow tab's url depends on the account.
+const (
+	HeadlineURL = "headline"
+	FollowURL   = "follow"
+)
+
 // PageQuery names a page of a server list: the url the clients ask
 // /v6/page/dataList for, or ProductCategoriesURL.
 type PageQuery struct {

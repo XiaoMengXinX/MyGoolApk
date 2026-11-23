@@ -36,5 +36,8 @@ func (a *App) openUser(u backend.Author) {
 
 func (a *App) openSearch() { a.push(routeSearch, "") }
 
+// searchFor shows the results of a keyword.
+func (a *App) searchFor(keyword string) { a.push(routeSearch, keyword) }
+
 func (a *App) openHistory()  { a.push(routeHistory, "") }
 func (a *App) openSettings() { a.push(routeSettings, "") }

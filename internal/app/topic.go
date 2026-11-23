@@ -50,11 +50,7 @@ func (a *App) topicPage(cx *core.Scope, param string) core.Node {
 func (a *App) listPage(cx *core.Scope, param string) core.Node {
 	raw, _ := base64.RawURLEncoding.DecodeString(param)
 	title, url, _ := strings.Cut(string(raw), "\x00")
-	entries := newPager(cx, func(ctx context.Context, page int) ([]backend.PageEntry, bool, error) {
-		r, err := a.backend.PageEntries(ctx, backend.PageQuery{URL: url, Title: title, Page: page})
-		return r.Entries, r.HasMore, err
-	}, entryKey)
-	return a.screen(titled(title), nil, a.entryPane(cx, entries, true))
+	return a.screen(titled(title), nil, a.entryPane(cx, a.newPageList(cx, url, title, nil, 0, ""), true))
 }
 
 func (a *App) openList(title, url string) {

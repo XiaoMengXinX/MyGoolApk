@@ -110,6 +110,15 @@ func New(dir string) (backend.Backend, error) {
 }
 
 func (b *coolapkBackend) Feed(ctx context.Context, q backend.FeedQuery) (backend.FeedPage, error) {
+	objects, err := b.feedObjects(ctx, q)
+	if err != nil {
+		return backend.FeedPage{}, err
+	}
+	return backend.FeedPage{Feeds: feedsFromObjects(objects), HasMore: len(objects) > 0}, nil
+}
+
+// feedObjects fetches the rows of a feed page and keeps its cursor.
+func (b *coolapkBackend) feedObjects(ctx context.Context, q backend.FeedQuery) ([]map[string]any, error) {
 	key := fmt.Sprintf("feed:%d:%s", q.Kind, q.Topic)
 	cursor := b.cursor(key, q.Page)
 	if q.Kind == backend.FeedRecommend {
@@ -136,31 +145,30 @@ func (b *coolapkBackend) Feed(ctx context.Context, q backend.FeedQuery) (backend
 		})
 	case backend.FeedTopic:
 		if strings.TrimSpace(q.Topic) == "" {
-			return backend.FeedPage{}, fmt.Errorf("话题不能为空")
+			return nil, fmt.Errorf("话题不能为空")
 		}
 		tag := q.Topic
 		if q.ProductID != "" {
 			if tag, err = b.productTag(ctx, q.ProductID, q.Topic); err != nil {
-				return backend.FeedPage{}, err
+				return nil, err
 			}
 		}
 		response, err = b.client.GetTopicFeedWithCtx(ctx, coolapk.TopicFeedRequest{
 			Tag: tag, Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last,
 		})
 	default:
-		return backend.FeedPage{}, fmt.Errorf("未知帖子列表")
+		return nil, fmt.Errorf("未知帖子列表")
 	}
 	objects, err := listObjects(response, err)
 	if err != nil {
-		return backend.FeedPage{}, err
+		return nil, err
 	}
-	feeds := feedsFromObjects(objects)
 	if q.Kind == backend.FeedRecommend {
 		b.storeCursor(key, q.Page, feedEntityCursor(objects))
 	} else {
 		b.storeCursor(key, q.Page, feedCursor(objects))
 	}
-	return backend.FeedPage{Feeds: feeds, HasMore: len(objects) > 0}, nil
+	return objects, nil
 }
 
 // productTag returns the tag a product's posts are listed under: tagFeedList

@@ -204,6 +204,18 @@ func (b *coolapkBackend) TopicList(ctx context.Context, category backend.TopicCa
 }
 
 func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (backend.PageEntriesResult, error) {
+	switch q.URL {
+	case backend.HeadlineURL, backend.FollowURL:
+		kind := backend.FeedRecommend
+		if q.URL == backend.FollowURL {
+			kind = backend.FeedFollow
+		}
+		objects, err := b.feedObjects(ctx, backend.FeedQuery{Kind: kind, Page: q.Page})
+		if err != nil {
+			return backend.PageEntriesResult{}, err
+		}
+		return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: len(objects) > 0}, nil
+	}
 	key := "pageEntries:" + q.URL
 	cursor := b.cursor(key, q.Page)
 	var response *coolapk.RawResponse
@@ -219,6 +231,16 @@ func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (
 	if err != nil {
 		return backend.PageEntriesResult{}, err
 	}
+	if q.URL != backend.ProductCategoriesURL {
+		b.storeCursor(key, q.Page, feedCursor(objects))
+	}
+	return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: len(objects) > 0 && q.URL != backend.ProductCategoriesURL}, nil
+}
+
+// entriesFromObjects reads the rows of a server page: posts, products,
+// categories, and the cards the app shows; the rows other cards hold show as
+// rows of their own.
+func entriesFromObjects(objects []map[string]any) []backend.PageEntry {
 	var entries []backend.PageEntry
 	seen := map[string]bool{}
 	var visit func(map[string]any)
@@ -249,6 +271,15 @@ func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (
 				})
 			}
 			return
+		case "card":
+			if c := cardFromObject(o); c != nil {
+				id := "card:" + firstAPIString(o, "entityTemplate") + ":" + c.Title + ":" + apiID(o)
+				if !seen[id] {
+					seen[id] = true
+					entries = append(entries, backend.PageEntry{Kind: backend.EntryCard, ID: id, Card: c})
+				}
+				return
+			}
 		}
 		for _, child := range apiObjects(o, "entities") {
 			visit(child)
@@ -257,10 +288,7 @@ func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (
 	for _, o := range objects {
 		visit(o)
 	}
-	if q.URL != backend.ProductCategoriesURL {
-		b.storeCursor(key, q.Page, feedCursor(objects))
-	}
-	return backend.PageEntriesResult{Entries: entries, HasMore: len(objects) > 0 && q.URL != backend.ProductCategoriesURL}, nil
+	return entries
 }
 
 // productSubtitle is the score and the followers of a product row.

@@ -38,12 +38,20 @@ const (
 	LinkFeed
 	LinkUser
 	LinkTopic
+	// LinkProduct is a product, Param its id.
+	LinkProduct
+	// LinkPage is a server page, Param its page url ("/page?url=NAME") and
+	// Title its title.
+	LinkPage
+	// LinkSearch is a search, Param its keyword.
+	LinkSearch
 )
 
 // LinkTarget is the destination of a topic, mention or link span.
 type LinkTarget struct {
 	Kind  LinkKind
 	Param string
+	Title string
 	URL   string
 }
 
@@ -61,6 +69,14 @@ func ResolveLink(raw string) LinkTarget {
 		s = s[1:]
 	}
 	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "searchtab://") {
+		if u, err := url.Parse(s); err == nil {
+			if kw := u.Query().Get("keyword"); kw != "" {
+				return LinkTarget{Kind: LinkSearch, Param: kw}
+			}
+		}
+		return LinkTarget{}
+	}
 	switch {
 	case strings.HasPrefix(lower, "coolmarket://"):
 		s = "/" + strings.TrimPrefix(s[len("coolmarket://"):], "/")
@@ -96,6 +112,14 @@ func ResolveLink(raw string) LinkTarget {
 		if uid := trimPathID(path, "/u/"); uid != "" {
 			return LinkTarget{Kind: LinkUser, Param: uid}
 		}
+	case strings.HasPrefix(path, "/product/"):
+		if id := trimPathID(path, "/product/"); id != "" {
+			return LinkTarget{Kind: LinkProduct, Param: id}
+		}
+	case path == "/page":
+		if u, err := url.Parse(s); err == nil && u.Query().Get("url") != "" {
+			return LinkTarget{Kind: LinkPage, Param: s, Title: u.Query().Get("title")}
+		}
 	case strings.HasPrefix(path, "/t/"):
 		if name := strings.Trim(strings.TrimPrefix(path, "/t/"), "/"); name != "" {
 			if decoded, err := url.PathUnescape(name); err == nil {
@@ -105,6 +129,18 @@ func ResolveLink(raw string) LinkTarget {
 				return LinkTarget{Kind: LinkTopic, Param: name}
 			}
 		}
+	}
+	if path == "/product/categoryList" {
+		// A category's products, as the list of categories links them.
+		if u, err := url.Parse(s); err == nil && u.Query().Get("id") != "" {
+			return LinkTarget{Kind: LinkPage, Param: "/page?url=" + url.QueryEscape(
+				"/product/categoryDetailList?type=category&id="+u.Query().Get("id")+"&showMode=0")}
+		}
+		return LinkTarget{Kind: LinkPage, Param: ProductCategoriesURL}
+	}
+	if strings.HasPrefix(strings.TrimSpace(raw), "#/") {
+		// The routes of the official client's own lists, which are page urls.
+		return LinkTarget{Kind: LinkPage, Param: strings.TrimSpace(raw)}
 	}
 	return LinkTarget{URL: coolapkWebURL(s)}
 }

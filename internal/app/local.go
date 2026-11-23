@@ -23,6 +23,7 @@ type localState struct {
 	History        []historyEntry `json:"history,omitempty"`
 	HistoryEnabled bool           `json:"historyEnabled"`
 	ThemeMode      int            `json:"themeMode"` // 0 follows the system, 1 light, 2 dark
+	FollowGroup    int            `json:"followGroup,omitempty"`
 }
 
 func loadLocalState(dir string) localState {

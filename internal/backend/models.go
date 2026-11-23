@@ -123,7 +123,58 @@ const (
 	EntryProduct
 	// EntryCategory is a group of products, which opens its own list.
 	EntryCategory
+	// EntryCard is one of the cards a server page leads with: a banner, a
+	// row of entries, a selector of what the list below shows.
+	EntryCard
 )
+
+// CardKind is how a card of a server page shows.
+type CardKind int
+
+const (
+	// CardBanner is pictures that page sideways (imageCarouselCard_1,
+	// imageScaleCard).
+	CardBanner CardKind = iota
+	// CardIcons is a grid of icons with their names (iconLinkGridCard,
+	// iconGridCard, iconLongTitleGridCard).
+	CardIcons
+	// CardChips is a row of chips that scrolls (iconMiniScrollCard,
+	// capsuleListCard).
+	CardChips
+	// CardList is a few rows under a title (iconListCard,
+	// productTimelineListCard, iconMiniGridCard).
+	CardList
+	// CardScroll is pictures with titles that scroll sideways
+	// (imageTextScrollCard, imageSquareScrollCard, feedScrollCard).
+	CardScroll
+	// CardTitle heads the rows after it (titleCard).
+	CardTitle
+	// CardSelector chooses what the list below it shows (selectorLinkCard):
+	// each item's URL is a page url of its own.
+	CardSelector
+)
+
+// Card is a card of a server page.
+type Card struct {
+	Kind  CardKind
+	Title string
+	Items []CardItem
+}
+
+// CardItem is one entry of a card.
+type CardItem struct {
+	Title    string
+	Subtitle string
+	Pic      string
+	// URL is where the item leads, as ResolveLink reads it; for a selector,
+	// the page url of the list it shows.
+	URL string
+	// Round is set for people, whose pictures are avatars.
+	Round bool
+	// Ratio is the picture's width over its height when the server says,
+	// else 0.
+	Ratio float32
+}
 
 // PageEntry is one row of a server page: a post, a product, or a category.
 type PageEntry struct {
@@ -134,7 +185,8 @@ type PageEntry struct {
 	Subtitle string
 	LogoURL  string
 	// URL is the page url of the list a category opens.
-	URL string
+	URL  string
+	Card *Card
 }
 
 // BlockKind names one part of an article's body.

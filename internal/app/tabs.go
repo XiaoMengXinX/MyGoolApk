@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"strconv"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -76,9 +75,9 @@ func entryKey(e backend.PageEntry) string { return strconv.Itoa(int(e.Kind)) + "
 // tabGroup is a row of tabs over pages that swipe, each tab with its own
 // list.
 type tabGroup struct {
-	a      *App
-	tabs   []pageTab
-	pagers []*pager[backend.PageEntry]
+	a     *App
+	tabs  []pageTab
+	lists []*pageList
 	// selected is the tab the strip marks; pos the pages' offset in pages,
 	// which moves the strip's indicator as a finger drags them.
 	selected *core.Signal[int]
@@ -96,8 +95,8 @@ func (g *tabGroup) scrollToTop() {
 	if g.tabs[i].Kind == tabTopics {
 		return
 	}
-	if p := g.pagers[i]; p != nil {
-		p.list.ScrollTo(core.Point{}, true)
+	if l := g.lists[i]; l != nil {
+		l.p.list.ScrollTo(core.Point{}, true)
 	}
 }
 
@@ -112,7 +111,7 @@ func (g *tabGroup) selectTab(i int) {
 func (a *App) newTabGroup(cx *core.Scope, tabs []pageTab, selected int) *tabGroup {
 	g := &tabGroup{
 		a: a, tabs: tabs,
-		pagers:   make([]*pager[backend.PageEntry], len(tabs)),
+		lists:    make([]*pageList, len(tabs)),
 		selected: core.NewSignal(cx, selected),
 		pos:      core.NewSignal(cx, float32(selected)),
 		width:    core.NewSignal(cx, core.Points(0)),
@@ -124,41 +123,47 @@ func (a *App) newTabGroup(cx *core.Scope, tabs []pageTab, selected int) *tabGrou
 	return g
 }
 
-// pager returns the list of tab i, made when first shown.
-func (g *tabGroup) pager(cx *core.Scope, i int) *pager[backend.PageEntry] {
-	if p := g.pagers[i]; p != nil {
-		return p
+// list returns the list of tab i, made when first shown.
+func (g *tabGroup) list(cx *core.Scope, i int) *pageList {
+	if l := g.lists[i]; l != nil {
+		return l
 	}
 	a, tab := g.a, g.tabs[i]
-	p := newPager(cx, func(ctx context.Context, page int) ([]backend.PageEntry, bool, error) {
-		switch tab.Kind {
-		case tabFollow, tabHeadline:
-			kind := backend.FeedFollow
-			if tab.Kind == tabHeadline {
-				kind = backend.FeedRecommend
-			}
-			r, err := a.backend.Feed(ctx, backend.FeedQuery{Kind: kind, Page: page})
-			entries := make([]backend.PageEntry, len(r.Feeds))
-			for j := range r.Feeds {
-				entries[j] = backend.PageEntry{Kind: backend.EntryFeed, ID: r.Feeds[j].ID, Feed: &r.Feeds[j]}
-			}
-			return entries, r.HasMore, err
-		default:
-			r, err := a.backend.PageEntries(ctx, backend.PageQuery{URL: tab.URL, Title: tab.Title, Page: page})
-			return r.Entries, r.HasMore, err
+	var l *pageList
+	switch tab.Kind {
+	case tabHeadline:
+		l = a.newPageList(cx, backend.HeadlineURL, tab.Title, nil, 0, "")
+	case tabFollow:
+		// The follow tab leads with its groups, as c001apk's does.
+		chosen := min(max(a.local.FollowGroup, 0), len(followGroups.Items)-1)
+		head := []backend.PageEntry{{Kind: backend.EntryCard, ID: "card:follow-groups", Card: followGroups}}
+		l = a.newPageList(cx, backend.FollowURL, tab.Title, head, chosen, followGroups.Items[chosen].URL)
+		l.onChoose = func(i int) {
+			a.local.FollowGroup = i
+			a.saveLocalState()
 		}
-	}, entryKey)
-	g.pagers[i] = p
-	return p
+	default:
+		l = a.newPageList(cx, tab.URL, tab.Title, nil, 0, "")
+	}
+	g.lists[i] = l
+	return l
 }
+
+// followGroups are the groups the follow tab lists, without the apps'.
+var followGroups = &backend.Card{Kind: backend.CardSelector, Items: []backend.CardItem{
+	{Title: "全部关注", URL: backend.FollowURL},
+	{Title: "好友关注", URL: "/page?url=V9_HOME_TAB_FOLLOW&type=circle"},
+	{Title: "话题关注", URL: "/page?url=V9_HOME_TAB_FOLLOW&type=topic"},
+	{Title: "数码关注", URL: "/page?url=V9_HOME_TAB_FOLLOW&type=product"},
+}}
 
 // reload fetches again the tabs of kind that were shown, as after signing in
 // or out.
 func (g *tabGroup) reload(kinds ...tabKind) {
 	for i, tab := range g.tabs {
 		for _, kind := range kinds {
-			if tab.Kind == kind && g.pagers[i] != nil {
-				g.pagers[i].reload()
+			if tab.Kind == kind && g.lists[i] != nil {
+				g.lists[i].p.reload()
 			}
 		}
 	}
@@ -184,7 +189,7 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 					if g.tabs[i].Kind == tabTopics {
 						return topics(cx)
 					}
-					return g.a.entryPane(cx, g.pager(cx, i), false)
+					return g.a.entryPane(cx, g.list(cx, i), false)
 				},
 			}},
 		}
@@ -237,7 +242,7 @@ func (g *tabGroup) strip(cx *core.Scope, jump func(i int, animated bool)) core.N
 			Style: core.Style{Height: core.Pct(100), Padding: core.Symmetric(0, 16), JustifyContent: core.JustifyEnd, AlignItems: core.AlignCenter, Overflow: core.Hidden},
 			OnPress: func(core.PressEvent) {
 				if g.selected.GetUntracked() == i {
-					g.pager(cx, i).list.ScrollTo(core.Point{}, true)
+					g.list(cx, i).p.list.ScrollTo(core.Point{}, true)
 					return
 				}
 				g.selected.Set(i)
@@ -276,12 +281,15 @@ func abs32(x float32) float32 {
 }
 
 // entryPane lists the rows of a server page.
-func (a *App) entryPane(cx *core.Scope, p *pager[backend.PageEntry], pushed bool) core.Node {
-	return pagerList(cx, p, listSpec{pushed: pushed, empty: "暂无内容", emptyHint: "这里还没有可显示的内容。", bottom: 24, skeleton: skeletonCard},
+func (a *App) entryPane(cx *core.Scope, l *pageList, pushed bool) core.Node {
+	return pagerList(cx, l.p, listSpec{pushed: pushed, empty: "暂无内容", emptyHint: "这里还没有可显示的内容。", bottom: 24, skeleton: skeletonCard},
 		func(cx *core.Scope, get func() backend.PageEntry, r core.ListRow) core.Node {
 			kind := core.NewMemo(cx, func() backend.EntryKind { return get().Kind })
 			return core.Dynamic(func(cx *core.Scope) core.Node {
-				if kind.Get() == backend.EntryFeed {
+				switch kind.Get() {
+				case backend.EntryCard:
+					return a.cardView(cx, get, l)
+				case backend.EntryFeed:
 					return a.feedCard(cx, func() backend.Feed {
 						if f := get().Feed; f != nil {
 							return *f

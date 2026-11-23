@@ -32,7 +32,8 @@ type searchPageState struct {
 	stopTimer   func() bool
 }
 
-func (a *App) searchPage(cx *core.Scope) core.Node {
+// searchPage searches; a keyword, as a hot search names, is searched at once.
+func (a *App) searchPage(cx *core.Scope, keyword string) core.Node {
 	s := &searchPageState{
 		a: a, cx: cx,
 		input:       core.NewSignal(cx, ""),
@@ -52,11 +53,14 @@ func (a *App) searchPage(cx *core.Scope) core.Node {
 		return r.Users, r.HasMore, err
 	}, func(u backend.Author) string { return u.ID })
 	s.loadHot()
+	if keyword != "" {
+		s.submit(keyword)
+	}
 
 	var field core.Ref
 	input := core.Input{
 		Ref:   &field,
-		Value: s.input.Get, Placeholder: "搜索动态和用户", Label: "搜索", AutoFocus: true,
+		Value: s.input.Get, Placeholder: "搜索动态和用户", Label: "搜索", AutoFocus: keyword == "",
 		ReturnKeyType: core.ReturnKeySearch,
 		OnChange:      s.typed, OnSubmit: func(q string) { s.submit(q) },
 		Class: "text-on-surface",
