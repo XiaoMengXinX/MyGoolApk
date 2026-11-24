@@ -102,16 +102,33 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	page := v.index // the picture shown, which a new width keeps in view
 	var laidOut core.Points
 
+	// current is the page the pager came to rest on. The pages next to it are
+	// built, and the original of it alone loads, only once a swipe settles:
+	// building or decoding during one made it stutter.
+	current := core.NewSignal(cx, v.index)
+	settle := func(e core.ScrollEvent) {
+		if e.Size.Width > 0 && e.Size.Width == laidOut {
+			page = int(e.Offset.X/e.Size.Width + 0.5)
+			current.Set(page)
+		}
+	}
 	pages := make([]core.Node, len(v.images))
 	for i := range v.images {
 		i := i
 		im := v.images[i]
 		pages[i] = core.Show{
-			When: func() bool { return width.Get() > 0 && abs32(pos.Get()-float32(i)) < 1.6 },
+			When: func() bool { return width.Get() > 0 && max(i-current.Get(), current.Get()-i) <= 1 },
 			Then: func(cx *core.Scope) core.Node {
 				var zoom core.Ref
 				scale := float32(1)
 				var closing func() bool
+				// A picture left zoomed comes back whole.
+				cx.Effect(func() {
+					if current.Get() != i && scale > 1.05 {
+						scale = 1
+						zoom.ZoomTo(1, nil, false)
+					}
+				})
 				// A single tap closes the viewer once the double tap's window has
 				// passed; a second tap zooms in on its point, or out again.
 				press := func(e core.PressEvent) {
@@ -127,11 +144,39 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 					}
 					closing = cx.AfterFunc(tapWindow, func() { closing = nil; a.closeViewer() })
 				}
+				// Over the small copy, the page that is current gets the
+				// screen-wide copy, and a zoomed one the original: originals
+				// run to 2494x3326 and more, which cost frames to decode and
+				// draw at a size the screen does not show unzoomed. Each stays
+				// once loaded.
+				sharp, full := false, false
+				zoomedHere := core.NewSignal(cx, false)
+				medium := func() string {
+					if current.Get() == i {
+						sharp = true
+					}
+					if sharp {
+						return thumbURL(im, thumbMedium)
+					}
+					return ""
+				}
+				original := func() string {
+					if zoomedHere.Get() {
+						full = true
+					}
+					if full && thumbURL(im, thumbMedium) != im.URL {
+						return im.URL
+					}
+					return ""
+				}
 				return core.Scroll{
 					Ref: &zoom, MinZoomScale: 1, MaxZoomScale: 4, CenterContent: true, HideIndicator: true,
 					OnScroll: func(e core.ScrollEvent) {
 						scale = e.ZoomScale
-						zoomed.Set(e.ZoomScale > 1.05)
+						zoomedHere.Set(e.ZoomScale > 1.05)
+						if current.GetUntracked() == i {
+							zoomed.Set(e.ZoomScale > 1.05)
+						}
 					},
 					StyleFunc: func() core.Style { return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get())} },
 					Children: []core.Node{core.View{
@@ -143,7 +188,8 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 						},
 						Children: []core.Node{
 							a.picOf(cx, thumbURL(im, thumbSmall), core.Contain, "", fillAbs),
-							a.picOf(cx, im.URL, core.Contain, "", fillAbs),
+							a.pic(cx, medium, core.Contain, "", fillAbs),
+							a.pic(cx, original, core.Contain, "", fillAbs),
 						},
 					}},
 				}
@@ -158,8 +204,9 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	}
 	paged := core.Scroll{
 		Horizontal: true, HideIndicator: true, Ref: &pager,
-		Behavior: core.ScrollBehavior{Paging: true},
-		Style:    fill.Merge(core.Style{Direction: core.Row}),
+		// A zoomed picture takes the drags, to move about in it.
+		BehaviorFunc: func() core.ScrollBehavior { return core.ScrollBehavior{Paging: true, NoScroll: zoomed.Get()} },
+		Style:        fill.Merge(core.Style{Direction: core.Row}),
 		OnLayout: func(b core.Bounds) {
 			if b.Size.Width == 0 {
 				return // laid out under a page a back gesture previews
@@ -174,12 +221,11 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 		OnScroll: func(e core.ScrollEvent) {
 			if !e.Stale && e.Size.Width > 0 {
 				pos.Set(float32(e.Offset.X / e.Size.Width))
-				if e.Size.Width == laidOut {
-					page = int(e.Offset.X/e.Size.Width + 0.5)
-				}
 			}
 		},
-		Children: []core.Node{core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}},
+		OnScrollEnd:   settle,
+		OnMomentumEnd: settle,
+		Children:      []core.Node{core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}},
 	}
 
 	// A drag down moves the pictures with the finger and fades the black
