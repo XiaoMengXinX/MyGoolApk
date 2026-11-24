@@ -12,9 +12,9 @@ import (
 // UINavigationController slides them and its edge swipe pops them, on Android
 // 14 and later the predictive back gesture drags the top page away.
 //
-// Android shows a pushed screen at once and hides the screens below it, so
-// there the shell lives under the stack, in view of every screen's motion, and
-// each page moves itself: it slides in from the right over the shell, which
+// Both platforms hide a screen another covers, so the shell lives under the
+// stack, where it keeps its lists' places. Android also shows a pushed screen
+// at once, so there each page moves itself: it slides in from the right over the shell, which
 // shifts a little and dims, and slides out again as Pop takes it.
 const pageMotion = 300 * time.Millisecond
 
@@ -100,12 +100,12 @@ func (s *pageStack) Pop() bool {
 // view is the stack, the shell at its bottom.
 func (s *pageStack) view(cx *core.Scope, shell func(cx *core.Scope) core.Node, page func(cx *core.Scope, r route) core.Node) core.Node {
 	android := s.android()
-	stack := s.nav.Stack(fill, func(cx *core.Scope, r route, _ func() int) base.NavPage {
+	stack := s.nav.Stack(fill.Merge(core.Style{PointerEvents: core.PointerEventsBoxNone}), func(cx *core.Scope, r route, _ func() int) base.NavPage {
 		if r.kind == "" {
-			if android {
-				return base.NavPage{HeaderHidden: true}
-			}
-			return base.NavPage{HeaderHidden: true, Class: "bg-background", Children: []core.Node{shell(cx)}}
+			// The shell is under the stack: a screen another covers is hidden and
+			// laid out empty, which would scroll its lists back to the top and
+			// show it blank as a page slides in over it.
+			return base.NavPage{HeaderHidden: true, Style: core.Style{PointerEvents: core.PointerEventsBoxNone}}
 		}
 		// The image viewer covers the page: iOS's edge swipe, which goes to the
 		// stack before any handler, must not pop the page under it.
@@ -116,7 +116,8 @@ func (s *pageStack) view(cx *core.Scope, shell func(cx *core.Scope) core.Node, p
 		return base.NavPage{HeaderHidden: true, NoPopOnSwipeFunc: viewing, Children: []core.Node{s.moving(cx, r, page(cx, r))}}
 	})
 	if !android {
-		return stack
+		// iOS's navigation controller slides the pages over it.
+		return core.Group{core.View{Class: "bg-background", Style: fillAbs, Children: []core.Node{shell(cx)}}, stack}
 	}
 	return core.Group{s.shellLayer(shell(cx)), stack}
 }
