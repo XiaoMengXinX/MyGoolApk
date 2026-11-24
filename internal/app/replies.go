@@ -45,8 +45,18 @@ func (d *detail) replyRow(cx *core.Scope, get func() backend.Reply) core.Node {
 					}
 					return tonalPill(func() string { return "楼主" })
 				})),
-			a.richText(cx, func() ([]backend.RichSpan, string) { r := get(); return r.Rich, r.Content },
-				richOptions{size: textSecondary, class: "text-on-surface", selectable: true}),
+			dynamicShape(cx, func() bool { return replyText(get()) != "" }, func(cx *core.Scope, has bool) core.Node {
+				if !has {
+					return core.Group{} // a comment of pictures alone
+				}
+				return a.richText(cx, func() ([]backend.RichSpan, string) {
+					r := get()
+					if len(r.Images) > 0 {
+						return withoutPicturePlaceholder(r.Rich), replyText(r)
+					}
+					return r.Rich, r.Content
+				}, richOptions{size: textSecondary, class: "text-on-surface", selectable: true})
+			}),
 			dynamicShape(cx, func() replyShape {
 				r := get()
 				return replyShape{len(r.Images), len(r.Children) > 0 || r.ChildrenTotal > 0}
@@ -168,13 +178,21 @@ func (d *detail) threadBox(cx *core.Scope, get func() backend.Reply) core.Node {
 				}
 			}
 			spans = append(spans, backend.RichSpan{Kind: backend.SpanText, Text: "："})
-			if len(child.Rich) > 0 {
-				spans = append(spans, child.Rich...)
-			} else if child.Content != "" {
-				spans = append(spans, backend.RichSpan{Kind: backend.SpanText, Text: child.Content})
+			body := child.Rich
+			if len(body) == 0 && child.Content != "" {
+				body = []backend.RichSpan{{Kind: backend.SpanText, Text: child.Content}}
 			}
+			if len(child.Images) > 0 {
+				// The server writes "[图片]" where the pictures go; they show
+				// under the text.
+				body = withoutPicturePlaceholder(body)
+			}
+			spans = append(spans, body...)
 			kids = append(kids, a.richText(cx, func() ([]backend.RichSpan, string) { return spans, "" },
 				richOptions{size: textSecondary, class: "text-on-surface", selectable: true}))
+			if len(child.Images) > 0 {
+				kids = append(kids, a.threadPictures(cx, child.Images))
+			}
 		}
 		parentID := r.ID
 		kids = append(kids, core.Dynamic(func(cx *core.Scope) core.Node {
@@ -403,4 +421,41 @@ func (f *favorites) toggle(folderID string, add bool) {
 			feed.Favorited = any
 			d.feed.Set(feed)
 		})
+}
+
+// withoutPicturePlaceholder drops the "[图片]" a nested reply's text holds
+// for its pictures.
+func withoutPicturePlaceholder(spans []backend.RichSpan) []backend.RichSpan {
+	out := make([]backend.RichSpan, 0, len(spans))
+	for _, sp := range spans {
+		if sp.Kind == backend.SpanText {
+			sp.Text = strings.ReplaceAll(sp.Text, "[图片]", "")
+			if sp.Text == "" {
+				continue
+			}
+		}
+		out = append(out, sp)
+	}
+	return out
+}
+
+// threadPictures are a nested reply's pictures, small, each opening the
+// viewer over all of them.
+func (a *App) threadPictures(cx *core.Scope, images []backend.Image) core.Node {
+	cells := make([]core.Node, 0, len(images))
+	for i, im := range images {
+		cells = append(cells, tap("查看图片", func() { a.openImages(images, i) },
+			core.Style{Width: core.Pt(72), Height: core.Pt(72), CornerRadius: 8}, "bg-surface-container-highest",
+			a.picOf(cx, thumbURL(im, thumbSmall), core.Cover, "", fillAbs)))
+	}
+	return row(core.Style{Gap: 6, Wrap: core.Wrap}, "", cells...)
+}
+
+// replyText is a comment's text, without the "[图片]" the server writes for
+// the pictures it shows.
+func replyText(r backend.Reply) string {
+	if len(r.Images) == 0 {
+		return r.Content
+	}
+	return strings.TrimSpace(strings.ReplaceAll(r.Content, "[图片]", ""))
 }
