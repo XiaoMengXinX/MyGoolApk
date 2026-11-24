@@ -114,6 +114,9 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	}
 	// zooms are the pictures built, by page, for a drag on a zoomed one.
 	zooms := map[int]*zoomPage{}
+	// pinched is when a picture's zoom last changed: a pinch, whose fingers
+	// the pans over the pictures must leave alone.
+	var pinched time.Time
 	pages := make([]core.Node, len(v.images))
 	for i := range v.images {
 		i := i
@@ -160,7 +163,14 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 				// once loaded.
 				sharp, full := false, false
 				zoomedHere := core.NewSignal(cx, false)
+				// The CDN crops its copies of a long picture to the top, which
+				// under the whole of it showed a slice of it a second time: a
+				// long picture shows its original alone.
+				long := im.Width > 0 && im.Height > 0 && float64(im.Width)/float64(im.Height) < longImageRatio
 				medium := func() string {
+					if long {
+						return ""
+					}
 					if current.Get() == i {
 						sharp = true
 					}
@@ -170,7 +180,7 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 					return ""
 				}
 				original := func() string {
-					if zoomedHere.Get() {
+					if long && current.Get() == i || zoomedHere.Get() {
 						full = true
 					}
 					if full && thumbURL(im, thumbMedium) != im.URL {
@@ -182,6 +192,9 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 					Ref: &zoom, MinZoomScale: 1, MaxZoomScale: 4, CenterContent: true, HideIndicator: true,
 					OnScroll: func(e core.ScrollEvent) {
 						zp.off, zp.content, zp.size = e.Offset, e.ContentSize, e.Size
+						if e.ZoomScale != scale {
+							pinched = time.Now()
+						}
 						scale = e.ZoomScale
 						zoomedHere.Set(e.ZoomScale > 1.05)
 						if current.GetUntracked() == i {
@@ -197,7 +210,12 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 							saving.Set(true)
 						},
 						Children: []core.Node{
-							a.picOf(cx, thumbURL(im, thumbSmall), core.Contain, "", fillAbs),
+							a.pic(cx, func() string {
+								if long {
+									return ""
+								}
+								return thumbURL(im, thumbSmall)
+							}, core.Contain, "", fillAbs),
 							a.pic(cx, medium, core.Contain, "", fillAbs),
 							a.pic(cx, original, core.Contain, "", fillAbs),
 						},
@@ -227,6 +245,10 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 		var moving *zoomPage
 		var from core.Point
 		row.OnPan, row.PanActivation = func(e core.PanEvent) {
+			if time.Since(pinched) < 150*time.Millisecond {
+				moving = nil // a pinch's fingers move the picture's own zoom
+				return
+			}
 			if e.Phase == core.GestureBegan && zoomed.GetUntracked() {
 				if zp := zooms[current.GetUntracked()]; zp != nil {
 					moving, from = zp, zp.off
@@ -288,7 +310,23 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	var panning *zoomPage
 	var panFrom core.Point
 	android := cx.Env().OS() == core.OSAndroid
+	pinching := false
 	onPan := func(e core.PanEvent) {
+		if e.Phase == core.GestureBegan {
+			pinching = false
+		}
+		if !pinching && time.Since(pinched) < 150*time.Millisecond {
+			// A pinch is under way: what this pan moved goes back at once.
+			pinching = true
+			panning = nil
+			if dragging.GetUntracked() {
+				dragging.Set(false)
+				dragY.Set(0)
+			}
+		}
+		if pinching {
+			return
+		}
 		if panning != nil {
 			to := panning.clamp(core.Point{X: panFrom.X - e.Translation.X, Y: panFrom.Y - e.Translation.Y})
 			switch e.Phase {
