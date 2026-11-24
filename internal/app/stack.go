@@ -107,10 +107,13 @@ func (s *pageStack) view(cx *core.Scope, shell func(cx *core.Scope) core.Node, p
 			}
 			return base.NavPage{HeaderHidden: true, Class: "bg-background", Children: []core.Node{shell(cx)}}
 		}
+		// The image viewer covers the page: iOS's edge swipe, which goes to the
+		// stack before any handler, must not pop the page under it.
+		viewing := func() bool { return s.a.viewing.Get() != nil }
 		if !android {
-			return base.NavPage{HeaderHidden: true, Class: "bg-background", Children: []core.Node{page(cx, r)}}
+			return base.NavPage{HeaderHidden: true, Class: "bg-background", NoPopOnSwipeFunc: viewing, Children: []core.Node{page(cx, r)}}
 		}
-		return base.NavPage{HeaderHidden: true, Children: []core.Node{s.moving(cx, r, page(cx, r))}}
+		return base.NavPage{HeaderHidden: true, NoPopOnSwipeFunc: viewing, Children: []core.Node{s.moving(cx, r, page(cx, r))}}
 	})
 	if !android {
 		return stack

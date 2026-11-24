@@ -194,10 +194,17 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 			}},
 		}
 	}
+	// moving is whether the user moves the pages, by a drag and the snap
+	// after it, and gliding whether a tap's animated jump does: only the user
+	// chooses a tab by the offset. iOS sets the offset of a page another
+	// covers back to 0, which would otherwise choose the first tab.
+	moving, gliding := false, false
 	jump := func(i int, animated bool) {
+		gliding = animated
 		g.pages.ScrollTo(core.Point{X: core.Points(i) * g.width.GetUntracked()}, animated)
 	}
 	g.jump = jump
+	rest := func(core.ScrollEvent) { moving, gliding = false, false }
 	pager := core.Scroll{
 		Horizontal: true, HideIndicator: true, Ref: &g.pages,
 		Behavior: core.ScrollBehavior{Paging: true},
@@ -218,12 +225,23 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 				return
 			}
 			pos := e.Offset.X / e.Size.Width
+			sel := g.selected.GetUntracked()
+			if !moving && !gliding {
+				g.pos.Set(float32(sel))
+				if want := core.Points(sel) * e.Size.Width; e.Offset.X < want-1 || e.Offset.X > want+1 {
+					jump(sel, false)
+				}
+				return
+			}
 			g.pos.Set(float32(pos))
-			if i := int(pos + 0.5); i != g.selected.GetUntracked() {
+			if i := int(pos + 0.5); moving && i != sel {
 				g.selected.Set(i)
 				g.tabRefs[i].Reveal(core.RevealOptions{})
 			}
 		},
+		OnScrollDragStart: func(core.ScrollEvent) { moving = true },
+		OnScrollEnd:       rest,
+		OnMomentumEnd:     rest,
 		Children: []core.Node{core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}},
 	}
 	return column(fill, "", g.strip(cx, jump), pager)
