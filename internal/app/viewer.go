@@ -212,11 +212,43 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 			return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get()), Overflow: core.Hidden}
 		}, Children: []core.Node{pages[i]}}
 	}
+	row := core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}
+	byPan := swipesByPan(cx)
+	if byPan {
+		sp := &swipePager{ref: &pager, width: width.GetUntracked, count: len(v.images), at: current.GetUntracked,
+			goTo: func(i int) {
+				page = i
+				current.Set(i)
+				pager.ScrollTo(core.Point{X: core.Points(i) * width.GetUntracked()}, true)
+			}}
+		// A zoomed picture takes the drag to move about in it, which this pan
+		// over it would otherwise keep.
+		var moving *zoomPage
+		var from core.Point
+		row.OnPan, row.PanActivation = func(e core.PanEvent) {
+			if e.Phase == core.GestureBegan && zoomed.GetUntracked() {
+				if zp := zooms[current.GetUntracked()]; zp != nil {
+					moving, from = zp, zp.off
+				}
+			}
+			if moving == nil {
+				sp.pan(e)
+				return
+			}
+			to := moving.clamp(core.Point{X: from.X - e.Translation.X, Y: from.Y - e.Translation.Y})
+			moving.ref.ScrollTo(to, false)
+			if e.Phase == core.GestureEnded || e.Phase == core.GestureCancelled {
+				moving = nil
+			}
+		}, swipeActivation
+	}
 	paged := core.Scroll{
 		Horizontal: true, HideIndicator: true, Ref: &pager,
 		// A zoomed picture takes the drags, to move about in it.
-		BehaviorFunc: func() core.ScrollBehavior { return core.ScrollBehavior{Paging: true, NoScroll: zoomed.Get()} },
-		Style:        fill.Merge(core.Style{Direction: core.Row}),
+		BehaviorFunc: func() core.ScrollBehavior {
+			return core.ScrollBehavior{Paging: true, NoScroll: byPan || zoomed.Get()}
+		},
+		Style: fill.Merge(core.Style{Direction: core.Row}),
 		OnLayout: func(b core.Bounds) {
 			if b.Size.Width == 0 {
 				return // laid out under a page a back gesture previews
@@ -241,7 +273,7 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 		},
 		OnScrollEnd:   settle,
 		OnMomentumEnd: settle,
-		Children:      []core.Node{core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}},
+		Children:      []core.Node{row},
 	}
 
 	// A drag down moves the pictures with the finger and fades the black

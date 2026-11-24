@@ -211,9 +211,23 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 	}
 	g.jump = jump
 	placed := false
+	row := core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}
+	byPan := swipesByPan(cx)
+	if byPan {
+		sp := &swipePager{ref: &g.pages, width: g.width.GetUntracked, count: len(g.tabs), at: g.selected.GetUntracked,
+			goTo: func(i int) {
+				if i != g.selected.GetUntracked() {
+					g.selected.Set(i)
+					g.tabRefs[i].Reveal(core.RevealOptions{})
+				}
+				jump(i, true)
+			}}
+		row.OnPan, row.PanActivation = sp.pan, swipeActivation
+	}
 	pager := core.Scroll{
+		TestID:     "pages",
 		Horizontal: true, HideIndicator: true, Ref: &g.pages,
-		Behavior: core.ScrollBehavior{Paging: true},
+		Behavior: core.ScrollBehavior{Paging: true, NoScroll: byPan},
 		Style:    fill.Merge(core.Style{Direction: core.Row}),
 		// A page a back gesture previews is laid out at 0 for a moment; its
 		// pages keep the width they had, or they would empty and the offset
@@ -221,7 +235,11 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 		// really changes, as turning the phone does, are set to the selected
 		// tab.
 		OnLayout: func(b core.Bounds) {
-			if w := b.Size.Width; w > 0 && (w != g.width.GetUntracked() || !placed) {
+			if b.Size.Width == 0 {
+				placed = false // iOS moves the offset to 0 meanwhile
+				return
+			}
+			if w := b.Size.Width; w != g.width.GetUntracked() || !placed {
 				placed = true
 				g.width.Set(w)
 				jump(g.selected.GetUntracked(), false)
@@ -229,7 +247,11 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 		},
 		OnScrollDragStart: func(core.ScrollEvent) { glide = -1 }, // a drag takes over a glide
 		OnScroll: func(e core.ScrollEvent) {
-			if e.Stale || e.Size.Width == 0 {
+			if e.Size.Width == 0 {
+				placed = false
+				return
+			}
+			if e.Stale {
 				return
 			}
 			off, w := e.Offset.X, e.Size.Width
@@ -252,7 +274,7 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 				g.tabRefs[i].Reveal(core.RevealOptions{})
 			}
 		},
-		Children: []core.Node{core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}},
+		Children: []core.Node{row},
 	}
 	return column(fill, "", g.strip(cx, jump), pager)
 }
