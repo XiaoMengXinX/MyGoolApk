@@ -213,7 +213,8 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 		}, Children: []core.Node{pages[i]}}
 	}
 	row := core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}
-	byPan := swipesByPan(cx)
+	// Android pages the pictures itself well: no lists are in them to slant into.
+	byPan := cx.Env().OS() == core.OSIOS
 	if byPan {
 		sp := &swipePager{ref: &pager, width: width.GetUntracked, count: len(v.images), at: current.GetUntracked,
 			goTo: func(i int) {
@@ -294,8 +295,9 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 			case core.GestureChanged:
 				panning.ref.ScrollTo(to, false)
 			case core.GestureEnded, core.GestureCancelled:
-				// The flick goes on a little, as a scroll view's would.
-				panning.ref.ScrollTo(panning.clamp(core.Point{X: to.X - e.Velocity.X*0.25, Y: to.Y - e.Velocity.Y*0.25}), true)
+				// The picture stays where the finger left it: an animated scroll
+				// on from there jumped there at once on Android.
+				panning.ref.ScrollTo(to, false)
 				panning = nil
 			}
 			return
