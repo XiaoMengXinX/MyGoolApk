@@ -46,3 +46,4 @@ require (
 replace github.com/XiaoMengXinX/CoolapkApi-Go => ../../CoolapkApi-Go
 
 tool github.com/nsgo-dev/nsgo/cmd/nsgo
+replace github.com/nsgo-dev/nsgo => ../nsgo
