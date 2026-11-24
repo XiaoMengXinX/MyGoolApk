@@ -311,10 +311,19 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	var panFrom core.Point
 	android := cx.Env().OS() == core.OSAndroid
 	pinching := false
+	// A finger that goes down or up during a pan moves its translation at
+	// once, to the new middle of the fingers: such a step moves nothing.
+	var lastT, skipped core.Point
 	onPan := func(e core.PanEvent) {
 		if e.Phase == core.GestureBegan {
 			pinching = false
+			lastT, skipped = core.Point{}, core.Point{}
 		}
+		if step := (core.Point{X: e.Translation.X - lastT.X, Y: e.Translation.Y - lastT.Y}); step.X*step.X+step.Y*step.Y > 40*40 {
+			skipped = core.Point{X: skipped.X + step.X, Y: skipped.Y + step.Y}
+		}
+		lastT = e.Translation
+		e.Translation = core.Point{X: e.Translation.X - skipped.X, Y: e.Translation.Y - skipped.Y}
 		if !pinching && time.Since(pinched) < 150*time.Millisecond {
 			// A pinch is under way: what this pan moved goes back at once.
 			pinching = true
