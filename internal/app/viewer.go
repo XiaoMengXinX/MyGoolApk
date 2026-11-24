@@ -81,12 +81,18 @@ func (a *App) viewerLayer() core.Node {
 	})
 }
 
-// dismissDistance is how far a picture is dragged down before letting go
-// closes the viewer.
+// dismissDistance is how far a picture is dragged up or down before letting
+// go closes the viewer.
 const dismissDistance core.Points = 120
 
+// glideTime is how long a zoomed picture glides on after a fling.
+const glideTime = 600 * time.Millisecond
+
+// easeOutCubic is 1-(1-t)³.
+var easeOutCubic = core.Curve{X1: 0.33, Y1: 1, X2: 0.68, Y2: 1}
+
 // viewerPage is the full-screen picture viewer: black, a page per picture
-// that pinches and double taps to zoom, a tap to close, a drag down to close
+// that pinches and double taps to zoom, a tap to close, a drag up or down to close
 // and a long press that offers to save.
 func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	width := core.NewSignal(cx, core.Points(0))
@@ -117,6 +123,17 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	// pinched is when a picture's zoom last changed: a pinch, whose fingers
 	// the pans over the pictures must leave alone.
 	var pinched time.Time
+	// glide carries on a zoomed picture the App drags after the finger lets go,
+	// as its scroll view's own fling does; stopGlide stops it, saying whether it ran.
+	var glide func()
+	stopGlide := func() bool {
+		if glide == nil {
+			return false
+		}
+		glide()
+		glide = nil
+		return true
+	}
 	pages := make([]core.Node, len(v.images))
 	for i := range v.images {
 		i := i
@@ -144,6 +161,9 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 				// A single tap closes the viewer once the double tap's window has
 				// passed; a second tap zooms in on its point, or out again.
 				press := func(e core.PressEvent) {
+					if stopGlide() {
+						return // a tap on a gliding picture stops it, as on a fling
+					}
 					if closing != nil {
 						closing()
 						closing = nil
@@ -299,39 +319,38 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 		Children:      []core.Node{row},
 	}
 
-	// A drag down moves the pictures with the finger and fades the black
+	// A drag up or down moves the pictures with the finger and fades the black
 	// behind them, which closes the viewer past dismissDistance or on a fling,
 	// and springs back before it. Horizontal drags are the pager's and
 	// magnified pictures' own.
-	// On Android the drag down is an ancestor of the zoomed picture's scroll
+	// On Android the drag is an ancestor of the zoomed picture's scroll
 	// view and takes every vertical drag from it, so it moves a zoomed
 	// picture itself. iOS hands the drag to the scroll view first
 	// (PanScrollHandoff).
 	var panning *zoomPage
 	var panFrom core.Point
 	android := cx.Env().OS() == core.OSAndroid
+	// On Android a pan follows its first finger alone, and a pinch shows only
+	// once the picture's zoom changes: a pan begun by a pinch's first finger
+	// stops as the zoom changes. (A pinch handler of the viewer's own would
+	// take the touch from the pictures' native zoom.)
 	pinching := false
-	// A finger that goes down or up during a pan moves its translation at
-	// once, to the new middle of the fingers: such a step moves nothing.
-	var lastT, skipped core.Point
+	stopForPinch := func() {
+		pinching = true
+		stopGlide()
+		panning = nil
+		if dragging.GetUntracked() {
+			dragY.Set(0) // while dragging, so it goes back without the spring
+			dragging.Set(false)
+		}
+	}
 	onPan := func(e core.PanEvent) {
 		if e.Phase == core.GestureBegan {
 			pinching = false
-			lastT, skipped = core.Point{}, core.Point{}
+			stopGlide()
 		}
-		if step := (core.Point{X: e.Translation.X - lastT.X, Y: e.Translation.Y - lastT.Y}); step.X*step.X+step.Y*step.Y > 40*40 {
-			skipped = core.Point{X: skipped.X + step.X, Y: skipped.Y + step.Y}
-		}
-		lastT = e.Translation
-		e.Translation = core.Point{X: e.Translation.X - skipped.X, Y: e.Translation.Y - skipped.Y}
 		if !pinching && time.Since(pinched) < 150*time.Millisecond {
-			// A pinch is under way: what this pan moved goes back at once.
-			pinching = true
-			panning = nil
-			if dragging.GetUntracked() {
-				dragging.Set(false)
-				dragY.Set(0)
-			}
+			stopForPinch()
 		}
 		if pinching {
 			return
@@ -342,9 +361,18 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 			case core.GestureChanged:
 				panning.ref.ScrollTo(to, false)
 			case core.GestureEnded, core.GestureCancelled:
-				// The picture stays where the finger left it: an animated scroll
-				// on from there jumped there at once on Android.
 				panning.ref.ScrollTo(to, false)
+				if e.Phase == core.GestureEnded {
+					// An animated scroll on from there jumped there at once on
+					// Android: the glide steps it. The cubic starts at three times
+					// its mean speed, so a glide of velocity × glideTime/3 leaves
+					// at the finger's speed.
+					p := panning
+					end := p.clamp(core.Point{X: to.X - e.Velocity.X*core.Points(glideTime.Seconds()/3), Y: to.Y - e.Velocity.Y*core.Points(glideTime.Seconds()/3)})
+					glide = cx.Animate(glideTime, easeOutCubic, func(k float64) {
+						p.ref.ScrollTo(core.Point{X: to.X + (end.X-to.X)*core.Points(k), Y: to.Y + (end.Y-to.Y)*core.Points(k)}, false)
+					})
+				}
 				panning = nil
 			}
 			return
@@ -360,21 +388,21 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 			dragging.Set(true)
 		case core.GestureChanged:
 			if dragging.GetUntracked() {
-				dragY.Set(max(e.Translation.Y, 0))
+				dragY.Set(e.Translation.Y)
 			}
 		case core.GestureEnded, core.GestureCancelled:
 			if !dragging.GetUntracked() {
 				return
 			}
 			dragging.Set(false)
-			if dragY.GetUntracked() >= dismissDistance || e.Velocity.Y > 900 {
+			if y := dragY.GetUntracked(); y >= dismissDistance || y <= -dismissDistance || y > 0 && e.Velocity.Y > 900 || y < 0 && e.Velocity.Y < -900 {
 				a.closeViewer()
 				return
 			}
 			dragY.Set(0)
 		}
 	}
-	fade := func() float32 { return 1 - min(float32(dragY.Get())/500, 0.7) }
+	fade := func() float32 { return 1 - min(float32(max(dragY.Get(), -dragY.Get()))/500, 0.7) }
 	black := core.View{Class: "bg-black", Style: fillAbs, PointerEvents: core.PointerEventsNone,
 		StyleFunc: func() core.Style {
 			s := core.Style{Opacity: core.Alpha(fade())}
