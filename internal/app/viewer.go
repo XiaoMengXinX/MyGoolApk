@@ -112,6 +112,8 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 			current.Set(page)
 		}
 	}
+	// zooms are the pictures built, by page, for a drag on a zoomed one.
+	zooms := map[int]*zoomPage{}
 	pages := make([]core.Node, len(v.images))
 	for i := range v.images {
 		i := i
@@ -120,6 +122,13 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 			When: func() bool { return width.Get() > 0 && max(i-current.Get(), current.Get()-i) <= 1 },
 			Then: func(cx *core.Scope) core.Node {
 				var zoom core.Ref
+				zp := &zoomPage{ref: &zoom}
+				zooms[i] = zp
+				cx.Cleanup(func() {
+					if zooms[i] == zp {
+						delete(zooms, i)
+					}
+				})
 				scale := float32(1)
 				var closing func() bool
 				// A picture left zoomed comes back whole.
@@ -172,6 +181,7 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 				return core.Scroll{
 					Ref: &zoom, MinZoomScale: 1, MaxZoomScale: 4, CenterContent: true, HideIndicator: true,
 					OnScroll: func(e core.ScrollEvent) {
+						zp.off, zp.content, zp.size = e.Offset, e.ContentSize, e.Size
 						scale = e.ZoomScale
 						zoomedHere.Set(e.ZoomScale > 1.05)
 						if current.GetUntracked() == i {
@@ -220,7 +230,13 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 		},
 		OnScroll: func(e core.ScrollEvent) {
 			if !e.Stale && e.Size.Width > 0 {
-				pos.Set(float32(e.Offset.X / e.Size.Width))
+				p := e.Offset.X / e.Size.Width
+				pos.Set(float32(p))
+				// A page reached whole has settled, whether or not the
+				// platform reports the end of the scroll, as iOS may not.
+				if d := p - core.Points(int(p+0.5)); d > -0.005 && d < 0.005 {
+					settle(e)
+				}
 			}
 		},
 		OnScrollEnd:   settle,
@@ -232,10 +248,32 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	// behind them, which closes the viewer past dismissDistance or on a fling,
 	// and springs back before it. Horizontal drags are the pager's and
 	// magnified pictures' own.
+	// On Android the drag down is an ancestor of the zoomed picture's scroll
+	// view and takes every vertical drag from it, so it moves a zoomed
+	// picture itself. iOS hands the drag to the scroll view first
+	// (PanScrollHandoff).
+	var panning *zoomPage
+	var panFrom core.Point
+	android := cx.Env().OS() == core.OSAndroid
 	onPan := func(e core.PanEvent) {
+		if panning != nil {
+			to := panning.clamp(core.Point{X: panFrom.X - e.Translation.X, Y: panFrom.Y - e.Translation.Y})
+			switch e.Phase {
+			case core.GestureChanged:
+				panning.ref.ScrollTo(to, false)
+			case core.GestureEnded, core.GestureCancelled:
+				// The flick goes on a little, as a scroll view's would.
+				panning.ref.ScrollTo(panning.clamp(core.Point{X: to.X - e.Velocity.X*0.25, Y: to.Y - e.Velocity.Y*0.25}), true)
+				panning = nil
+			}
+			return
+		}
 		switch e.Phase {
 		case core.GestureBegan:
 			if zoomed.GetUntracked() {
+				if zp := zooms[current.GetUntracked()]; android && zp != nil {
+					panning, panFrom = zp, zp.off
+				}
 				return
 			}
 			dragging.Set(true)
@@ -265,7 +303,9 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 			return s
 		}}
 	content := core.View{
-		Style: fill, OnPan: onPan, PanActivation: core.PanActivation{ActiveOffsetY: 10, FailOffsetX: 10},
+		// A zoomed picture's own scroll view takes a drag first, and only
+		// what goes on past its edge moves the pictures away.
+		Style: fill, OnPan: onPan, PanActivation: core.PanActivation{ActiveOffsetY: 10, FailOffsetX: 10}, PanScrollHandoff: true,
 		StyleFunc: func() core.Style {
 			s := core.Style{Transform: core.Transform{TranslateY: dragY.Get()}}
 			if !dragging.Get() {
@@ -331,4 +371,19 @@ func (a *App) saveImage(im backend.Image) {
 			})
 		})
 	}()
+}
+
+// zoomPage is a picture of the viewer: its zoom scroll view and where it is.
+type zoomPage struct {
+	ref           *core.Ref
+	off           core.Point
+	content, size core.Size
+}
+
+// clamp keeps an offset of the zoomed content within its bounds.
+func (z *zoomPage) clamp(p core.Point) core.Point {
+	return core.Point{
+		X: max(0, min(p.X, z.content.Width-z.size.Width)),
+		Y: max(0, min(p.Y, z.content.Height-z.size.Height)),
+	}
 }

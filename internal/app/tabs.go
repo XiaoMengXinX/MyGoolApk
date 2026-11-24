@@ -194,54 +194,64 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 			}},
 		}
 	}
-	// moving is whether the user moves the pages, by a drag and the snap
-	// after it, and gliding whether a tap's animated jump does: only the user
-	// chooses a tab by the offset. iOS sets the offset of a page another
-	// covers back to 0, which would otherwise choose the first tab.
-	moving, gliding := false, false
+	// The offset chooses the tab as the user drags the pages, except that
+	// iOS sets the offset of a page another covers back to 0: an offset more
+	// than half a page from the last one in a single report came from
+	// elsewhere, and the pages go back to the selected tab. A tap's animated
+	// jump (glide) moves the indicator without choosing on the way.
+	last, glide := core.Points(-1), -1
 	jump := func(i int, animated bool) {
-		gliding = animated
-		g.pages.ScrollTo(core.Point{X: core.Points(i) * g.width.GetUntracked()}, animated)
+		w := g.width.GetUntracked()
+		if animated {
+			glide = i
+		} else {
+			glide, last = -1, core.Points(i)*w
+		}
+		g.pages.ScrollTo(core.Point{X: core.Points(i) * w}, animated)
 	}
 	g.jump = jump
-	rest := func(core.ScrollEvent) { moving, gliding = false, false }
+	placed := false
 	pager := core.Scroll{
 		Horizontal: true, HideIndicator: true, Ref: &g.pages,
 		Behavior: core.ScrollBehavior{Paging: true},
 		Style:    fill.Merge(core.Style{Direction: core.Row}),
 		// A page a back gesture previews is laid out at 0 for a moment; its
 		// pages keep the width they had, or they would empty and the offset
-		// would shrink to the first page. A width that really changes, as
-		// turning the phone does, leaves the offset where the old width put it:
-		// it is set again to the selected tab.
+		// would shrink to the first page. A new pager, and a width that
+		// really changes, as turning the phone does, are set to the selected
+		// tab.
 		OnLayout: func(b core.Bounds) {
-			if w := b.Size.Width; w > 0 && w != g.width.GetUntracked() {
+			if w := b.Size.Width; w > 0 && (w != g.width.GetUntracked() || !placed) {
+				placed = true
 				g.width.Set(w)
 				jump(g.selected.GetUntracked(), false)
 			}
 		},
+		OnScrollDragStart: func(core.ScrollEvent) { glide = -1 }, // a drag takes over a glide
 		OnScroll: func(e core.ScrollEvent) {
 			if e.Stale || e.Size.Width == 0 {
 				return
 			}
-			pos := e.Offset.X / e.Size.Width
-			sel := g.selected.GetUntracked()
-			if !moving && !gliding {
-				g.pos.Set(float32(sel))
-				if want := core.Points(sel) * e.Size.Width; e.Offset.X < want-1 || e.Offset.X > want+1 {
-					jump(sel, false)
+			off, w := e.Offset.X, e.Size.Width
+			pos := off / w
+			if glide >= 0 {
+				g.pos.Set(float32(pos))
+				if d := pos - core.Points(glide); d > -0.01 && d < 0.01 {
+					glide, last = -1, off
 				}
 				return
 			}
+			if last >= 0 && (off-last > w/2 || last-off > w/2) {
+				jump(g.selected.GetUntracked(), false)
+				return
+			}
+			last = off
 			g.pos.Set(float32(pos))
-			if i := int(pos + 0.5); moving && i != sel {
+			if i := int(pos + 0.5); i != g.selected.GetUntracked() {
 				g.selected.Set(i)
 				g.tabRefs[i].Reveal(core.RevealOptions{})
 			}
 		},
-		OnScrollDragStart: func(core.ScrollEvent) { moving = true },
-		OnScrollEnd:       rest,
-		OnMomentumEnd:     rest,
 		Children: []core.Node{core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}},
 	}
 	return column(fill, "", g.strip(cx, jump), pager)
