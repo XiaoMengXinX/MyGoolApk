@@ -78,6 +78,10 @@ type tabGroup struct {
 	a     *App
 	tabs  []pageTab
 	lists []*pageList
+	// pushed says the group is on a page pushed over the shell.
+	pushed bool
+	// head, when set, is above the tabs and scrolls away with the shown list.
+	head core.Node
 	// selected is the tab the strip marks; pos the pages' offset in pages,
 	// which moves the strip's indicator as a finger drags them.
 	selected *core.Signal[int]
@@ -134,10 +138,9 @@ func (g *tabGroup) list(cx *core.Scope, i int) *pageList {
 	case tabHeadline:
 		l = a.newPageList(cx, backend.HeadlineURL, tab.Title, nil, 0, "")
 	case tabFollow:
-		// The follow tab leads with its groups, as c001apk's does.
-		chosen := min(max(a.local.FollowGroup, 0), len(followGroups.Items)-1)
-		head := []backend.PageEntry{{Kind: backend.EntryCard, ID: "card:follow-groups", Card: followGroups}}
-		l = a.newPageList(cx, backend.FollowURL, tab.Title, head, chosen, followGroups.Items[chosen].URL)
+		// The follow tab leads with the server's own cards: the followed
+		// accounts with news, over the groups that choose its posts.
+		l = a.newPageList(cx, backend.FollowURL, tab.Title, nil, a.local.FollowGroup, "")
 		l.onChoose = func(i int) {
 			a.local.FollowGroup = i
 			a.saveLocalState()
@@ -148,14 +151,6 @@ func (g *tabGroup) list(cx *core.Scope, i int) *pageList {
 	g.lists[i] = l
 	return l
 }
-
-// followGroups are the groups the follow tab lists, without the apps'.
-var followGroups = &backend.Card{Kind: backend.CardSelector, Items: []backend.CardItem{
-	{Title: "全部关注", URL: backend.FollowURL},
-	{Title: "好友关注", URL: "/page?url=V9_HOME_TAB_FOLLOW&type=circle"},
-	{Title: "话题关注", URL: "/page?url=V9_HOME_TAB_FOLLOW&type=topic"},
-	{Title: "数码关注", URL: "/page?url=V9_HOME_TAB_FOLLOW&type=product"},
-}}
 
 // reload fetches again the tabs of kind that were shown, as after signing in
 // or out.
@@ -171,6 +166,15 @@ func (g *tabGroup) reload(kinds ...tabKind) {
 
 // view shows the tabs of g over its swiping pages.
 func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) core.Node {
+	var over *headed
+	if g.head != nil {
+		over = newHeaded(cx, g.selected, len(g.tabs), func(i int) *core.Ref {
+			if l := g.lists[i]; l != nil {
+				return &l.p.list
+			}
+			return nil
+		})
+	}
 	pages := make([]core.Node, len(g.tabs))
 	for i := range g.tabs {
 		i := i
@@ -189,7 +193,11 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 					if g.tabs[i].Kind == tabTopics {
 						return topics(cx)
 					}
-					return g.a.entryPane(cx, g.list(cx, i), false)
+					l, spec := g.list(cx, i), listSpec{pushed: g.pushed}
+					if over != nil {
+						spec = over.under(cx, i, spec, func() { l.p.items.Get(); l.p.loaded.Get() })
+					}
+					return g.a.entryList(cx, l, spec)
 				},
 			}},
 		}
@@ -276,20 +284,31 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 		},
 		Children: []core.Node{row},
 	}
+	if over != nil {
+		return over.view(g.head, g.strip(cx, jump), pager)
+	}
 	return column(fill, "", g.strip(cx, jump), pager)
 }
 
 // strip is MD3 primary tabs: each as wide as its label, the selected one in
-// primary with a 3dp indicator as wide as its label, over an
-// outline-variant rule. The strip scrolls when the tabs do not fit.
+// primary, over an outline-variant rule. The 3dp indicator slides between
+// the tabs as the pages do. The strip scrolls when the tabs do not fit.
 func (g *tabGroup) strip(cx *core.Scope, jump func(i int, animated bool)) core.Node {
-	tabs := make([]core.Node, len(g.tabs))
+	// centers are the middles of the tabs in the strip, known once laid out.
+	centers := make([]core.Points, len(g.tabs))
+	laid := core.NewSignal(cx, 0)
+	tabs := make([]core.Node, len(g.tabs), len(g.tabs)+1)
 	for i, tab := range g.tabs {
 		i := i
-		near := func() float32 { return min(1, max(0, 1-abs32(g.pos.Get()-float32(i)))) }
 		tabs[i] = core.View{
 			Ref: g.tabRefs[i], Role: core.RoleTab, Label: tab.Title,
-			Style: core.Style{Height: core.Pct(100), Padding: core.Symmetric(0, 16), JustifyContent: core.JustifyEnd, AlignItems: core.AlignCenter, Overflow: core.Hidden},
+			Style: core.Style{Height: core.Pct(100), Padding: core.Symmetric(0, 16), JustifyContent: core.JustifyCenter, AlignItems: core.AlignCenter, Overflow: core.Hidden},
+			OnLayout: func(b core.Bounds) {
+				if c := b.Origin.X + b.Size.Width/2; c != centers[i] {
+					centers[i] = c
+					laid.Set(laid.GetUntracked() + 1)
+				}
+			},
 			OnPress: func(core.PressEvent) {
 				if g.selected.GetUntracked() == i {
 					g.list(cx, i).p.list.ScrollTo(core.Point{}, true)
@@ -300,22 +319,31 @@ func (g *tabGroup) strip(cx *core.Scope, jump func(i int, animated bool)) core.N
 			},
 			Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 			Children: []core.Node{
-				column(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
-					core.Text{Content: tab.Title, MaxLines: 1, Style: textStyle(textSecondary, 500), Class: "text-on-surface-variant",
-						ClassFunc: func() string {
-							if near() >= 0.5 {
-								return "text-primary"
-							}
-							return "text-on-surface-variant"
-						}},
-					core.View{Class: "bg-primary", Style: core.Style{Height: core.Pt(3), CornerRadii: core.Corners{TopLeft: 3, TopRight: 3}},
-						StyleFunc: func() core.Style {
-							return core.Style{Width: core.Pct(100 * near()), Opacity: core.Alpha(near())}
-						}},
-				),
+				core.Text{Content: tab.Title, MaxLines: 1, Style: textStyle(textSecondary, 500), Class: "text-on-surface-variant",
+					ClassFunc: func() string {
+						if abs32(g.pos.Get()-float32(i)) < 0.5 {
+							return "text-primary"
+						}
+						return "text-on-surface-variant"
+					}},
 			},
 		}
 	}
+	const bar = 32
+	tabs = append(tabs, core.View{
+		PointerEvents: core.PointerEventsNone, Class: "bg-primary",
+		Style: core.Style{Position: core.Absolute, Bottom: core.Pt(0), Width: core.Pt(bar), Height: core.Pt(3), CornerRadii: core.Corners{TopLeft: 3, TopRight: 3}},
+		StyleFunc: func() core.Style {
+			laid.Get()
+			pos := min(max(g.pos.Get(), 0), float32(len(centers)-1))
+			i := min(int(pos), len(centers)-2)
+			if i < 0 {
+				return core.Style{Left: core.Pt(centers[0] - bar/2)}
+			}
+			c := centers[i] + (centers[i+1]-centers[i])*core.Points(pos-float32(i))
+			return core.Style{Left: core.Pt(c - bar/2)}
+		},
+	})
 	return column(core.Style{FlexShrink: 0}, "bg-background",
 		core.Scroll{Horizontal: true, HideIndicator: true, Style: core.Style{Height: core.Pt(48), FlexGrow: 0},
 			Children: []core.Node{row(core.Style{Height: core.Pct(100), Padding: core.Symmetric(0, 8)}, "", tabs...)}},
@@ -330,40 +358,58 @@ func abs32(x float32) float32 {
 	return x
 }
 
-// entryPane lists the rows of a server page.
-func (a *App) entryPane(cx *core.Scope, l *pageList, pushed bool) core.Node {
-	return pagerList(cx, l.p, listSpec{pushed: pushed, empty: "暂无内容", emptyHint: "这里还没有可显示的内容。", bottom: 24, skeleton: skeletonCard},
+// entryList lists the rows of a server page.
+// spec tells where the list is and what is around it.
+func (a *App) entryList(cx *core.Scope, l *pageList, spec listSpec) core.Node {
+	spec.empty, spec.emptyHint, spec.bottom, spec.skeleton = "暂无内容", "这里还没有可显示的内容。", 24, skeletonCard
+	return pagerList(cx, l.p, spec,
 		func(cx *core.Scope, get func() backend.PageEntry, r core.ListRow) core.Node {
-			kind := core.NewMemo(cx, func() backend.EntryKind { return get().Kind })
-			return core.Dynamic(func(cx *core.Scope) core.Node {
-				switch kind.Get() {
-				case backend.EntryCard:
-					return a.cardView(cx, get, l)
-				case backend.EntryFeed:
-					return a.feedCard(cx, func() backend.Feed {
-						if f := get().Feed; f != nil {
-							return *f
-						}
-						return backend.Feed{}
-					})
-				}
-				return a.entryRow(cx, get)
-			})
+			return a.entryView(cx, get, l)
 		})
 }
 
-// entryRow shows a product or a category as a list row.
+// entryView shows a row of a server page, rebuilt as it moves to a row of
+// another kind.
+func (a *App) entryView(cx *core.Scope, get func() backend.PageEntry, l *pageList) core.Node {
+	kind := core.NewMemo(cx, func() backend.EntryKind { return get().Kind })
+	return core.Dynamic(func(cx *core.Scope) core.Node {
+		switch kind.Get() {
+		case backend.EntryCard:
+			return a.cardView(cx, get, l)
+		case backend.EntryFeed:
+			return a.feedCard(cx, func() backend.Feed {
+				if f := get().Feed; f != nil {
+					return *f
+				}
+				return backend.Feed{}
+			})
+		}
+		return a.entryRow(cx, get)
+	})
+}
+
+// entryRow shows a product, a category or a link as a list row.
 func (a *App) entryRow(cx *core.Scope, get func() backend.PageEntry) core.Node {
 	return tap("条目", func() {
 		e := get()
-		if e.Kind == backend.EntryProduct {
+		switch e.Kind {
+		case backend.EntryProduct:
 			a.openTarget(&backend.Target{Title: e.Title, ID: e.ID, Product: true})
-		} else {
+		case backend.EntryLink:
+			a.openCardItem(backend.CardItem{Title: e.Title, URL: e.URL})
+		default:
 			a.openList(e.Title, e.URL)
 		}
 	}, core.Style{Direction: core.Row, Padding: core.Symmetric(12, 16), Gap: 16, AlignItems: core.AlignCenter}, "bg-background",
-		a.pic(cx, func() string { return get().LogoURL }, core.Cover, "bg-surface-container-highest",
-			core.Style{Width: core.Pt(48), Height: core.Pt(48), CornerRadius: 8, FlexShrink: 0}),
+		core.View{Class: "bg-surface-container-highest",
+			Style: core.Style{Width: core.Pt(48), Height: core.Pt(48), Overflow: core.Hidden, FlexShrink: 0},
+			StyleFunc: func() core.Style {
+				if get().Round {
+					return core.Style{CornerRadius: 24}
+				}
+				return core.Style{CornerRadius: 8}
+			},
+			Children: []core.Node{a.pic(cx, func() string { return get().LogoURL }, core.Cover, "", fillAbs)}},
 		column(fill.Merge(core.Style{Gap: 2}), "",
 			core.Text{ContentFunc: func() string { return get().Title }, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 500)},
 			core.Text{ContentFunc: func() string { return get().Subtitle }, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textSecondary, 400)},
