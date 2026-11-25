@@ -27,6 +27,9 @@ type coolapkBackend struct {
 	// configs are the versions of the products shown, by product id: the
 	// product's page tells them, and the card of its list shows them.
 	configs     map[string][]map[string]any
+	// flexURLs are the content-list urls of the pages whose configCard
+	// names one, by the page's url.
+	flexURLs    map[string]string
 	followURL   string
 	followTitle string
 }
@@ -110,6 +113,7 @@ func New(dir string) (backend.Backend, error) {
 		cursors:     make(map[string]apiCursor),
 		productTags: make(map[string]string),
 		configs:     make(map[string][]map[string]any),
+		flexURLs:    make(map[string]string),
 	}, nil
 }
 

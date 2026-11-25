@@ -262,6 +262,48 @@ func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (
 	if q.URL != backend.ProductCategoriesURL {
 		b.storeCursor(key, q.Page, feedCursor(objects))
 	}
+	// A page whose configCard names a flexList url lists nothing of its own:
+	// the posts come from that url, as the current clients load them apart.
+	if q.Page == 1 {
+		if u := flexListURL(objects); u != "" {
+			b.mu.Lock()
+			b.flexURLs[q.URL] = u
+			b.mu.Unlock()
+		}
+	}
+	b.mu.Lock()
+	flexURL := b.flexURLs[q.URL]
+	b.mu.Unlock()
+	if flexURL != "" {
+		inlineHasFeeds := false
+		for _, o := range objects {
+			if firstAPIString(o, "entityType") == "feed" {
+				inlineHasFeeds = true
+				break
+			}
+		}
+		if !inlineHasFeeds {
+			flexKey := key + "#flex"
+			flexCursor := b.cursor(flexKey, q.Page)
+			flexResp, flexErr := b.client.GetPageDataListWithCtx(ctx, coolapk.PageDataListRequest{
+				URL: flexURL, Title: q.Title, Page: q.Page, LastItem: flexCursor.last,
+			})
+			flexObjects, flexErr2 := listObjects(flexResp, flexErr)
+			if flexErr2 != nil && q.Page == 1 {
+				// The head cards are there; the posts simply do not follow yet.
+				return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: false}, nil
+			}
+			if flexErr2 != nil {
+				return backend.PageEntriesResult{}, flexErr2
+			}
+			b.storeCursor(flexKey, q.Page, feedCursor(flexObjects))
+			entries := entriesFromObjects(flexObjects)
+			if q.Page == 1 {
+				entries = append(entriesFromObjects(objects), entries...)
+			}
+			return backend.PageEntriesResult{Entries: entries, HasMore: len(flexObjects) > 0}, nil
+		}
+	}
 	// The card of a product's versions comes empty: the product's page told them.
 	for _, o := range objects {
 		if firstAPIString(o, "entityTemplate") == "productConfigList" && len(apiObjects(o, "entities")) == 0 {
@@ -523,4 +565,30 @@ func (b *coolapkBackend) tradeBrands(ctx context.Context, page int) (backend.Pag
 		return backend.PageEntriesResult{}, nil
 	}
 	return backend.PageEntriesResult{Entries: []backend.PageEntry{{Kind: backend.EntryCard, ID: "card:trade-kinds", Card: kinds}}}, nil
+}
+
+// flexListURL reads the url a page's configCard names for its content list,
+// which the clients fetch apart from the page's own cards.
+func flexListURL(objects []map[string]any) string {
+	for _, o := range objects {
+		if firstAPIString(o, "entityTemplate") != "configCard" {
+			continue
+		}
+		extra := apiObject(o, "extraDataArr")
+		if extra == nil {
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(firstAPIString(o, "extraData")), &parsed); err == nil {
+				extra = parsed
+			}
+		}
+		if extra == nil {
+			continue
+		}
+		if firstAPIString(extra, "flexList") != "" {
+			if u := firstAPIString(extra, "url"); u != "" {
+				return u
+			}
+		}
+	}
+	return ""
 }
