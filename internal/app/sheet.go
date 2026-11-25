@@ -9,6 +9,11 @@ import (
 // a drag handle over a scrim. It rises above the software keyboard and the
 // system's bottom bar, so a field in it stays in sight.
 func (a *App) bottomSheet(open func() bool, onClose func(), children ...core.Node) core.Node {
+	return a.sheet(open, onClose, "bg-surface-container-low", 24, children...)
+}
+
+// sheet is a bottom sheet of class whose content keeps side from its edges.
+func (a *App) sheet(open func() bool, onClose func(), class string, side core.Points, children ...core.Node) core.Node {
 	env := a.cx.Env()
 	handle := core.View{Class: "bg-on-surface-variant/40", Style: core.Style{Width: core.Pt(32), Height: core.Pt(4), CornerRadius: 2, AlignSelf: core.AlignCenter, FlexShrink: 0}}
 	return base.Sheet{
@@ -20,10 +25,10 @@ func (a *App) bottomSheet(open func() bool, onClose func(), children ...core.Nod
 		},
 		CloseOnSwipe:  true,
 		BackdropStyle: core.Style{Background: core.RGBA(0x000000, 0.32)},
-		PopupClass:    "bg-surface-container-low",
+		PopupClass:    class,
 		PopupStyleFunc: func() core.Style {
 			bottom := max(env.SafeArea().Bottom, env.KeyboardHeight())
-			return core.Style{Padding: core.Edges{Top: 12, Right: 24, Bottom: bottom + 16, Left: 24}, Gap: 12,
+			return core.Style{Padding: core.Edges{Top: 12, Right: side, Bottom: bottom + 16, Left: side}, Gap: 12,
 				CornerRadii: core.Corners{TopLeft: 28, TopRight: 28}}
 		},
 		Children: append([]core.Node{handle}, children...),

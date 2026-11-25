@@ -2,28 +2,13 @@ package app
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/nsgo-dev/nsgo/core"
 
 	"app/internal/backend"
 )
-
-// thread pages the nested replies of one comment.
-type thread struct {
-	page    int
-	loading *core.Signal[bool]
-	err     *core.Signal[string]
-}
-
-func (d *detail) thread(id string) *thread {
-	t := d.threads[id]
-	if t == nil {
-		t = &thread{loading: core.NewSignal(d.cx, false), err: core.NewSignal(d.cx, "")}
-		d.threads[id] = t
-	}
-	return t
-}
 
 type replyShape struct {
 	images   int
@@ -44,22 +29,39 @@ func (d *detail) replyRow(cx *core.Scope, get func() backend.Reply) core.Node {
 						return core.Group{}
 					}
 					return tonalPill(func() string { return "楼主" })
+				}),
+				dynamicShape(cx, func() bool { return get().Pinned }, func(cx *core.Scope, pinned bool) core.Node {
+					if !pinned {
+						return core.Group{}
+					}
+					return tonalPill(func() string { return "置顶" })
+				}),
+				dynamicShape(cx, func() bool { return get().Stance != "" }, func(cx *core.Scope, opinion bool) core.Node {
+					if !opinion {
+						return core.Group{}
+					}
+					return tonalPill(func() string { return get().Stance })
 				})),
 			dynamicShape(cx, func() bool { return replyText(get()) != "" }, func(cx *core.Scope, has bool) core.Node {
 				if !has {
 					return core.Group{} // a comment of pictures alone
 				}
+				// A long press opens the comment's menu, which copies it.
 				return a.richText(cx, func() ([]backend.RichSpan, string) {
 					r := get()
+					rich, text := r.Rich, r.Content
 					if len(r.Images) > 0 {
-						return withoutPicturePlaceholder(r.Rich), replyText(r)
+						rich, text = withoutPicturePlaceholder(r.Rich), replyText(r)
 					}
-					return r.Rich, r.Content
-				}, richOptions{size: textSecondary, class: "text-on-surface", selectable: true})
+					if len(rich) == 0 && text != "" {
+						rich = []backend.RichSpan{{Kind: backend.SpanText, Text: text}}
+					}
+					return append(replyLead(r), rich...), text
+				}, richOptions{size: textSecondary, class: "text-on-surface", hold: func() { d.menu.Set(new(get())) }})
 			}),
 			dynamicShape(cx, func() replyShape {
 				r := get()
-				return replyShape{len(r.Images), len(r.Children) > 0 || r.ChildrenTotal > 0}
+				return replyShape{len(r.Images), !r.Post && len(r.Children) > 0}
 			},
 				func(cx *core.Scope, s replyShape) core.Node {
 					var kids []core.Node
@@ -76,11 +78,101 @@ func (d *detail) replyRow(cx *core.Scope, get func() backend.Reply) core.Node {
 				}),
 			row(core.Style{AlignItems: core.AlignCenter}, "",
 				core.Text{ContentFunc: func() string { return formatTimeNow(get().CreatedAt) }, Class: "text-on-surface-variant", Style: fill.Merge(textStyle(textCaption, 400))},
-				d.replyLike(cx, get),
-				compactAction(&symbols.Comment, "text-on-surface-variant", nil, "回复", func() { d.openComposer(get().ID, displayName(get().Author.Name)) }),
+				dynamicShape(cx, func() bool { return get().Post }, func(cx *core.Scope, post bool) core.Node {
+					if post {
+						// An opinion or an answer is liked and answered on its own page.
+						return compactAction(&symbols.Comment, "text-on-surface-variant", func() string {
+							if n := get().ChildrenTotal; n > 0 {
+								return formatCount(n)
+							}
+							return ""
+						}, "查看全文", func() { a.push(routeFeed, get().ID) })
+					}
+					return row(core.Style{AlignItems: core.AlignCenter}, "",
+						d.replyLike(cx, get),
+						compactAction(&symbols.Comment, "text-on-surface-variant", nil, "回复", func() { d.openComposer(get().ID, displayName(get().Author.Name)) }),
+						compactAction(&symbols.More, "text-on-surface-variant", nil, "更多", func() { d.menu.Set(new(get())) }))
+				}),
 			),
 		),
 	)
+}
+
+// replyLead names whom a nested reply answers, before its text.
+func replyLead(r backend.Reply) []backend.RichSpan {
+	if r.ReplyToName == "" {
+		return nil
+	}
+	to := backend.RichSpan{Kind: backend.SpanText, Text: r.ReplyToName}
+	if r.ReplyToID != "" {
+		to = backend.RichSpan{Kind: backend.SpanUser, Text: r.ReplyToName, URL: "/u/" + r.ReplyToID}
+	}
+	return []backend.RichSpan{{Kind: backend.SpanText, Text: "回复 "}, to, {Kind: backend.SpanText, Text: "："}}
+}
+
+// replyMenu is the sheet of what else to do with the comment d.menu holds:
+// copy its text, see the replies under it, delete it when it is the
+// account's, and else report it on the site's page.
+func (d *detail) replyMenu() core.Node {
+	a := d.a
+	closeMenu := func() { d.menu.Set(nil) }
+	item := func(glyph *symbol, name string, fn func(r backend.Reply)) core.Node {
+		return tap(name, func() {
+			r := *d.menu.GetUntracked()
+			closeMenu()
+			fn(r)
+		}, core.Style{Direction: core.Row, Height: core.Pt(56), Gap: 16, AlignItems: core.AlignCenter}, "",
+			icon(glyph, 24, "text-on-surface-variant"), label(name, textBody, 400, "text-on-surface"))
+	}
+	return a.bottomSheet(func() bool { return d.menu.Get() != nil }, closeMenu,
+		core.Dynamic(func(cx *core.Scope) core.Node {
+			r := d.menu.Get()
+			if r == nil {
+				return core.Group{}
+			}
+			items := []core.Node{item(&symbols.Copy, "复制", func(r backend.Reply) {
+				a.cx.SetClipboard(replyText(r))
+				a.notice("已复制")
+			})}
+			if r.ChildrenTotal > 0 && d.thread.GetUntracked() == nil {
+				items = append(items, item(&symbols.Comment, "查看回复", d.openThread))
+			}
+			if r.Author.ID != "" && r.Author.ID == a.backend.SessionUID() {
+				items = append(items, item(&symbols.Delete, "删除", d.deleteReply))
+			} else {
+				items = append(items, item(&symbols.Flag, "举报", func(r backend.Reply) {
+					a.openWeb("https://m.coolapk.com/mp/do?c=feed&m=report&type=feed_reply&id=" + r.ID)
+				}))
+			}
+			return column(core.Style{}, "", items...)
+		}))
+}
+
+func (d *detail) deleteReply(r backend.Reply) {
+	backgroundErr(d.a, func(ctx context.Context) error { return d.a.backend.DeleteReply(ctx, r.ID) },
+		func(err error) {
+			if err != nil {
+				d.a.notice("删除失败：" + err.Error())
+				return
+			}
+			gone := func(x backend.Reply) bool { return x.ID == r.ID }
+			d.nested.items.Set(slices.DeleteFunc(slices.Clone(d.nested.items.GetUntracked()), gone))
+			items := slices.Clone(d.replies.items.GetUntracked())
+			if kept := slices.DeleteFunc(items, gone); len(kept) != len(items) {
+				d.replies.items.Set(kept)
+				f := d.feed.GetUntracked()
+				f.Stats.Comments--
+				d.feed.Set(f)
+				return
+			}
+			for i := range items {
+				if kept := slices.DeleteFunc(slices.Clone(items[i].Children), gone); len(kept) != len(items[i].Children) {
+					items[i].Children, items[i].ChildrenTotal = kept, items[i].ChildrenTotal-1
+					d.replies.items.Set(items)
+					return
+				}
+			}
+		})
 }
 
 // dynamicShape builds body again when the shape of its item changes.
@@ -138,33 +230,36 @@ func (d *detail) toggleReplyLike(id string, liked bool) {
 		})
 }
 
-// updateReply changes the reply with id, a comment or a nested reply.
+// updateReply changes the reply with id where it shows: among the comments,
+// among the replies a comment came with, and in the thread sheet.
 func (d *detail) updateReply(id string, fn func(*backend.Reply)) {
-	items := append([]backend.Reply(nil), d.replies.items.GetUntracked()...)
+	change := func(r backend.Reply) backend.Reply {
+		fn(&r)
+		return r
+	}
+	d.nested.update(id, change)
+	items := slices.Clone(d.replies.items.GetUntracked())
 	for i := range items {
 		if items[i].ID == id {
-			fn(&items[i])
+			items[i] = change(items[i])
 			d.replies.items.Set(items)
 			return
 		}
-		for j := range items[i].Children {
-			if items[i].Children[j].ID == id {
-				children := append([]backend.Reply(nil), items[i].Children...)
-				fn(&children[j])
-				items[i].Children = children
-				d.replies.items.Set(items)
-				return
-			}
+		if j := slices.IndexFunc(items[i].Children, func(c backend.Reply) bool { return c.ID == id }); j >= 0 {
+			items[i].Children = slices.Clone(items[i].Children)
+			items[i].Children[j] = change(items[i].Children[j])
+			d.replies.items.Set(items)
+			return
 		}
 	}
 }
 
-// threadBox shows the nested replies under a comment.
+// threadBox shows the nested replies a comment came with, and opens the
+// sheet of all of them.
 func (d *detail) threadBox(cx *core.Scope, get func() backend.Reply) core.Node {
 	a := d.a
 	return core.Dynamic(func(cx *core.Scope) core.Node {
 		r := get()
-		t := d.thread(r.ID)
 		var kids []core.Node
 		for _, child := range r.Children {
 			child := child
@@ -188,60 +283,96 @@ func (d *detail) threadBox(cx *core.Scope, get func() backend.Reply) core.Node {
 				body = withoutPicturePlaceholder(body)
 			}
 			spans = append(spans, body...)
+			// A press on a reply answers it, and a long one opens its menu.
 			kids = append(kids, a.richText(cx, func() ([]backend.RichSpan, string) { return spans, "" },
-				richOptions{size: textSecondary, class: "text-on-surface", selectable: true}))
+				richOptions{size: textSecondary, class: "text-on-surface",
+					press: func() { d.openComposer(child.ID, displayName(child.Author.Name)) },
+					hold:  func() { d.menu.Set(&child) }}))
 			if len(child.Images) > 0 {
 				kids = append(kids, a.threadPictures(cx, child.Images))
 			}
 		}
-		parentID := r.ID
-		kids = append(kids, core.Dynamic(func(cx *core.Scope) core.Node {
-			switch {
-			case t.loading.Get():
-				return spinner()
-			case t.err.Get() != "":
-				return column(core.Style{Gap: 4}, "",
-					core.Text{Content: t.err.Get(), MaxLines: 2, Class: "text-error", Style: textStyle(textCaption, 400)},
-					textButton("重试", func() { d.loadThread(parentID) }))
-			case r.ChildrenHasMore:
-				text := "查看更多回复"
-				if r.ChildrenTotal > len(r.Children) {
-					text = "查看全部 " + formatCount(r.ChildrenTotal) + " 条回复"
-				}
-				return tap(text, func() { d.loadThread(parentID) }, core.Style{}, "", label(text, textSecondary, 500, "text-primary"))
+		if r.ChildrenHasMore {
+			text := "查看更多回复"
+			if r.ChildrenTotal > len(r.Children) {
+				text = "查看全部 " + formatCount(r.ChildrenTotal) + " 条回复"
 			}
-			return core.Group{}
-		}))
+			kids = append(kids, tap(text, func() { d.openThread(r) }, core.Style{}, "", label(text, textSecondary, 500, "text-primary")))
+		}
 		return column(core.Style{Padding: core.All(12), Gap: 8, CornerRadius: 8}, "bg-surface-container-low", kids...)
 	})
 }
 
-func (d *detail) loadThread(parentID string) {
-	t := d.thread(parentID)
-	if t.loading.GetUntracked() {
-		return
+// openThread lists all the replies under comment r in the thread sheet.
+func (d *detail) openThread(r backend.Reply) {
+	d.threadY = 0
+	d.thread.Set(&r)
+	d.nested.reset()
+}
+
+// fetchNested lists the replies under the comment parent names, none without one.
+func (d *detail) fetchNested(ctx context.Context, parent string, page int) ([]backend.Reply, bool, error) {
+	if parent == "" {
+		return nil, false, nil
 	}
-	t.loading.Set(true)
-	t.err.Set("")
-	page, gen := t.page+1, d.replies.gen
-	background(d.a, func(ctx context.Context) (backend.ReplyPage, error) {
-		return d.a.backend.Replies(ctx, backend.ReplyQuery{FeedID: d.id, ParentID: parentID, Page: page})
-	}, func(r backend.ReplyPage, err error) {
-		if gen != d.replies.gen {
-			return
+	r, err := d.a.backend.Replies(ctx, backend.ReplyQuery{FeedID: d.id, ParentID: parent, Page: page})
+	return r.Replies, r.HasMore, err
+}
+
+// threadSheet is the sheet of a comment and all the replies under it.
+func (d *detail) threadSheet(cx *core.Scope) core.Node {
+	a := d.a
+	// The comment leads the list without the replies it came with, which the
+	// list shows.
+	parent := func() backend.Reply {
+		p := d.thread.Get()
+		if p == nil {
+			return backend.Reply{}
 		}
-		t.loading.Set(false)
-		if err != nil {
-			t.err.Set(err.Error())
-			return
+		r, _ := d.replies.find(p.ID)
+		if r.ID == "" {
+			r = *p
 		}
-		t.page = page
-		// The first page repeats the preview the comment came with.
-		d.updateReply(parentID, func(p *backend.Reply) {
-			p.Children = mergeByID(p.Children, r.Replies, func(r backend.Reply) string { return r.ID })
-			p.ChildrenHasMore = r.HasMore
+		r.Children, r.ChildrenTotal = nil, 0
+		return r
+	}
+	title := func() string {
+		if p := d.thread.Get(); p != nil && p.ChildrenTotal > 0 {
+			return formatCount(p.ChildrenTotal) + " 条回复"
+		}
+		return "回复"
+	}
+	// The sheet hides while a page it opened covers the post, and comes back
+	// as it was, scrolled where it was.
+	return a.sheet(func() bool { return d.thread.Get() != nil && !d.covered() }, func() {
+		if !d.covered() {
+			d.thread.Set(nil)
+			d.threadY = 0
+		}
+	}, "bg-background", 0,
+		core.Text{ContentFunc: title, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 500).Merge(core.Style{Padding: core.Symmetric(0, 16)})},
+		core.View{
+			// The sheet is as wide as what it holds, which a list is not: it
+			// gets the window's width, and its rows wrap in it.
+			StyleFunc: func() core.Style {
+				w := a.cx.Env().Window()
+				return core.Style{Width: core.Pt(w.Width), Height: core.Pt(w.Height * 0.7)}
+			},
+			// Shown again, the list goes back to where it was.
+			OnLayout: func(core.Bounds) {
+				if y := d.threadY; y > 0 {
+					d.nested.list.ScrollTo(core.Point{Y: y}, false)
+				}
+			},
+			Children: []core.Node{pagerList(cx, d.nested, listSpec{empty: "暂无回复", bottom: 8,
+				onScroll: func(e core.ScrollEvent) {
+					if !e.Stale {
+						d.threadY = e.Offset.Y
+					}
+				},
+				header: column(core.Style{}, "", d.replyRow(cx, parent), core.View{Class: "bg-surface-container-low", Style: core.Style{Height: core.Pt(8)}}),
+			}, func(cx *core.Scope, get func() backend.Reply, r core.ListRow) core.Node { return d.replyRow(cx, get) })},
 		})
-	})
 }
 
 // composer is the bottom sheet that writes a comment or a reply.
@@ -282,6 +413,14 @@ func (c *composer) sheet(d *detail) core.Node {
 		}
 		return "评论"
 	}
+	// The keyboard goes with the sheet, however it closes: a press on the
+	// backdrop leaves the field focused otherwise.
+	var field core.Ref
+	d.cx.Effect(func() {
+		if !c.isOpen.Get() {
+			field.Blur()
+		}
+	})
 	return d.a.bottomSheet(c.isOpen.Get, func() {
 		if !c.submitting.GetUntracked() {
 			c.isOpen.Set(false)
@@ -289,7 +428,7 @@ func (c *composer) sheet(d *detail) core.Node {
 	},
 		core.Text{ContentFunc: title, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 500)},
 		core.Input{
-			Multiline: true, AutoFocus: true, Placeholder: "说点什么…", Label: "评论",
+			Ref: &field, Multiline: true, AutoFocus: true, Placeholder: "说点什么…", Label: "评论",
 			Value: c.text.Get, OnChange: func(s string) { c.text.Set(s); c.err.Set("") },
 			Disabled: c.submitting.Get, Class: "bg-surface-container-highest text-on-surface",
 			Style: func() core.Style {
@@ -325,9 +464,13 @@ func (d *detail) submitReply() {
 				d.feed.Set(f)
 			default:
 				if _, ok := d.replies.find(draft.ParentID); ok {
-					d.updateReply(draft.ParentID, func(p *backend.Reply) { p.Children = append(append([]backend.Reply(nil), p.Children...), reply) })
+					d.updateReply(draft.ParentID, func(p *backend.Reply) {
+						p.Children, p.ChildrenTotal = append(slices.Clone(p.Children), reply), p.ChildrenTotal+1
+					})
+				}
+				if d.thread.GetUntracked() != nil {
+					d.nested.reload()
 				} else {
-					// A reply to a nested reply shows in its thread on refresh.
 					d.a.notice("回复已发送")
 				}
 			}

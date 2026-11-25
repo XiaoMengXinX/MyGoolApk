@@ -40,12 +40,15 @@ func (a *App) feedCard(cx *core.Scope, get func() backend.Feed) core.Node {
 	// view that takes one, so a card that is itself pressable would open its
 	// post whatever was pressed in it.
 	return column(core.Style{}, "bg-background",
-		column(core.Style{Padding: core.Edges{Top: 16, Right: 16, Bottom: 8, Left: 16}, Gap: 12}, "",
+		// The press area under the card: its parts let a press on empty space
+		// through to it.
+		tap("查看帖子", open, fillAbs, ""),
+		through(column(core.Style{Padding: core.Edges{Top: 16, Right: 16, Bottom: 8, Left: 16}, Gap: 12}, "",
 			a.feedHeader(cx, get, 40),
 			dynamicOnShape(cx, func() feedShape { return shapeOfFeed(get(), 6) },
 				func(cx *core.Scope, s feedShape) core.Node { return a.feedBody(cx, get, s) }),
-		),
-		row(core.Style{Padding: core.Edges{Right: 16, Bottom: 8, Left: 16}, Gap: 16, AlignItems: core.AlignCenter}, "",
+		)),
+		through(row(core.Style{Padding: core.Edges{Right: 16, Bottom: 8, Left: 16}, Gap: 16, AlignItems: core.AlignCenter}, "",
 			dynamicShape(cx, func() bool { return get().Target != nil }, func(cx *core.Scope, has bool) core.Node {
 				if !has {
 					return core.Group{}
@@ -54,7 +57,7 @@ func (a *App) feedCard(cx *core.Scope, get func() backend.Feed) core.Node {
 			}),
 			tap("查看帖子", open, fill.Merge(core.Style{Direction: core.Row, JustifyContent: core.JustifyEnd, Height: core.Pt(32), AlignItems: core.AlignCenter}), "",
 				feedStats(get)),
-		),
+		)),
 		core.View{Style: core.Style{Height: core.Pt(8)}, Class: "bg-surface-container-low"})
 }
 
@@ -94,20 +97,23 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 		f := get()
 		return joinNonEmpty([]string{formatTime(time.Now(), f.PublishedAt), f.Device, f.Location}, "  ")
 	}
-	return row(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
+	return through(row(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
 		tap("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 0, CornerRadius: size / 2, Overflow: core.Hidden}, "",
 			a.avatar(cx, author, size)),
-		tap("作者主页", func() { a.openUser(author()) }, fill.Merge(core.Style{Gap: 2}), "",
-			authorName(cx, author, textSecondary),
+		// The name opens the author; the room beside it is the card's.
+		tap("作者主页", func() { a.openUser(author()) }, core.Style{Gap: 2, FlexShrink: 1, MinWidth: core.Pt(0)}, "",
+			authorName(cx, author, textBody),
 			core.Text{ContentFunc: meta, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
 		),
-		dynamicShape(cx, func() bool { return get().Kind != backend.PostText }, func(cx *core.Scope, badge bool) core.Node {
+		core.View{Style: core.Style{FlexGrow: 1}, PointerEvents: core.PointerEventsNone},
+		// A rating heads its text with its own tags.
+		dynamicShape(cx, func() bool { k := get().Kind; return k != backend.PostText && k != backend.PostRating }, func(cx *core.Scope, badge bool) core.Node {
 			if badge {
 				return tonalPill(func() string { return get().Kind.Label() })
 			}
 			return core.Group{}
 		}),
-	)
+	))
 }
 
 // avatar is a user's picture in a circle, or a gray disc without one.
@@ -154,26 +160,34 @@ func (a *App) feedBody(cx *core.Scope, get func() backend.Feed, s feedShape) cor
 	}
 	switch s.kind {
 	case backend.PostArticle, backend.PostTrade:
-		return column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), a.coverImage(cx, get, s))
+		return through(column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), a.coverImage(cx, get, s)))
 	case backend.PostQuestion:
-		return column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), core.Text{
+		return through(column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), core.Text{
 			ContentFunc: func() string {
 				f := get()
 				return joinNonEmpty([]string{countLabel(f.Answers, "个回答"), countLabel(f.Followers, "人关注")}, "  ")
 			},
-			Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)})
+			Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)}))
 	case backend.PostAnswer:
-		return column(core.Style{Gap: 12}, "", core.Dynamic(func(cx *core.Scope) core.Node {
+		return through(column(core.Style{Gap: 12}, "", core.Dynamic(func(cx *core.Scope) core.Node {
 			if !s.title {
 				return core.Group{}
 			}
 			return column(core.Style{Padding: core.Symmetric(10, 12), CornerRadius: 8}, "bg-surface-container-high",
 				core.Text{ContentFunc: func() string { return get().Title }, MaxLines: 2, Class: "text-on-surface", Style: textStyle(textSecondary, 600)})
-		}), a.feedContent(cx, get, s, 5), a.feedMedia(cx, get, s, false))
+		}), a.feedContent(cx, get, s, 5), a.feedMedia(cx, get, s, false, nil)))
+	case backend.PostRating:
+		return through(column(core.Style{Gap: 12}, "", a.ratingSummary(cx, get), a.feedMedia(cx, get, s, false, nil)))
 	case backend.PostVideo, backend.PostVote:
-		return column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), a.feedMedia(cx, get, s, false))
+		return through(column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), a.feedMedia(cx, get, s, false, nil)))
 	}
-	return column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 6), a.feedMedia(cx, get, s, false))
+	price := dynamicShape(cx, func() bool { return get().Price != "" }, func(cx *core.Scope, has bool) core.Node {
+		if !has {
+			return core.Group{}
+		}
+		return labelFunc(func() string { return get().Price }, textBody, 600, "text-error")
+	})
+	return through(column(core.Style{Gap: 12}, "", title(), price, a.feedContent(cx, get, s, 6), a.feedMedia(cx, get, s, false, nil)))
 }
 
 func countLabel(n int, unit string) string {
@@ -186,12 +200,12 @@ func countLabel(n int, unit string) string {
 // feedContent shows the text of a post, cut to lines, with the link that
 // opens the rest.
 func (a *App) feedContent(cx *core.Scope, get func() backend.Feed, s feedShape, lines int) core.Node {
-	text := a.feedRich(cx, get, richOptions{size: textBody, class: "text-on-surface", maxLines: lines, press: func() { a.openFeed(get()) }})
+	text := a.feedRich(cx, get, richOptions{size: textBody, lineHeight: feedLineHeight, class: "text-on-surface", maxLines: lines, press: func() { a.openFeed(get()) }})
 	if !s.more {
 		return text
 	}
-	return column(core.Style{Gap: 4}, "", text, tap("查看更多", func() { a.openFeed(get()) }, core.Style{},
-		"", label("查看更多", textSecondary, 500, "text-primary")))
+	return through(column(core.Style{Gap: 4}, "", text, tap("查看更多", func() { a.openFeed(get()) }, core.Style{},
+		"", label("查看更多", textSecondary, 500, "text-primary"))))
 }
 
 // coverImage shows the cover of an article, at its ratio between 4:3 and
@@ -208,8 +222,9 @@ func (a *App) coverImage(cx *core.Scope, get func() backend.Feed, s feedShape) c
 	}, core.Cover, "bg-surface-container-highest", core.Style{Width: core.Pct(100), AspectRatio: 16.0 / 9, CornerRadius: 12, Overflow: core.Hidden})
 }
 
-// feedMedia shows a post's video, images, link, vote and repost.
-func (a *App) feedMedia(cx *core.Scope, get func() backend.Feed, s feedShape, detail bool) core.Node {
+// feedMedia shows a post's video, images, link, vote and repost. cast, on
+// the post's page, votes for the options chosen.
+func (a *App) feedMedia(cx *core.Scope, get func() backend.Feed, s feedShape, detail bool, cast func(ids []string)) core.Node {
 	var kids []core.Node
 	// A card opens its post from the media that has no page of its own.
 	var open func()
@@ -226,25 +241,21 @@ func (a *App) feedMedia(cx *core.Scope, get func() backend.Feed, s feedShape, de
 		kids = append(kids, a.linkCard(cx, func() *backend.Link { return get().Link }, detail, open))
 	}
 	if s.vote {
-		kids = append(kids, voteCard(cx, func() *backend.Vote { return get().Vote }, open))
+		kids = append(kids, voteCard(cx, func() *backend.Vote { return get().Vote }, open, cast))
 	}
 	if s.fw {
 		kids = append(kids, a.forwardCard(cx, func() *backend.Forward { return get().Forward }, open))
 	}
-	return column(core.Style{Gap: 12}, "", kids...)
+	return through(column(core.Style{Gap: 12}, "", kids...))
 }
 
-// imageSet lays out one image at its ratio, and several in a square grid
-// of two columns for two or four, three otherwise.
+// imageSet lays out one image at its ratio, and several as squares three to
+// a row.
 func (a *App) imageSet(cx *core.Scope, get func() []backend.Image, n int, detail bool) core.Node {
 	if n == 1 {
 		return a.singleImage(cx, func() backend.Image { return get()[0] }, detail, func() { a.openImages(get(), 0) })
 	}
-	cols := 3
-	if n == 2 || n == 4 {
-		cols = 2
-	}
-	return a.imageGrid(cx, get, n, cols)
+	return a.imageGrid(cx, get, n, 3)
 }
 
 // imageGrid shows square crops, which Coolapk serves at 480px.
@@ -268,62 +279,55 @@ func (a *App) imageGrid(cx *core.Scope, get func() []backend.Image, n, cols int)
 }
 
 // longImageRatio is the narrowest a single picture's frame goes: 9:22, as
-// the Android clients cap it. A taller picture shows whole inside a frame of
-// that ratio, centered, and is marked 长图.
+// the official clients cap it. A taller picture fills a frame of that ratio
+// from its top and is marked 长图.
 const longImageRatio = 9.0 / 22
 
-// singleImage shows the one picture of a post as the official clients size
-// it, from the left: a wide one 2/3 of the width tall (and no wider than the
-// card), a square or a portrait up to 3:2 two thirds wide, a taller portrait
-// one third wide up to 22:9 tall, and a taller one whole and centered in a
-// third by 22:9 frame, marked 长图.
+// singleImage shows the one picture of a post in the middle of the card, at
+// the sizes of the official clients: a wide one 2/3 of the width tall (and no
+// wider than the card), a square or a portrait up to 3:2 two thirds wide, and
+// a taller portrait one third wide, up to 22:9 tall.
 func (a *App) singleImage(cx *core.Scope, get func() backend.Image, detail bool, open func()) core.Node {
 	frame := func() (width, ratio float32) {
-		r := mediaRatio(get(), 4.0/3, 0, 1e6)
-		ratio = r
+		ratio = max(mediaRatio(get(), 4.0/3, 0, 1e6), longImageRatio)
 		switch {
-		case r > 1:
-			width = min(100, 200*r/3)
-		case r > 2.0/3:
+		case ratio > 1:
+			width = min(100, 200*ratio/3)
+		case ratio > 2.0/3:
 			width = 200.0 / 3
-		case r >= longImageRatio:
-			width = 100.0 / 3
 		default:
-			width, ratio = 100.0/3, longImageRatio
+			width = 100.0 / 3
 		}
 		return
 	}
-	return row(core.Style{}, "", core.View{
+	return through(row(core.Style{JustifyContent: core.JustifyCenter}, "", core.View{
 		StyleFunc: func() core.Style {
 			w, r := frame()
-			return core.Style{Width: core.Pct(w), AspectRatio: r, Direction: core.Row, JustifyContent: core.JustifyCenter}
+			return core.Style{Width: core.Pct(w), AspectRatio: r}
 		},
 		Children: []core.Node{a.pictureButton(cx, get, pictureSize(detail), open)},
-	})
+	}))
 }
 
-// pictureButton fills its frame with a picture in a rounded button: a
-// picture taller than longImageRatio shows whole, centered at the frame's
-// height, and is marked 长图.
+// pictureButton fills its frame with a picture in a rounded button. A
+// picture taller than longImageRatio shows its top, as the small variant
+// the server cuts at that ratio, and is marked 长图.
 func (a *App) pictureButton(cx *core.Scope, get func() backend.Image, size string, open func()) core.Node {
-	ratio := func() float32 { return mediaRatio(get(), 4.0/3, 0, 1e6) }
+	long := func() bool { return mediaRatio(get(), 4.0/3, 0, 1e6) < longImageRatio }
 	return core.View{
 		Role: core.RoleButton, Label: "查看图片", OnPress: func(core.PressEvent) { open() },
 		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 		Class:   "bg-surface-container-highest",
-		Style:   core.Style{CornerRadius: 12, Overflow: core.Hidden},
-		StyleFunc: func() core.Style {
-			s := fillAbs
-			if r := ratio(); r < longImageRatio {
-				side := core.Pct((1 - r/longImageRatio) * 50)
-				s.Left, s.Right = side, side
-			}
-			return s
-		},
+		Style:   fillAbs.Merge(core.Style{CornerRadius: 12, Overflow: core.Hidden}),
 		Children: []core.Node{
-			a.pic(cx, func() string { return thumbURL(get(), size) }, core.Cover, "", fillAbs),
+			a.pic(cx, func() string {
+				if long() {
+					return thumbURL(get(), thumbSmall)
+				}
+				return thumbURL(get(), size)
+			}, core.Cover, "", fillAbs),
 			core.Dynamic(func(cx *core.Scope) core.Node {
-				if ratio() >= longImageRatio {
+				if !long() {
 					return core.Group{}
 				}
 				return core.Text{Content: "长图", Class: "bg-black/60 text-white", Style: func() core.Style {
@@ -354,7 +358,7 @@ func (a *App) videoCover(cx *core.Scope, get func() *backend.Video, detail bool,
 			return
 		}
 		if v := get(); v != nil && v.URL != "" {
-			cx.OpenURL(v.URL, nil)
+			a.openWeb(v.URL)
 		}
 	}
 	return tap("播放视频", onPress, core.Style{Width: core.Pct(100), AspectRatio: 16.0 / 9, CornerRadius: 12, Overflow: core.Hidden}, "bg-surface-container-highest",
@@ -391,37 +395,29 @@ func formatDuration(d time.Duration) string {
 }
 
 func (a *App) linkCard(cx *core.Scope, get func() *backend.Link, detail bool, card func()) core.Node {
-	kids := []core.Node{
-		dynamicShape(cx, func() bool { l := get(); return l != nil && l.CoverURL != "" }, func(cx *core.Scope, cover bool) core.Node {
-			if cover {
-				return a.pic(cx, func() string {
-					if l := get(); l != nil {
-						return thumbURL(backend.Image{URL: l.CoverURL}, thumbSquare)
-					}
-					return ""
-				}, core.Cover, "bg-surface-container-highest", core.Style{Width: core.Pt(48), Height: core.Pt(48), CornerRadius: 8, FlexShrink: 0})
+	link := func() backend.Link {
+		if l := get(); l != nil {
+			return *l
+		}
+		return backend.Link{}
+	}
+	lead := dynamicShape(cx, func() bool { return link().CoverURL != "" }, func(cx *core.Scope, cover bool) core.Node {
+		if !cover {
+			return core.View{Class: "bg-primary-container", Style: core.Style{Width: core.Pt(32), Height: core.Pt(32), CornerRadius: 16, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, FlexShrink: 0},
+				Children: []core.Node{icon(&symbols.Link, 18, "text-on-primary-container")}}
+		}
+		return a.pic(cx, func() string { return thumbURL(backend.Image{URL: link().CoverURL}, thumbSquare) },
+			core.Cover, "bg-surface-container-highest", core.Style{Width: core.Pt(40), Height: core.Pt(40), CornerRadius: 8, FlexShrink: 0})
+	})
+	words := column(fill.Merge(core.Style{Gap: 2}), "",
+		core.Text{ContentFunc: func() string { return link().Title }, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textSecondary, 500)},
+		dynamicShape(cx, func() bool { return link().Subtitle != "" }, func(cx *core.Scope, has bool) core.Node {
+			if !has {
+				return core.Group{}
 			}
-			return core.Group{}
-		}),
-		column(fill.Merge(core.Style{Gap: 2}), "",
-			core.Text{ContentFunc: func() string {
-				if l := get(); l != nil {
-					return l.Title
-				}
-				return ""
-			}, MaxLines: 2, Class: "text-on-surface", Style: textStyle(textSecondary, 500)},
-			core.Text{ContentFunc: func() string {
-				if l := get(); l != nil {
-					return l.Subtitle
-				}
-				return ""
-			}, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
-		),
-	}
-	if detail {
-		kids = append(kids, icon(&symbols.OpenInNew, 20, "text-on-surface-variant"))
-	}
-	style := core.Style{Direction: core.Row, Padding: core.All(12), Gap: 12, AlignItems: core.AlignCenter, CornerRadius: 12, Overflow: core.Hidden}
+			return core.Text{ContentFunc: func() string { return link().Subtitle }, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)}
+		}))
+	style := core.Style{Direction: core.Row, Padding: core.Edges{Top: 8, Right: 12, Bottom: 8, Left: 8}, Gap: 10, AlignItems: core.AlignCenter, CornerRadius: 24, Overflow: core.Hidden}
 	onPress := func() {
 		if !detail {
 			if card != nil {
@@ -429,14 +425,19 @@ func (a *App) linkCard(cx *core.Scope, get func() *backend.Link, detail bool, ca
 			}
 			return
 		}
-		if l := get(); l != nil && l.URL != "" {
-			cx.OpenURL(l.URL, nil)
+		if l := link(); l.URL != "" {
+			a.openWeb(l.URL)
 		}
 	}
-	return tap("链接", onPress, style, "bg-surface-container-high", kids...)
+	return tap("链接", onPress, style, "bg-surface-container-high", lead, words, icon(&symbols.ChevronRight, 20, "text-on-surface-variant"))
 }
 
-func voteCard(cx *core.Scope, get func() *backend.Vote, card func()) core.Node {
+// voteCard shows a post's vote: two sides against each other, or a list of
+// options, then how many voted and how long it runs. The counts show once the
+// server tells them, which it does to an account that has voted. On a card
+// the vote opens the post; on the post's page cast votes for the options
+// chosen.
+func voteCard(cx *core.Scope, get func() *backend.Vote, card func(), cast func(ids []string)) core.Node {
 	// A card's row is reused for another post: the vote is made again when it
 	// is another one.
 	return dynamicShape(cx, func() string {
@@ -444,47 +445,158 @@ func voteCard(cx *core.Scope, get func() *backend.Vote, card func()) core.Node {
 		if v == nil {
 			return ""
 		}
-		return fmt.Sprint(v.Title, v.Expired, v.Options)
+		return fmt.Sprint(*v)
 	}, func(cx *core.Scope, _ string) core.Node {
 		v := core.Untracked(cx, get)
 		if v == nil {
 			return core.Group{}
 		}
-		total := 0
+		votes := 0
 		for _, o := range v.Options {
-			total += o.Votes
+			votes += o.Votes
 		}
-		header := []core.Node{core.Text{Content: v.Title, MaxLines: 2, Class: "text-on-surface", Style: fill.Merge(textStyle(textSecondary, 500))}}
-		if v.Expired {
-			header = append(header, label("已结束", textCaption, 400, "text-on-surface-variant"))
-		}
-		kids := []core.Node{row(core.Style{Gap: 8, AlignItems: core.AlignCenter}, "", header...)}
-		for _, o := range v.Options {
-			pct := 0
-			if total > 0 {
-				pct = (o.Votes*100 + total/2) / total
+		pct := func(o backend.VoteOption) int {
+			if votes == 0 {
+				return 0
 			}
-			kids = append(kids, column(core.Style{Gap: 4}, "",
-				row(core.Style{Gap: 8}, "",
-					core.Text{Content: o.Text, MaxLines: 2, Class: "text-on-surface", Style: fill.Merge(textStyle(textSecondary, 400))},
-					label(fmt.Sprintf("%d%%", pct), textCaption, 400, "text-on-surface-variant")),
-				progressBar(float32(pct)/100)))
+			return (o.Votes*100 + votes/2) / votes
 		}
-		if total > 0 {
-			kids = append(kids, label(formatCount(total)+" 人参与", textCaption, 400, "text-on-surface-variant"))
+		open := v.Counted || v.Expired || cast == nil // nothing to choose
+		picked := core.NewSignalFunc(cx, map[string]bool{}, nil)
+		pick := func(id string) {
+			if card != nil {
+				card()
+				return
+			}
+			if open {
+				return
+			}
+			if v.MaxSelect <= 1 {
+				cast([]string{id})
+				return
+			}
+			next := map[string]bool{}
+			for k := range picked.GetUntracked() {
+				next[k] = true
+			}
+			if next[id] {
+				delete(next, id)
+			} else if len(next) < v.MaxSelect {
+				next[id] = true
+			}
+			picked.Set(next)
 		}
-		body := column(core.Style{Padding: core.All(16), Gap: 12, CornerRadius: 12}, "bg-surface-container-high", kids...)
-		if card == nil {
-			return body
+		var kids []core.Node
+		if v.Versus {
+			kids = append(kids, versusOptions(v, pct, pick))
+		} else {
+			for _, o := range v.Options {
+				kids = append(kids, voteOption(o, v.Counted, pct(o), func() bool { return picked.Get()[o.ID] }, func() { pick(o.ID) }))
+			}
 		}
-		return tap("投票", card, core.Style{}, "", body)
+		foot := []core.Node{core.Text{Content: joinNonEmpty([]string{countLabel(v.Voters, "人参与"), voteEnds(v)}, "  "),
+			Class: "text-on-surface-variant", Style: fill.Merge(textStyle(textCaption, 400))}}
+		if !open && v.MaxSelect > 1 {
+			foot = append(foot, core.Dynamic(func(cx *core.Scope) core.Node {
+				if len(picked.Get()) == 0 {
+					return label(fmt.Sprintf("最多选 %d 项", v.MaxSelect), textCaption, 400, "text-on-surface-variant")
+				}
+				return tap("投票", func() {
+					var ids []string
+					for _, o := range v.Options {
+						if picked.GetUntracked()[o.ID] {
+							ids = append(ids, o.ID)
+						}
+					}
+					cast(ids)
+				}, core.Style{Height: core.Pt(40), Padding: core.Symmetric(0, 24), CornerRadius: 20, JustifyContent: core.JustifyCenter}, "bg-primary",
+					label("投票", textSecondary, 500, "text-on-primary"))
+			}))
+		}
+		kids = append(kids, row(core.Style{Gap: 8, AlignItems: core.AlignCenter, MinHeight: core.Pt(20)}, "", foot...))
+		return column(core.Style{Gap: 8}, "", kids...)
 	})
 }
 
-// progressBar is a thin determinate bar filled to fraction.
-func progressBar(fraction float32) core.Node {
-	return core.View{Class: "bg-surface-container-highest", Style: core.Style{Height: core.Pt(4), CornerRadius: 2, Overflow: core.Hidden},
-		Children: []core.Node{core.View{Class: "bg-primary", Style: core.Style{Height: core.Pct(100), Width: core.Pct(fraction * 100)}}}}
+// voteEnds says how long a vote still runs.
+func voteEnds(v *backend.Vote) string {
+	switch left := time.Until(v.EndsAt); {
+	case v.Expired:
+		return "已结束"
+	case v.EndsAt.IsZero():
+		return ""
+	case left >= 24*time.Hour:
+		return fmt.Sprintf("剩余 %d 天", int(left/(24*time.Hour)))
+	case left >= time.Hour:
+		return fmt.Sprintf("剩余 %d 小时", int(left/time.Hour))
+	default:
+		return "即将结束"
+	}
+}
+
+// versusOptions are the two sides of a vote in their colors, and their shares
+// once known.
+func versusOptions(v *backend.Vote, pct func(backend.VoteOption) int, pick func(id string)) core.Node {
+	side := func(i int, fallback uint32) core.Node {
+		o := v.Options[i]
+		c := o.Color
+		if c == 0 {
+			c = fallback
+		}
+		text := o.Text
+		if v.Counted {
+			text = fmt.Sprintf("%s %d%%", o.Text, pct(o))
+		}
+		if o.Chosen {
+			text = "✓ " + text
+		}
+		radii := core.Corners{TopLeft: 24, BottomLeft: 24, TopRight: 4, BottomRight: 4}
+		if i == 1 {
+			radii = core.Corners{TopLeft: 4, BottomLeft: 4, TopRight: 24, BottomRight: 24}
+		}
+		s := fill.Merge(core.Style{Height: core.Pt(48), Padding: core.Symmetric(0, 16), CornerRadii: radii,
+			AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Background: core.RGB(c)})
+		// The sides share the row by their votes, each keeping room for its name.
+		if v.Counted {
+			s.FlexGrow = float32(max(pct(o), 25))
+		}
+		return tap(o.Text, func() { pick(o.ID) }, s, "",
+			core.Text{Content: text, MaxLines: 1, Style: textStyle(textSecondary, 500).Merge(core.Style{Color: core.RGB(0xFFFFFF)})})
+	}
+	return row(core.Style{Gap: 4, AlignItems: core.AlignCenter}, "",
+		side(0, 0xF44336),
+		label("VS", textSecondary, 600, "text-on-surface-variant"),
+		side(1, 0x2196F3))
+}
+
+// voteOption is one option of a vote: an outlined row, filled to its share
+// once the counts are known, and marked when chosen.
+func voteOption(o backend.VoteOption, counted bool, pct int, picked func() bool, pick func()) core.Node {
+	kids := []core.Node{}
+	if counted {
+		kids = append(kids, core.View{Class: "bg-secondary-container",
+			Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Bottom: core.Pt(0), Left: core.Pt(0), Width: core.Pct(float32(pct))}})
+	}
+	line := []core.Node{core.Text{Content: o.Text, MaxLines: 2, Class: "text-on-surface", Style: fill.Merge(textStyle(textSecondary, 400))}}
+	if o.Chosen {
+		line = append(line, icon(&symbols.Check, 18, "text-primary"))
+	}
+	if counted {
+		line = append(line, label(fmt.Sprintf("%d%%", pct), textSecondary, 500, "text-on-surface-variant"))
+	}
+	kids = append(kids, row(core.Style{Gap: 8, AlignItems: core.AlignCenter, MinHeight: core.Pt(44), Padding: core.Symmetric(8, 16)}, "", line...))
+	return core.View{
+		Role: core.RoleButton, Label: o.Text, OnPress: func(core.PressEvent) { pick() },
+		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
+		Style:   core.Style{CornerRadius: 12, Overflow: core.Hidden, BorderWidth: 1},
+		ClassFunc: func() string {
+			if picked() || o.Chosen {
+				return "border-primary"
+			}
+			return "border-outline-variant"
+		},
+		Children: kids,
+	}
 }
 
 func (a *App) forwardCard(cx *core.Scope, get func() *backend.Forward, open func()) core.Node {

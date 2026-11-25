@@ -66,3 +66,11 @@ func bottomSpace(h core.Points, pushed bool) core.Node {
 		core.View{Style: core.Style{Height: core.Pt(h)}},
 		core.View{Style: core.Style{PaddingEnv: core.EnvEdges{Bottom: core.EnvSafeArea}}})
 }
+
+// through lets a press on the room of a container that none of its children
+// takes go to what lies under it, as the press area under a card's parts.
+func through(n core.Node) core.Node {
+	v := n.(core.View)
+	v.PointerEvents = core.PointerEventsBoxNone
+	return v
+}
