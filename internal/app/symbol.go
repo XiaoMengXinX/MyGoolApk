@@ -49,6 +49,9 @@ func icon(s *symbol, size core.Points, class string) core.Node {
 		case !ok:
 			c = p.Text
 		}
-		return core.SVGView{SVG: s.in(c), Style: core.Style{Width: core.Pt(size), Height: core.Pt(size), FlexShrink: 0}}
+		// The view clips the glyph: its 960-point canvas otherwise counts as
+		// overflow, which on iOS widened a list around an icon that nothing
+		// clipped (the stars of a rating card) and let it scroll sideways.
+		return core.SVGView{SVG: s.in(c), Style: core.Style{Width: core.Pt(size), Height: core.Pt(size), FlexShrink: 0, Overflow: core.Hidden}}
 	})
 }
