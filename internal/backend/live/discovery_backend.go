@@ -52,6 +52,7 @@ func (b *coolapkBackend) Search(ctx context.Context, q backend.SearchQuery) (bac
 		FeedType:    "all",
 		Sort:        "default",
 		Page:        q.Page,
+		FirstItem:   cursor.first,
 		LastItem:    cursor.last,
 	}))
 	if err != nil {
@@ -437,7 +438,7 @@ func (b *coolapkBackend) myList(ctx context.Context, q backend.PageQuery) (backe
 	case strings.HasPrefix(q.URL, backend.CollectionURLPrefix):
 		response, err = b.client.GetCollectionItemListWithCtx(ctx, strings.TrimPrefix(q.URL, backend.CollectionURLPrefix), r)
 	case q.URL == backend.MyCollectionsURL:
-		response, err = b.client.GetCollectionsWithCtx(ctx, coolapk.CollectionListRequest{UID: uid, ShowDefault: 1, Page: q.Page, LastItem: cursor.last})
+		response, err = b.client.GetCollectionsWithCtx(ctx, coolapk.CollectionListRequest{UID: uid, Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last})
 	case q.URL == backend.MyBlocksURL:
 		response, err = b.client.GetBlackListWithCtx(ctx, r)
 	case q.URL == backend.MyLikesURL:
