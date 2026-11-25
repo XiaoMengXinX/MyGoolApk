@@ -139,6 +139,9 @@ func (b *fakeBackend) CreateReply(context.Context, backend.ReplyDraft) (backend.
 	return backend.Reply{}, nil
 }
 func (b *fakeBackend) CreateFeed(context.Context, backend.FeedDraft) (string, error) { return "", nil }
+func (b *fakeBackend) FeedSummary(context.Context, string, func(string)) (backend.FeedSummary, error) {
+	return backend.FeedSummary{}, backend.ErrNoSummary
+}
 
 // start opens the app on b, in a phone-sized window, once what it asked the
 // backend for has arrived.

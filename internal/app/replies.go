@@ -161,6 +161,9 @@ func (d *detail) deleteReply(r backend.Reply) {
 			if kept := slices.DeleteFunc(items, gone); len(kept) != len(items) {
 				d.replies.items.Set(kept)
 				f := d.feed.GetUntracked()
+				if r.Pinned {
+					f.Pinned = slices.DeleteFunc(slices.Clone(f.Pinned), gone)
+				}
 				f.Stats.Comments--
 				d.feed.Set(f)
 				return
@@ -458,7 +461,12 @@ func (d *detail) submitReply() {
 			c.text.Set("")
 			switch {
 			case draft.ParentID == "":
-				d.replies.items.Set(append([]backend.Reply{reply}, d.replies.items.GetUntracked()...))
+				items := slices.Clone(d.replies.items.GetUntracked())
+				index := 0
+				for index < len(items) && items[index].Pinned {
+					index++
+				}
+				d.replies.items.Set(slices.Insert(items, index, reply))
 				f := d.feed.GetUntracked()
 				f.Stats.Comments++
 				d.feed.Set(f)

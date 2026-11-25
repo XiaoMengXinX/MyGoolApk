@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"net/url"
 )
 
@@ -16,6 +17,10 @@ type Backend interface {
 	Feed(ctx context.Context, q FeedQuery) (FeedPage, error)
 	// FeedDetail returns one post.
 	FeedDetail(ctx context.Context, id string) (Feed, error)
+	// FeedSummary returns the AI summary coolapk1s.com writes of a post,
+	// passing its pieces to delta as they arrive. ErrNoSummary means the
+	// post has none, or the service cannot write one now.
+	FeedSummary(ctx context.Context, feedID string, delta func(string)) (FeedSummary, error)
 	// Replies returns comments of a post, or of one comment when
 	// ReplyQuery.ParentID is set, in the order ReplyQuery.Sort names.
 	Replies(ctx context.Context, q ReplyQuery) (ReplyPage, error)
@@ -94,6 +99,17 @@ type Backend interface {
 	CreateReply(ctx context.Context, draft ReplyDraft) (Reply, error)
 	// CreateFeed publishes a text feed and returns its ID.
 	CreateFeed(ctx context.Context, draft FeedDraft) (string, error)
+}
+
+// ErrNoSummary is FeedSummary's error when the post has no AI summary:
+// it is too short for one, or the service cannot write one now.
+var ErrNoSummary = errors.New("backend: no summary for this post")
+
+// FeedSummary is the AI summary coolapk1s.com writes of a post: its text
+// and the model that wrote it.
+type FeedSummary struct {
+	Text  string
+	Model string
 }
 
 // TopicCategory is a group of topics on the topic page: its title and the

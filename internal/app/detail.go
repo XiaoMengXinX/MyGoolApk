@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"slices"
+	"unicode/utf16"
 
 	"github.com/nsgo-dev/nsgo/core"
 
@@ -11,17 +12,26 @@ import (
 
 // detail is one post page: the post, its comments and its sheets.
 type detail struct {
-	a       *App
-	cx      *core.Scope
-	id      string
-	feed    *core.Signal[backend.Feed]
-	has     *core.Signal[bool] // seeded from a card or loaded
-	err     *core.Signal[string]
-	loading bool
-	gen     int
+	a              *App
+	cx             *core.Scope
+	id             string
+	feed           *core.Signal[backend.Feed]
+	has            *core.Signal[bool] // seeded from a card or loaded
+	err            *core.Signal[string]
+	loading        bool
+	refreshReplies bool
 
 	sort    *core.Signal[int] // a backend.ReplySort
 	replies *pager[backend.Reply]
+
+	// summary is the AI summary coolapk1s.com writes of the post, as far as
+	// it has streamed in; summaryError drops the card when there is none.
+	// asked keeps the one summary request a page makes.
+	summary      *core.Signal[string]
+	summaryModel *core.Signal[string]
+	summaryError *core.Signal[bool]
+	asked        *core.Signal[bool]
+
 	// thread is the comment whose replies the thread sheet lists in nested,
 	// and threadY how far that list is scrolled.
 	thread  *core.Signal[*backend.Reply]
@@ -43,16 +53,26 @@ func (a *App) newDetail(cx *core.Scope, id string, seed backend.Feed) *detail {
 	d := &detail{
 		a: a, cx: cx, id: id, depth: a.nav.Depth(),
 		feed:          core.NewSignalFunc(cx, seed, nil),
-		has:           core.NewSignal(cx, seed.Author.ID != ""),
+		has:           core.NewSignal(cx, seed.Author.ID != "" && seed.Kind != backend.PostArticle),
 		err:           core.NewSignal(cx, ""),
 		sort:          core.NewSignal(cx, 0),
 		thread:        core.NewSignalFunc[*backend.Reply](cx, nil, nil),
 		replyLikeBusy: make(map[string]bool),
 		menu:          core.NewSignalFunc[*backend.Reply](cx, nil, nil),
+		summary:       core.NewSignal(cx, ""),
+		summaryModel:  core.NewSignal(cx, ""),
+		summaryError:  core.NewSignal(cx, false),
+		asked:         core.NewSignal(cx, false),
 	}
 	replyID := func(r backend.Reply) string { return r.ID }
-	d.replies = newQueryPager(cx, func() backend.ReplyQuery {
-		return backend.ReplyQuery{FeedID: d.id, Sort: backend.ReplySort(d.sort.GetUntracked()), Of: repliesOf(d.feed.GetUntracked())}
+	d.replies = newQueryPager(cx, func() detailReplyQuery {
+		feed := d.feed.GetUntracked()
+		sort := backend.ReplySort(d.sort.GetUntracked())
+		query := detailReplyQuery{ReplyQuery: backend.ReplyQuery{FeedID: d.id, Sort: sort, Of: repliesOf(feed)}}
+		if sort == backend.RepliesRecent {
+			query.pinned = feed.Pinned
+		}
+		return query
 	}, d.fetchReplies, replyID)
 	d.nested = newQueryPager(cx, func() string {
 		if p := d.thread.GetUntracked(); p != nil {
@@ -62,41 +82,70 @@ func (a *App) newDetail(cx *core.Scope, id string, seed backend.Feed) *detail {
 	}, d.fetchNested, replyID)
 	d.composer = newComposer(cx)
 	d.favorites = a.newFavorites(cx, d)
-	cx.Effect(d.pinFirst)
 	d.load()
 	return d
 }
 
-func (d *detail) fetchReplies(ctx context.Context, q backend.ReplyQuery, page int) ([]backend.Reply, bool, error) {
-	q.Page = page
-	r, err := d.a.backend.Replies(ctx, q)
-	return r.Replies, r.HasMore, err
+// summaryTextLength is the post's visible plain text in UTF-16 units,
+// counted as coolapk1s.com does for its summaries (its getSummaryInput):
+// an article counts its text blocks, other posts their content, both
+// already stripped of markup when the backend parsed them.
+func summaryTextLength(f backend.Feed) int {
+	n := 0
+	if f.Kind == backend.PostArticle && len(f.Blocks) > 0 {
+		for _, block := range f.Blocks {
+			if block.Kind == backend.BlockText {
+				n += len(utf16.Encode([]rune(block.Text)))
+			}
+		}
+		return n
+	}
+	return len(utf16.Encode([]rune(f.Content)))
 }
 
-// pinFirst leads the comments in the default order with the pinned ones the
-// post tells, whichever of the two came first.
-func (d *detail) pinFirst() {
-	pinned, items := d.feed.Get().Pinned, d.replies.items.Get()
-	if len(pinned) == 0 || !d.replies.loaded.Get() || d.sort.Get() != int(backend.RepliesRecent) {
+// askSummary starts the post's one summary request once it holds enough
+// text. coolapk1s.com summarizes only posts of 800 units or more, so
+// shorter ones are never asked, and their card stays out altogether.
+func (d *detail) askSummary(feed backend.Feed) {
+	if d.asked.GetUntracked() || summaryTextLength(feed) < 800 {
 		return
 	}
-	led := len(items) >= len(pinned)
-	for i := 0; led && i < len(pinned); i++ {
-		led = items[i].ID == pinned[i].ID && items[i].Pinned
+	d.asked.Set(true)
+	ctx := d.cx.Context()
+	go func() {
+		s, err := d.a.backend.FeedSummary(ctx, d.id, func(piece string) {
+			d.cx.Post(func() { d.summary.Set(d.summary.GetUntracked() + piece) })
+		})
+		d.cx.Post(func() {
+			if err == nil {
+				d.summary.Set(s.Text)
+				d.summaryModel.Set(s.Model)
+			}
+			d.summaryError.Set(d.summary.GetUntracked() == "")
+		})
+	}()
+}
+
+type detailReplyQuery struct {
+	backend.ReplyQuery
+	pinned []backend.Reply
+}
+
+func (d *detail) fetchReplies(ctx context.Context, query detailReplyQuery, page int) ([]backend.Reply, bool, error) {
+	query.Page = page
+	result, err := d.a.backend.Replies(ctx, query.ReplyQuery)
+	if page == 1 && len(query.pinned) > 0 {
+		result.Replies = slices.Concat(query.pinned, result.Replies)
 	}
-	if led {
-		return
-	}
-	rest := slices.DeleteFunc(slices.Clone(items), func(r backend.Reply) bool {
-		return slices.ContainsFunc(pinned, func(p backend.Reply) bool { return p.ID == r.ID })
-	})
-	d.replies.items.Set(append(slices.Clone(pinned), rest...))
+	return result.Replies, result.HasMore, err
 }
 
 func (d *detail) setSort(i int) {
 	if d.sort.GetUntracked() != i {
 		d.sort.Set(i)
-		d.replies.reset()
+		if d.replies.started {
+			d.replies.reset()
+		}
 	}
 }
 
@@ -105,29 +154,35 @@ func (d *detail) load() {
 		return
 	}
 	d.loading = true
-	d.gen++
-	gen := d.gen
-	background(d.a, func(ctx context.Context) (backend.Feed, error) { return d.a.backend.FeedDetail(ctx, d.id) },
-		func(feed backend.Feed, err error) {
-			if gen != d.gen {
-				return
-			}
+	var ctx context.Context
+	d.cx.Run(func() { ctx = d.cx.Context() })
+	go func() {
+		feed, err := d.a.backend.FeedDetail(ctx, d.id)
+		d.cx.Post(func() {
 			d.loading = false
+			refreshReplies := d.refreshReplies
+			d.refreshReplies = false
+			of := repliesOf(d.feed.GetUntracked())
 			if err != nil {
 				d.err.Set(err.Error())
-				return
+			} else {
+				d.feed.Set(feed)
+				d.has.Set(true)
+				d.err.Set("")
+				d.a.recordHistory(feed)
+				d.askSummary(feed)
 			}
-			// A vote lists its opinions and a question its answers, other
-			// lists than the one asked for before the post told what it is.
-			of := repliesOf(d.feed.GetUntracked())
-			d.feed.Set(feed)
-			if of != repliesOf(feed) {
+			switch {
+			case !d.has.GetUntracked():
+			case !d.replies.started:
+				d.replies.ensure()
+			case err == nil && of != repliesOf(feed):
 				d.replies.reset()
+			case refreshReplies:
+				d.replies.restart()
 			}
-			d.has.Set(true)
-			d.err.Set("")
-			d.a.recordHistory(feed)
 		})
+	}()
 }
 
 // repliesOf is what f lists under it.
@@ -160,8 +215,8 @@ func (d *detail) castVote(ids []string) {
 }
 
 func (d *detail) refresh() {
+	d.refreshReplies = true
 	d.load()
-	d.replies.reload()
 }
 
 func (a *App) detailPage(cx *core.Scope, id string) core.Node {
@@ -184,7 +239,7 @@ func (a *App) detailPage(cx *core.Scope, id string) core.Node {
 			pagerList(cx, d.replies, listSpec{pushed: true,
 				empty: "暂无评论", emptyHint: "来说点什么吧。", bottom: 24, skeleton: skeletonCard,
 				header:    column(core.Style{}, "", d.postBody(cx), d.commentsHeader()),
-				onRefresh: d.refresh,
+				onRefresh: d.refresh, manualStart: true,
 			}, func(cx *core.Scope, get func() backend.Reply, r core.ListRow) core.Node { return d.replyRow(cx, get) }),
 			d.actionBar(cx),
 		)
@@ -228,6 +283,10 @@ func (d *detail) postBody(cx *core.Scope) core.Node {
 				return joinNonEmpty([]string{countLabel(f.Answers, "个回答"), countLabel(f.Followers, "人关注")}, "  ")
 			}, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)})
 		}
+		kids = append(kids, core.Show{
+			When: func() bool { return d.asked.Get() && !d.summaryError.Get() },
+			Then: d.summaryCard,
+		})
 		switch {
 		case f.Rating != nil:
 			kids = append(kids, a.ratingDetail(cx, f))
@@ -244,6 +303,35 @@ func (d *detail) postBody(cx *core.Scope) core.Node {
 		}
 		return column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 20, Left: 16}, Gap: 16}, "bg-background", kids...)
 	})
+}
+
+func (d *detail) summaryCard(*core.Scope) core.Node {
+	bodyStyle := textStyle(textSecondary, 400)
+	bodyStyle.LineHeight = 22
+	return column(core.Style{Padding: core.Symmetric(12, 16), Gap: 6, CornerRadius: 16}, "bg-surface-container-high",
+		row(core.Style{Gap: 6, AlignItems: core.AlignCenter}, "",
+			icon(&symbols.AutoAwesome, 16, "text-primary"),
+			label("AI 总结", textSecondary, 500, "text-primary"),
+			spacer,
+			core.Text{ContentFunc: d.summaryModel.Get, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
+		),
+		core.Text{
+			ContentFunc: func() string {
+				if text := d.summary.Get(); text != "" {
+					return text
+				}
+				return "生成中…"
+			},
+			ClassFunc: func() string {
+				if d.summary.Get() == "" {
+					return "text-on-surface-variant"
+				}
+				return "text-on-surface"
+			},
+			Style: bodyStyle,
+		},
+		label("摘要由 AI 生成，仅供参考", textCaption, 400, "text-on-surface-variant"),
+	)
 }
 
 // articleBlocks shows an article's body in order: paragraphs, pictures with

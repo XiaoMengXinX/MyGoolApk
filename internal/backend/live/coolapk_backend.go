@@ -383,16 +383,26 @@ func feedFromObject(object map[string]any) backend.Feed {
 	}
 	switch feed.Kind {
 	case backend.PostArticle, backend.PostTrade:
+		feed.Blocks = blocksFromObject(object)
 		if covers := imagesFromURLs(firstAPIString(object, "message_cover"), firstAPIString(object, "pic")); len(covers) > 0 {
-			feed.Cover = &covers[0]
+			// pic only repeats the body's first picture for some articles,
+			// whose detail draws it again right below the cover.
+			cover := covers[0]
+			dupe := false
+			for _, block := range feed.Blocks {
+				if block.Kind == backend.BlockImage && block.Image.URL == cover.URL {
+					dupe = true
+					break
+				}
+			}
+			if !dupe {
+				feed.Cover = &covers[0]
+			}
 		}
 	case backend.PostVideo:
 		// Its picture is the video's cover, read from media_info below.
 	default:
 		feed.Images = imagesFromObject(object)
-	}
-	if feed.Kind == backend.PostArticle || feed.Kind == backend.PostTrade {
-		feed.Blocks = blocksFromObject(object)
 	}
 	feed.Answers, feed.Followers = apiInt(object, "question_answer_num"), apiInt(object, "question_follow_num")
 	if feed.Kind == backend.PostRating {

@@ -246,7 +246,8 @@ type listSpec struct {
 	// onScroll hears the list scroll.
 	onScroll func(core.ScrollEvent)
 	// inverted puts the first row at the bottom, as a chat does.
-	inverted bool
+	inverted    bool
+	manualStart bool
 }
 
 // pagerList shows a pager as a virtual list with its loading, empty, error
@@ -259,7 +260,9 @@ func pagerList[T any](cx *core.Scope, p *pager[T], spec listSpec, item func(cx *
 // pagerRows is pagerList over the rows rows makes of the pager's items, as
 // several items side by side; key names a row.
 func pagerRows[T, R any](cx *core.Scope, p *pager[T], rows func([]T) []R, key func(R) string, spec listSpec, item func(cx *core.Scope, get func() R, row core.ListRow) core.Node) core.Node {
-	p.ensure()
+	if !spec.manualStart {
+		p.ensure()
+	}
 	// The rows are made again whenever the items change.
 	shown := core.NewMemoFunc(cx, func() []R { return rows(p.items.Get()) }, nil)
 	at := func(i int) (R, bool) {
