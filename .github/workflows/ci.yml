@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  APP_DIR: coolapk-mygo/app-nsgo
+
+jobs:
+  test:
+    name: Test & Check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out MyGoolApk
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ${{ env.APP_DIR }}
+          persist-credentials: false
+
+      - name: Set up workspace
+        uses: ./coolapk-mygo/app-nsgo/.github/actions/setup-workspace
+        with:
+          app-dir: ${{ env.APP_DIR }}
+
+      - name: Vet packages
+        working-directory: ${{ env.APP_DIR }}
+        run: go vet ./...
+
+      - name: Check Android & macOS targets
+        working-directory: ${{ env.APP_DIR }}
+        run: go tool nsgo check -target android_arm64,macos_arm64,macos_x64
+
+      - name: Run headless tests
+        working-directory: ${{ env.APP_DIR }}
+        run: go tool nsgo test ./...
+
+  build-android:
+    name: Build Android (arm64)
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out MyGoolApk
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ${{ env.APP_DIR }}
+          persist-credentials: false
+
+      - name: Set up workspace & rebuild Android runtime
+        uses: ./coolapk-mygo/app-nsgo/.github/actions/setup-workspace
+        with:
+          app-dir: ${{ env.APP_DIR }}
+          rebuild-android-runtime: "true"
+
+      - name: Build Android APK
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          NSGO_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          NSGO_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          args=(-target android_arm64)
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            args+=(-keystore "$RUNNER_TEMP/release.keystore")
+            if [ -n "${ANDROID_KEY_ALIAS:-}" ]; then
+              args+=(-key-alias "$ANDROID_KEY_ALIAS")
+            fi
+          fi
+          go tool nsgo build "${args[@]}" .
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mygoolapk-android-arm64
+          path: |
+            ${{ env.APP_DIR }}/dist/releases/*-android-arm64.apk
+            ${{ env.APP_DIR }}/dist/releases/*-android-arm64.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  build-apple:
+    name: Build iOS & macOS
+    needs: test
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Check out MyGoolApk
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ${{ env.APP_DIR }}
+          persist-credentials: false
+
+      - name: Set up workspace
+        uses: ./coolapk-mygo/app-nsgo/.github/actions/setup-workspace
+        with:
+          app-dir: ${{ env.APP_DIR }}
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Check iOS target
+        working-directory: ${{ env.APP_DIR }}
+        run: go tool nsgo check -target ios
+
+      - name: Build iOS IPA (unsigned)
+        working-directory: ${{ env.APP_DIR }}
+        run: go tool nsgo build -target ios .
+
+      - name: Build macOS Universal DMG (ad-hoc signed)
+        working-directory: ${{ env.APP_DIR }}
+        run: go tool nsgo build -target macos_universal .
+
+      - name: Upload iOS IPA artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mygoolapk-ios
+          path: |
+            ${{ env.APP_DIR }}/dist/releases/*-ios.ipa
+            ${{ env.APP_DIR }}/dist/releases/*-ios.ipa.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload macOS Universal DMG artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mygoolapk-macos-universal
+          path: |
+            ${{ env.APP_DIR }}/dist/releases/*-macos-universal.dmg
+            ${{ env.APP_DIR }}/dist/releases/*-macos-universal.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14

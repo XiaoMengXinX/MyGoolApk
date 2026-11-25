@@ -1,0 +1,196 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v1.0.0). Does not create a GitHub Release unless triggered by a tag push."
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  APP_DIR: coolapk-mygo/app-nsgo
+
+jobs:
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
+      version: ${{ steps.ver.outputs.version }}
+      prerelease: ${{ steps.ver.outputs.prerelease }}
+    steps:
+      - name: Parse version
+        id: ver
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "push" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="$INPUT_TAG"
+          fi
+          version="${tag#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid version tag '$tag'. Expected vX.Y.Z or vX.Y.Z-suffix."
+            exit 1
+          fi
+          prerelease=false
+          case "$version" in
+            *-*) prerelease=true ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out MyGoolApk
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ${{ env.APP_DIR }}
+          persist-credentials: false
+
+      - name: Set up workspace
+        uses: ./coolapk-mygo/app-nsgo/.github/actions/setup-workspace
+        with:
+          app-dir: ${{ env.APP_DIR }}
+
+      - name: Run headless tests
+        working-directory: ${{ env.APP_DIR }}
+        run: go tool nsgo test ./...
+
+  build-android:
+    name: Build Android (arm64)
+    needs: [prepare, test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out MyGoolApk
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ${{ env.APP_DIR }}
+          persist-credentials: false
+
+      - name: Set up workspace & rebuild Android runtime
+        uses: ./coolapk-mygo/app-nsgo/.github/actions/setup-workspace
+        with:
+          app-dir: ${{ env.APP_DIR }}
+          rebuild-android-runtime: "true"
+
+      - name: Build Android APK
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          NSGO_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          NSGO_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          args=(-target android_arm64 -version "$VERSION")
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            args+=(-keystore "$RUNNER_TEMP/release.keystore")
+            if [ -n "${ANDROID_KEY_ALIAS:-}" ]; then
+              args+=(-key-alias "$ANDROID_KEY_ALIAS")
+            fi
+          fi
+          go tool nsgo build "${args[@]}" .
+
+      - name: Upload Android release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-android-arm64
+          path: |
+            ${{ env.APP_DIR }}/dist/releases/*-android-arm64.apk
+            ${{ env.APP_DIR }}/dist/releases/*-android-arm64.apk.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  build-apple:
+    name: Build iOS & macOS
+    needs: [prepare, test]
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Check out MyGoolApk
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ${{ env.APP_DIR }}
+          persist-credentials: false
+
+      - name: Set up workspace
+        uses: ./coolapk-mygo/app-nsgo/.github/actions/setup-workspace
+        with:
+          app-dir: ${{ env.APP_DIR }}
+
+      - name: Build iOS IPA (unsigned)
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: go tool nsgo build -target ios -version "$VERSION" .
+
+      - name: Build macOS Universal DMG (ad-hoc signed)
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: go tool nsgo build -target macos_universal -version "$VERSION" .
+
+      - name: Upload Apple release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-apple
+          path: |
+            ${{ env.APP_DIR }}/dist/releases/*-ios.ipa
+            ${{ env.APP_DIR }}/dist/releases/*-ios.ipa.sha256
+            ${{ env.APP_DIR }}/dist/releases/*-macos-universal.dmg
+            ${{ env.APP_DIR }}/dist/releases/*-macos-universal.dmg.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    if: github.event_name == 'push'
+    needs: [prepare, build-android, build-apple]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        run: |
+          set -euo pipefail
+          args=(--verify-tag --title "MyGoolApk $TAG" --generate-notes)
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$TAG" "${args[@]}" release-assets/*

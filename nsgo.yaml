@@ -1,6 +1,6 @@
 name: MyGoolApk
 id: com.lemonfish.mycoolapkgo
-version: 1.0.0
+version: 0.1.0
 
 icon:
   png: assets/Icon.png

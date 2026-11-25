@@ -1,0 +1,99 @@
+name: Set up MyGoolApk build workspace
+description: Clones replaced sibling dependencies (CoolapkApi-Go and patched NSGo), optionally rebuilds the patched NSGo Android runtime, and configures Go.
+
+inputs:
+  app-dir:
+    description: Path to the checked-out MyGoolApk repository relative to GITHUB_WORKSPACE.
+    required: false
+    default: coolapk-mygo/app-nsgo
+  coolapk-api-ref:
+    description: Branch, tag, or commit of XiaoMengXinX/CoolapkApi-Go to clone when go.mod replaces it locally.
+    required: false
+    default: iOS
+  rebuild-android-runtime:
+    description: Rebuild NSGo's Android classes.dex and classes.jar after applying patches/nsgo/*.patch.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Clone CoolapkApi-Go if locally replaced
+      shell: bash
+      env:
+        APP_DIR: ${{ inputs.app-dir }}
+        COOLAPK_API_REF: ${{ inputs.coolapk-api-ref }}
+      run: |
+        set -euo pipefail
+        if grep -Eq '^replace[[:space:]]+github\.com/XiaoMengXinX/CoolapkApi-Go[[:space:]]*=>' "$APP_DIR/go.mod"; then
+          api_dir=$(cd "$APP_DIR" && python3 -c 'import os, sys; print(os.path.normpath(os.path.join(os.getcwd(), "../../CoolapkApi-Go")))')
+          echo "Cloning XiaoMengXinX/CoolapkApi-Go ($COOLAPK_API_REF) into $api_dir"
+          rm -rf "$api_dir"
+          git clone --depth 1 --branch "$COOLAPK_API_REF" https://github.com/XiaoMengXinX/CoolapkApi-Go.git "$api_dir"
+        else
+          echo "CoolapkApi-Go is not locally replaced in go.mod; skipping clone."
+        fi
+
+    - name: Clone and patch NSGo if locally replaced
+      id: nsgo
+      shell: bash
+      env:
+        APP_DIR: ${{ inputs.app-dir }}
+      run: |
+        set -euo pipefail
+        if grep -Eq '^replace[[:space:]]+github\.com/nsgo-dev/nsgo[[:space:]]*=>' "$APP_DIR/go.mod"; then
+          nsgo_ver=$(awk '$1 == "github.com/nsgo-dev/nsgo" { print $2; exit }' "$APP_DIR/go.mod")
+          if [ -z "$nsgo_ver" ]; then
+            echo "::error::Could not determine github.com/nsgo-dev/nsgo version from $APP_DIR/go.mod"
+            exit 1
+          fi
+          nsgo_dir=$(cd "$APP_DIR" && python3 -c 'import os; print(os.path.normpath(os.path.join(os.getcwd(), "../nsgo")))')
+          echo "Cloning nsgo-dev/nsgo ($nsgo_ver) into $nsgo_dir"
+          rm -rf "$nsgo_dir"
+          git clone --depth 1 --branch "$nsgo_ver" https://github.com/nsgo-dev/nsgo.git "$nsgo_dir"
+          shopt -s nullglob
+          patches=("$PWD/$APP_DIR"/patches/nsgo/*.patch)
+          if [ "${#patches[@]}" -gt 0 ]; then
+            git -C "$nsgo_dir" \
+              -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              am "${patches[@]}"
+          fi
+          echo "patched=true" >> "$GITHUB_OUTPUT"
+          echo "dir=$nsgo_dir" >> "$GITHUB_OUTPUT"
+        else
+          echo "NSGo is not locally replaced in go.mod; skipping clone and patch."
+          echo "patched=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Set up JDK 21 for Android runtime rebuild
+      if: inputs.rebuild-android-runtime == 'true' && steps.nsgo.outputs.patched == 'true'
+      uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+      with:
+        distribution: temurin
+        java-version: "21"
+
+    - name: Rebuild patched NSGo Android runtime
+      if: inputs.rebuild-android-runtime == 'true' && steps.nsgo.outputs.patched == 'true'
+      shell: bash
+      env:
+        NSGO_DIR: ${{ steps.nsgo.outputs.dir }}
+      run: |
+        set -euo pipefail
+        sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+        if [ -z "$sdk" ] || [ ! -d "$sdk" ]; then
+          echo "::error::ANDROID_HOME / ANDROID_SDK_ROOT is not available on this runner."
+          exit 1
+        fi
+        export ANDROID_HOME="$sdk"
+        if [ ! -f "$ANDROID_HOME/platforms/android-36/android.jar" ] || { [ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/d8" ] && ! ls "$ANDROID_HOME"/build-tools/3[6-9]*/d8 >/dev/null 2>&1; }; then
+          (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-36" "build-tools;36.0.0" > /dev/null
+        fi
+        sh "$NSGO_DIR/internal/platform/android/runtime/build.sh"
+
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: ${{ inputs.app-dir }}/go.mod
+        cache: true
+        cache-dependency-path: ${{ inputs.app-dir }}/go.sum
