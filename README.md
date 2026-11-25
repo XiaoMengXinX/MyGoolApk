@@ -65,5 +65,6 @@ go tool nsgo build -target macos_universal .
 ## 免责声明与许可协议
 
 - 本项目为非官方第三方客户端，与酷安（Coolapk）官方无任何关联。
-- 代码部分采用 **GNU Affero General Public License v3.0 (AGPL-3.0)** 开源，详见 [`LICENSE`](LICENSE)。
+- MyGoolApk 自有源码采用 **Apache License 2.0 (Apache-2.0)**，详见 [`LICENSE`](LICENSE)。
+- `CoolapkApi-Go` 的使用与分发授权由其权利人单独授予。
 - 仓库中的酷安表情图片资源版权归原作者 / 酷安官方所有，仅用于社区内容展示。
