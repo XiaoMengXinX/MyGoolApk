@@ -127,7 +127,7 @@ func (b *coolapkBackend) User(ctx context.Context, uid string) (backend.UserProf
 func (b *coolapkBackend) UserFeeds(ctx context.Context, uid string, kind backend.UserFeedKind, page int) (backend.FeedPage, error) {
 	key := fmt.Sprintf("user-feed:%s:%d", uid, kind)
 	cursor := b.cursor(key, page)
-	request := coolapk.UserListRequest{UID: uid, Page: page, LastItem: cursor.last}
+	request := coolapk.ListRequest{Page: page, LastItem: cursor.last}
 	list := b.client.GetUserFeedWithCtx
 	switch kind {
 	case backend.UserFeedArticles:
@@ -135,7 +135,7 @@ func (b *coolapkBackend) UserFeeds(ctx context.Context, uid string, kind backend
 	case backend.UserFeedQA:
 		list = b.client.GetUserQuestionFeedWithCtx
 	}
-	objects, err := listObjects(list(ctx, request))
+	objects, err := listObjects(list(ctx, uid, request))
 	if err != nil {
 		return backend.FeedPage{}, err
 	}
@@ -146,13 +146,13 @@ func (b *coolapkBackend) UserFeeds(ctx context.Context, uid string, kind backend
 func (b *coolapkBackend) UserConnections(ctx context.Context, uid string, kind backend.UserConnectionKind, page int) (backend.UserConnectionPage, error) {
 	key := fmt.Sprintf("user-connections:%s:%d", uid, kind)
 	cursor := b.cursor(key, page)
-	request := coolapk.UserListRequest{UID: uid, Page: page, LastItem: cursor.last}
+	request := coolapk.ListRequest{Page: page, LastItem: cursor.last}
 	var response *coolapk.RawResponse
 	var err error
 	if kind == backend.UserFans {
-		response, err = b.client.GetFansListWithCtx(ctx, request)
+		response, err = b.client.GetFansListWithCtx(ctx, uid, request)
 	} else {
-		response, err = b.client.GetFollowListWithCtx(ctx, request)
+		response, err = b.client.GetFollowListWithCtx(ctx, uid, request)
 	}
 	objects, err := listObjects(response, err)
 	if err != nil {
@@ -446,7 +446,7 @@ func (b *coolapkBackend) myList(ctx context.Context, q backend.PageQuery) (backe
 	case q.URL == backend.MyRepliesURL:
 		response, err = b.client.GetUserReplyListWithCtx(ctx, uid, r)
 	default:
-		response, err = b.client.GetHitHistoryWithCtx(ctx, q.Page, cursor.first, cursor.last)
+		response, err = b.client.GetHitHistoryWithCtx(ctx, coolapk.ListRequest{Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last})
 	}
 	objects, err := listObjects(response, err)
 	if err != nil {

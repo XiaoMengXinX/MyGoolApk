@@ -152,7 +152,7 @@ func (b *coolapkBackend) NoticeSenders(ctx context.Context) ([]backend.NoticeSen
 func (b *coolapkBackend) ServiceNotices(ctx context.Context, sender string, page int) (backend.NotificationPage, error) {
 	key := "notifications:service:" + sender
 	cursor := b.cursor(key, page)
-	objects, err := listObjects(b.client.GetServiceNotificationsWithCtx(ctx, sender, page, cursor.last))
+	objects, err := listObjects(b.client.GetServiceNotificationsWithCtx(ctx, sender, coolapk.ListRequest{Page: page, LastItem: cursor.last}))
 	if err != nil {
 		return backend.NotificationPage{}, err
 	}
@@ -196,7 +196,7 @@ func noticeFromObject(object map[string]any, kind backend.NoticeKind) backend.No
 
 func (b *coolapkBackend) Conversations(ctx context.Context, page int) (backend.ConversationPage, error) {
 	cursor := b.cursor("conversations", page)
-	objects, err := listObjects(b.client.GetMessageListWithCtx(ctx, page, cursor.last))
+	objects, err := listObjects(b.client.GetMessageListWithCtx(ctx, coolapk.ListRequest{Page: page, LastItem: cursor.last}))
 	if err != nil {
 		return backend.ConversationPage{}, err
 	}

@@ -242,7 +242,7 @@ func (b *coolapkBackend) Replies(ctx context.Context, q backend.ReplyQuery) (bac
 	list := coolapk.ListRequest{Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last}
 	switch {
 	case q.ParentID != "":
-		response, err = b.client.GetChildRepliesWithCtx(ctx, numericID, coolapk.ReplyPage{
+		response, err = b.client.GetChildRepliesWithCtx(ctx, numericID, coolapk.ListRequest{
 			Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last,
 		})
 	case q.Of == backend.RepliesOfVote:
@@ -259,7 +259,7 @@ func (b *coolapkBackend) Replies(ctx context.Context, q backend.ReplyQuery) (bac
 		listType := map[backend.ReplySort]string{
 			backend.RepliesRecent: "lastupdate_desc", backend.RepliesLatest: "dateline_desc", backend.RepliesHot: "popular",
 		}[q.Sort]
-		response, err = b.client.GetFeedRepliesWithCtx(ctx, numericID, coolapk.ReplyPage{
+		response, err = b.client.GetFeedRepliesWithCtx(ctx, numericID, coolapk.ListRequest{
 			Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last,
 		}, listType, q.Sort == backend.RepliesAuthor)
 	}
