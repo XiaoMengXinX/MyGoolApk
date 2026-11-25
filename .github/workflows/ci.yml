@@ -32,6 +32,7 @@ jobs:
         uses: ./coolapk-mygo/app-nsgo/.github/actions/setup-workspace
         with:
           app-dir: ${{ env.APP_DIR }}
+          coolapk-api-deploy-key: ${{ secrets.COOLAPK_API_DEPLOY_KEY }}
 
       - name: Vet packages
         working-directory: ${{ env.APP_DIR }}
@@ -61,6 +62,7 @@ jobs:
         uses: ./coolapk-mygo/app-nsgo/.github/actions/setup-workspace
         with:
           app-dir: ${{ env.APP_DIR }}
+          coolapk-api-deploy-key: ${{ secrets.COOLAPK_API_DEPLOY_KEY }}
           rebuild-android-runtime: "true"
 
       - name: Build Android APK
@@ -108,6 +110,7 @@ jobs:
         uses: ./coolapk-mygo/app-nsgo/.github/actions/setup-workspace
         with:
           app-dir: ${{ env.APP_DIR }}
+          coolapk-api-deploy-key: ${{ secrets.COOLAPK_API_DEPLOY_KEY }}
 
       - name: Show Xcode version
         run: xcodebuild -version

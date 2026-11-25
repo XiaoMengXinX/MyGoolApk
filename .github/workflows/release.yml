@@ -72,6 +72,7 @@ jobs:
         uses: ./coolapk-mygo/app-nsgo/.github/actions/setup-workspace
         with:
           app-dir: ${{ env.APP_DIR }}
+          coolapk-api-deploy-key: ${{ secrets.COOLAPK_API_DEPLOY_KEY }}
 
       - name: Run headless tests
         working-directory: ${{ env.APP_DIR }}
@@ -93,6 +94,7 @@ jobs:
         uses: ./coolapk-mygo/app-nsgo/.github/actions/setup-workspace
         with:
           app-dir: ${{ env.APP_DIR }}
+          coolapk-api-deploy-key: ${{ secrets.COOLAPK_API_DEPLOY_KEY }}
           rebuild-android-runtime: "true"
 
       - name: Build Android APK
@@ -141,6 +143,7 @@ jobs:
         uses: ./coolapk-mygo/app-nsgo/.github/actions/setup-workspace
         with:
           app-dir: ${{ env.APP_DIR }}
+          coolapk-api-deploy-key: ${{ secrets.COOLAPK_API_DEPLOY_KEY }}
 
       - name: Build iOS IPA (unsigned)
         working-directory: ${{ env.APP_DIR }}

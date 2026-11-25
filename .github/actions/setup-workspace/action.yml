@@ -10,6 +10,10 @@ inputs:
     description: Branch, tag, or commit of XiaoMengXinX/CoolapkApi-Go to clone when go.mod replaces it locally.
     required: false
     default: iOS
+  coolapk-api-deploy-key:
+    description: Optional read-only SSH deploy key for cloning a private XiaoMengXinX/CoolapkApi-Go repository.
+    required: false
+    default: ""
   rebuild-android-runtime:
     description: Rebuild NSGo's Android classes.dex and classes.jar after applying patches/nsgo/*.patch.
     required: false
@@ -23,13 +27,23 @@ runs:
       env:
         APP_DIR: ${{ inputs.app-dir }}
         COOLAPK_API_REF: ${{ inputs.coolapk-api-ref }}
+        COOLAPK_API_DEPLOY_KEY: ${{ inputs.coolapk-api-deploy-key }}
       run: |
         set -euo pipefail
         if grep -Eq '^replace[[:space:]]+github\.com/XiaoMengXinX/CoolapkApi-Go[[:space:]]*=>' "$APP_DIR/go.mod"; then
           api_dir=$(cd "$APP_DIR" && python3 -c 'import os, sys; print(os.path.normpath(os.path.join(os.getcwd(), "../../CoolapkApi-Go")))')
           echo "Cloning XiaoMengXinX/CoolapkApi-Go ($COOLAPK_API_REF) into $api_dir"
           rm -rf "$api_dir"
-          git clone --depth 1 --branch "$COOLAPK_API_REF" https://github.com/XiaoMengXinX/CoolapkApi-Go.git "$api_dir"
+          if [ -n "${COOLAPK_API_DEPLOY_KEY:-}" ]; then
+            key_file=$(mktemp)
+            trap 'rm -f "$key_file"' EXIT
+            printf '%s\n' "$COOLAPK_API_DEPLOY_KEY" > "$key_file"
+            chmod 600 "$key_file"
+            GIT_SSH_COMMAND="ssh -i \"$key_file\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+              git clone --depth 1 --branch "$COOLAPK_API_REF" git@github.com:XiaoMengXinX/CoolapkApi-Go.git "$api_dir"
+          else
+            git clone --depth 1 --branch "$COOLAPK_API_REF" https://github.com/XiaoMengXinX/CoolapkApi-Go.git "$api_dir"
+          fi
         else
           echo "CoolapkApi-Go is not locally replaced in go.mod; skipping clone."
         fi
