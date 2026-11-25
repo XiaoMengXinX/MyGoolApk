@@ -1,0 +1,169 @@
+From 8c43d5eba4d7bf52add95930e61f0b1204402c46 Mon Sep 17 00:00:00 2001
+From: xiaomengxin <xibaole2333@gmail.com>
+Date: Thu, 26 Nov 2026 03:10:55 +0800
+Subject: [PATCH 3/3] fix(core): keep the layout of a screen another covers
+
+---
+ core/layout.go            |  7 ++++--
+ core/nav_test.go          | 48 +++++++++++++++++++++++++++++++++++++--
+ core/tree.go              | 31 +++++++++++++++----------
+ docs/architecture/core.md |  2 +-
+ 4 files changed, 71 insertions(+), 17 deletions(-)
+
+diff --git a/core/layout.go b/core/layout.go
+index 1679f43f..600d26b5 100644
+--- a/core/layout.go
++++ b/core/layout.go
+@@ -251,7 +251,10 @@ func (n *node) layoutStyle() layout.Style {
+ 
+ 	switch s.Display {
+ 	case DisplayNone:
+-		l.Display = layout.DisplayNone
++		// A covered screen keeps its place in the layout: only its view hides.
++		if !n.covered {
++			l.Display = layout.DisplayNone
++		}
+ 	case DisplayGrid:
+ 		l.Display = layout.DisplayGrid
+ 	case DisplayBlock:
+@@ -653,7 +656,7 @@ func (t *Tree) syncFrames(n *node) {
+ 		}
+ 		// As NSH's frame walk does, a hidden subtree gets empty frames and
+ 		// content boxes, whatever its layout kept.
+-		hidden := n.hidden || c.style.Display == DisplayNone
++		hidden := n.hidden || c.style.Display == DisplayNone && !c.covered
+ 		shown := hidden != c.hidden
+ 		if shown {
+ 			c.hidden = hidden
+diff --git a/core/nav_test.go b/core/nav_test.go
+index cfea7695..dae4043c 100644
+--- a/core/nav_test.go
++++ b/core/nav_test.go
+@@ -374,8 +374,9 @@ func TestBackPreviewNamesTheScreenBackPops(t *testing.T) {
+ 	}
+ 	h.tree.Dispatch(driver.Event{Kind: driver.EventBackCancelled})
+ 	h.commit()
+-	if f := h.find("home").frame; f.Size.Width != 0 {
+-		t.Errorf("home's frame = %v after the gesture was cancelled", f)
++	// Covered again, home hides and keeps its layout for the next uncover.
++	if n := h.find("home"); n.style.Display != DisplayNone || n.frame.Size.Width == 0 {
++		t.Errorf("home's display = %v, frame = %v after the gesture was cancelled, want hidden as laid out", n.style.Display, n.frame)
+ 	}
+ 	open.Set(true)
+ 	if got := preview(); got != 0 {
+@@ -831,3 +832,46 @@ func TestScreenHeaderTitleIntrinsicAndToggle(t *testing.T) {
+ 		t.Fatalf("compact width after toggle back = %v, want 66", got)
+ 	}
+ }
++
++// A screen another covers hides, and keeps its layout: its text and the
++// rows of its list are as they were when it shows again, with no pass to
++// lay them out first.
++func TestCoveredScreenKeepsItsLayout(t *testing.T) {
++	var top *Signal[bool]
++	h := newPhone(t, phone, func(cx *Scope) Node {
++		top = NewSignal(cx, false)
++		return Stack{Style: Style{FlexGrow: 1}, Children: []Node{
++			Screen{TestID: "home", Children: []Node{
++				Text{TestID: "text", Content: "kept"},
++				List{TestID: "list", Count: func() int { return 50 }, EstimatedSize: 40, Style: Style{FlexGrow: 1},
++					Row: func(cx *Scope, r ListRow) Node { return View{Style: Style{Height: Pt(40)}} }},
++			}},
++			Show{When: top.Get, Then: func(*Scope) Node { return Screen{TestID: "detail"} }},
++		}}
++	})
++	h.commit()
++	frame, box := h.find("home").frame, h.find("text").text.box
++	rows := len(h.find("list").children)
++	if box.Size.Width == 0 || rows == 0 {
++		t.Fatalf("text box = %v, %d rows while shown", box, rows)
++	}
++	top.Set(true)
++	b := h.commit()
++	home := h.find("home")
++	if home.style.Display != DisplayNone {
++		t.Errorf("covered home's display = %v, want none", home.style.Display)
++	}
++	hidden := false
++	for _, it := range b.Items {
++		if it.Kind == driver.ItemViewStyle && it.ID == home.id {
++			hidden = it.ViewStyle.Hidden
++		}
++	}
++	if !hidden {
++		t.Error("covered home's view was not hidden")
++	}
++	if home.frame != frame || h.find("text").text.box != box || len(h.find("list").children) != rows {
++		t.Errorf("covered home: frame %v (was %v), text box %v (was %v), %d rows (was %d)",
++			home.frame, frame, h.find("text").text.box, box, len(h.find("list").children), rows)
++	}
++}
+diff --git a/core/tree.go b/core/tree.go
+index 8d5ad000..bb5cc81f 100644
+--- a/core/tree.go
++++ b/core/tree.go
+@@ -326,17 +326,22 @@ type node struct {
+ 	// hidden is set, as the last layout found, for a node DisplayNone
+ 	// hides: its own or a shadow ancestor's, across hoisting too.
+ 	hidden bool
+-	attach *attachNode
+-	screen *screenNode
+-	list   *listNode
+-	canvas *canvasNode
+-	gpu    *gpuNode
+-	shader *shaderNode
+-	fx     *fxNode // an effect's, a transition's or a navigation's shader
+-	icon   *iconNode
+-	web    *webNode
+-	video  *videoNode
+-	native *nativeNode
++	// covered is set on a screen DisplayNone hides only because another
++	// screen of its stack covers it: the platform hides its view, and its
++	// layout stays as it last showed, so its texts, lists and scroll
++	// offsets are there as it shows again, before a pass lays it out.
++	covered bool
++	attach  *attachNode
++	screen  *screenNode
++	list    *listNode
++	canvas  *canvasNode
++	gpu     *gpuNode
++	shader  *shaderNode
++	fx      *fxNode // an effect's, a transition's or a navigation's shader
++	icon    *iconNode
++	web     *webNode
++	video   *videoNode
++	native  *nativeNode
+ 	// accessory is an InputAccessoryView's: a layout root as wide as the
+ 	// surface that no view holds.
+ 	accessory *accessoryNode
+@@ -1408,11 +1413,13 @@ func (t *Tree) restyle(n *node) bool {
+ 			t.reorder(parent)
+ 		}
+ 	}
+-	if n.screen != nil && n.screen.hidden {
++	n.covered = n.screen != nil && n.screen.hidden && n.style.Display != DisplayNone
++	if n.covered {
+ 		n.style.Display = DisplayNone
+ 	}
+ 	if len(t.suspended) > 0 && t.suspendedIn(n) {
+ 		n.style.Display = DisplayNone
++		n.covered = false
+ 	}
+ 	if n.style.Display != display && len(t.keys) > 0 {
+ 		// The bindings of what it hides leave the keymap, and come back as it shows (keyActive).
+diff --git a/docs/architecture/core.md b/docs/architecture/core.md
+index 00e3c2d8..3e292014 100644
+--- a/docs/architecture/core.md
++++ b/docs/architecture/core.md
+@@ -71,7 +71,7 @@ A component is any type whose `Render(cx) Node` returns its nodes, like `http.Ha
+ - iOS slides the screens and their bars as `UINavigationController` pushes and pops: 0.35 s on the keyboard's curve, the screen below moving 30% of the width under a dimming view.
+ - `Screen.Animation` fades the screen instead or shows it at once: a push takes the pushed screen's, a pop the popped one's.
+ - `HeaderClass` gives the system header its colors as classes (`bg-*`, `text-*`, `tint-*`) under `HeaderStyle`. `HeaderTitleStyle` and `HeaderLargeTitleStyle`, with their `Func` forms, independently override family, size, weight and slant on iOS and Android; zero fields preserve native defaults. NSH supplies header colors alone: NSGo adds title typography so an app need not replace a native title just to style its font.
+-- A hidden screen has no layout, so iOS keeps the layout the screen a batch hides or pops last showed: it skips the frames of no size inside it, and keeps a popped screen's views until its slide ends. The slide moves the screens themselves, as the swipe back does; a snapshot cost a push 5–13 ms of the main thread in the simulator, waiting on the render server.
++- A screen another covers hides its view and keeps its layout (`node.covered`): its texts, list rows and scroll offsets are there as a back gesture or a pop uncovers it, with no pass to lay it out first, as UIKit keeps the views of a covered controller. A screen hidden otherwise has no layout, so iOS keeps the layout a batch hides or pops last showed: it skips the frames of no size inside it, and keeps a popped screen's views until its slide ends. The slide moves the screens themselves, as the swipe back does; a snapshot cost a push 5–13 ms of the main thread in the simulator, waiting on the render server.
+ - Each platform measures its bar with what it holds and reports its height and the room left for `HeaderTitle` (`EventScreenHeader`), which replace the core's estimates; the insets a screen reports (`EventScreenInsets`) replace those the core derives.
+ - A transparent header and a large title lay the content under them: each vertical scroll view whose top they cover gets that part as `ScrollConfig.HeaderInset`, added to its top content inset.
+ - iOS collapses a large title into the bar once its scroll view scrolled half the title's row under it, and brings it back above that, as UIKit's navigation controller does; the bar has no background until it collapses, then the system's blur.
+-- 
+2.54.0 (Apple Git-157)
+

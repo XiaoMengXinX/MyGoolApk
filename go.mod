@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/XiaoMengXinX/CoolapkApi-Go v0.0.0
-	github.com/nsgo-dev/nsgo v0.3.1-0.20261123153305-2e9c12b7bea1
+	github.com/nsgo-dev/nsgo v0.3.3
 	golang.org/x/net v0.62.0
 )
 
@@ -46,4 +46,5 @@ require (
 replace github.com/XiaoMengXinX/CoolapkApi-Go => ../../CoolapkApi-Go
 
 tool github.com/nsgo-dev/nsgo/cmd/nsgo
+
 replace github.com/nsgo-dev/nsgo => ../nsgo
