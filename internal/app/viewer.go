@@ -38,10 +38,14 @@ func (a *App) openImages(images []backend.Image, index int) {
 	a.viewerShown.Set(false)
 	v := &viewer{images: images, index: index}
 	a.viewing.Set(v)
-	a.cx.AfterFunc(16*time.Millisecond, func() {
-		if !v.closing {
-			a.viewerShown.Set(true)
-		}
+	// The app owns the viewer's timers, not the row or sheet that opened or
+	// closed it, which may go first.
+	a.cx.Run(func() {
+		a.cx.AfterFunc(16*time.Millisecond, func() {
+			if !v.closing {
+				a.viewerShown.Set(true)
+			}
+		})
 	})
 }
 
@@ -53,10 +57,12 @@ func (a *App) closeViewer() {
 	}
 	v.closing = true
 	a.viewerShown.Set(false)
-	a.cx.AfterFunc(viewerMotion, func() {
-		if a.viewing.GetUntracked() == v {
-			a.viewing.Set(nil)
-		}
+	a.cx.Run(func() {
+		a.cx.AfterFunc(viewerMotion, func() {
+			if a.viewing.GetUntracked() == v {
+				a.viewing.Set(nil)
+			}
+		})
 	})
 }
 

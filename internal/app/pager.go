@@ -25,13 +25,24 @@ type pager[T any] struct {
 	loading bool
 	more    bool
 	gen     int
-	fetch   func(ctx context.Context, page int) ([]T, bool, error)
+	// start reads, on the graph's goroutine, what page asks for, and returns
+	// the fetch of it, which runs on another.
+	start   func(page int) func(ctx context.Context) ([]T, bool, error)
 	id      func(T) string
 	list    core.Ref
 	started bool
+	// blank counts the pages on end that brought nothing new.
+	blank int
 }
 
 func newPager[T any](cx *core.Scope, fetch func(context.Context, int) ([]T, bool, error), id func(T) string) *pager[T] {
+	return newQueryPager(cx, func() struct{} { return struct{}{} },
+		func(ctx context.Context, _ struct{}, page int) ([]T, bool, error) { return fetch(ctx, page) }, id)
+}
+
+// newQueryPager is a pager whose fetch depends on signals: query reads them
+// as a page is asked for, on the graph's goroutine, and fetch gets what it read.
+func newQueryPager[T, Q any](cx *core.Scope, query func() Q, fetch func(context.Context, Q, int) ([]T, bool, error), id func(T) string) *pager[T] {
 	return &pager[T]{
 		cx:         cx,
 		items:      core.NewSignalFunc(cx, []T(nil), nil),
@@ -40,8 +51,11 @@ func newPager[T any](cx *core.Scope, fetch func(context.Context, int) ([]T, bool
 		refreshing: core.NewSignal(cx, false),
 		err:        core.NewSignal(cx, ""),
 		moreErr:    core.NewSignal(cx, ""),
-		fetch:      fetch,
-		id:         id,
+		start: func(page int) func(context.Context) ([]T, bool, error) {
+			q := query()
+			return func(ctx context.Context) ([]T, bool, error) { return fetch(ctx, q, page) }
+		},
+		id: id,
 	}
 }
 
@@ -108,8 +122,9 @@ func (p *pager[T]) load(more bool) {
 	}
 	p.gen++
 	gen := p.gen
+	fetch := p.start(page)
 	go func() {
-		items, hasMore, err := p.fetch(context.Background(), page)
+		items, hasMore, err := fetch(context.Background())
 		p.cx.Post(func() {
 			if gen != p.gen {
 				return
@@ -128,25 +143,34 @@ func (p *pager[T]) load(more bool) {
 				if more {
 					base = p.items.GetUntracked()
 				}
-				p.items.Set(mergeByID(base, items, p.id))
+				merged := mergeByID(base, items, p.id)
+				p.items.Set(merged)
 				p.page = page
 				p.hasMore.Set(hasMore)
 				p.loaded.Set(true)
 				p.err.Set("")
 				p.moreErr.Set("")
+				// A page that adds no row leaves nothing to scroll to that would
+				// ask for the next. Rows the list shows already mean the server
+				// is repeating itself, and the list ends. A page with no rows,
+				// as one a backend filtered empty, asks for the next itself, up
+				// to five on end: a filtered list kept asking otherwise, with
+				// its spinner turning for good.
+				if !more {
+					p.blank = 0
+				}
+				switch {
+				case len(merged) > len(base):
+					p.blank = 0
+				case hasMore && len(items) == 0 && p.blank < 5:
+					p.blank++
+					p.load(true)
+				default:
+					p.hasMore.Set(false)
+				}
 			}
 		})
 	}()
-}
-
-// at returns item i, and whether there is one.
-func (p *pager[T]) at(i int) (T, bool) {
-	items := p.items.Get()
-	if i < 0 || i >= len(items) {
-		var zero T
-		return zero, false
-	}
-	return items[i], true
 }
 
 // find returns the loaded item with key.
@@ -210,6 +234,8 @@ type listSpec struct {
 	skeleton func() core.Node
 	// header is shown above the rows.
 	header core.Node
+	// footer is shown below the rows.
+	footer core.Node
 	// padding below the last row.
 	bottom core.Points
 	// pushed says the list is on a page pushed over the shell, which draws under
@@ -217,21 +243,45 @@ type listSpec struct {
 	pushed bool
 	// onRefresh runs on a pull to refresh; nil reloads the pager.
 	onRefresh func()
+	// onScroll hears the list scroll.
+	onScroll func(core.ScrollEvent)
+	// inverted puts the first row at the bottom, as a chat does.
+	inverted bool
 }
 
 // pagerList shows a pager as a virtual list with its loading, empty, error
 // and paging states. item builds the content of a row: get reads the item
 // the row shows now, so the content updates as the list reuses the row.
 func pagerList[T any](cx *core.Scope, p *pager[T], spec listSpec, item func(cx *core.Scope, get func() T, row core.ListRow) core.Node) core.Node {
+	return pagerRows(cx, p, func(items []T) []T { return items }, p.id, spec, item)
+}
+
+// pagerRows is pagerList over the rows rows makes of the pager's items, as
+// several items side by side; key names a row.
+func pagerRows[T, R any](cx *core.Scope, p *pager[T], rows func([]T) []R, key func(R) string, spec listSpec, item func(cx *core.Scope, get func() R, row core.ListRow) core.Node) core.Node {
 	p.ensure()
+	// The rows are made again whenever the items change.
+	shown := core.NewMemoFunc(cx, func() []R { return rows(p.items.Get()) }, nil)
+	at := func(i int) (R, bool) {
+		rs := shown.Get()
+		if i < 0 || i >= len(rs) {
+			var zero R
+			return zero, false
+		}
+		return rs[i], true
+	}
 	count := func() int {
 		switch {
+		case !p.loaded.Get() && p.err.Get() != "":
+			return 1
+		case !p.loaded.Get() && spec.skeleton != nil:
+			return 3 // placeholders about as tall as the rows to come
 		case !p.loaded.Get():
-			return 3
-		case len(p.items.Get()) == 0:
+			return 1
+		case len(shown.Get()) == 0:
 			return 1
 		}
-		return len(p.items.Get()) + 1
+		return len(shown.Get()) + 1
 	}
 	kind := func(i int) rowKind {
 		switch {
@@ -239,9 +289,9 @@ func pagerList[T any](cx *core.Scope, p *pager[T], spec listSpec, item func(cx *
 			return rowFailed
 		case !p.loaded.Get():
 			return rowLoading
-		case len(p.items.Get()) == 0:
+		case len(shown.Get()) == 0:
 			return rowEmpty
-		case i < len(p.items.Get()):
+		case i < len(shown.Get()):
 			return rowItem
 		}
 		return rowFooter
@@ -256,19 +306,24 @@ func pagerList[T any](cx *core.Scope, p *pager[T], spec listSpec, item func(cx *
 	if spec.header != nil {
 		header = append(header, spec.header)
 	}
+	footer := []core.Node{bottomSpace(spec.bottom, spec.pushed)}
+	if spec.footer != nil {
+		footer = append(footer, spec.footer)
+	}
 	return core.List{
 		Ref:           &p.list,
 		TestID:        "list",
 		Count:         count,
 		EstimatedSize: 220,
+		Inverted:      spec.inverted,
 		Header:        core.Group(header),
-		Footer:        bottomSpace(spec.bottom, spec.pushed),
+		Footer:        core.Group(footer),
 		Key: func(i int) any {
 			switch kind(i) {
 			case rowItem:
-				if it, ok := p.at(i); ok {
-					if key := p.id(it); key != "" {
-						return key
+				if it, ok := at(i); ok {
+					if k := key(it); k != "" {
+						return k
 					}
 				}
 				return i
@@ -279,7 +334,7 @@ func pagerList[T any](cx *core.Scope, p *pager[T], spec listSpec, item func(cx *
 		},
 		Row: func(cx *core.Scope, r core.ListRow) core.Node {
 			k := core.NewMemo(cx, func() rowKind { return kind(r.Index()) })
-			get := func() T { it, _ := p.at(r.Index()); return it }
+			get := func() R { it, _ := at(r.Index()); return it }
 			return core.Dynamic(func(cx *core.Scope) core.Node {
 				switch k.Get() {
 				case rowItem:
@@ -297,6 +352,7 @@ func pagerList[T any](cx *core.Scope, p *pager[T], spec listSpec, item func(cx *
 				return pagerFooter(cx, p)
 			})
 		},
+		OnScroll:          spec.onScroll,
 		OnLoadMore:        p.loadMore,
 		LoadMoreThreshold: 1.5,
 		OnRefresh: func() {

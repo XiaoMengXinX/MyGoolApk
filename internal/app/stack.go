@@ -8,98 +8,136 @@ import (
 	"github.com/nsgo-dev/nsgo/core"
 )
 
-// Pages pushed over the shell are NSGo's native screen stack: on iOS
-// UINavigationController slides them and its edge swipe pops them, on Android
-// 14 and later the predictive back gesture drags the top page away.
+// Pages pushed over the shell are NSGo's native screen stack on iOS, where
+// UINavigationController slides them and its edge swipe pops them.
 //
-// Both platforms hide a screen another covers, so the shell lives under the
-// stack, where it keeps its lists' places. Android also shows a pushed screen
-// at once, so there each page moves itself: it slides in from the right over the shell, which
-// shifts a little and dims, and slides out again as Pop takes it.
+// Android's native stack shows a pushed screen at once and hides the one it
+// covers, so a page over another had nothing to slide over. There the pages
+// are layers of the app's own over the shell: each slides in from the right
+// and out again, and what it covers, the shell or a page, shifts a little.
+// A covered page stays laid out, which keeps its lists' places.
 const pageMotion = 300 * time.Millisecond
 
 var pageTransition = core.Transition{Duration: pageMotion, Easing: emphasized, Properties: core.TransitionOpacity | core.TransitionTransform}
 
-const fadeMotion = 160 * time.Millisecond
-
-var fadeTransition = core.Transition{Duration: fadeMotion, Properties: core.TransitionOpacity}
-
-// shellShift is how far the shell moves, in percent of its width, under a
-// page.
+// shellShift is how far the shell, or a page, moves under a page, in percent
+// of its width.
 const shellShift = -22
 
 type route struct{ kind, id string }
 
-// pageState is what Android draws of a pushed page's motion: it comes in as
-// shown turns true and goes out as leaving does.
-type pageState struct {
+// pageLayer is a pushed page on Android: it comes in as shown turns true and
+// goes out as leaving does.
+type pageLayer struct {
+	id             int
+	route          route
 	shown, leaving *core.Signal[bool]
-	// fades is whether it goes in and out by fading: over another page, as
-	// the screen below one is hidden and sliding would show nothing behind.
-	fades bool
 }
 
 type pageStack struct {
-	a      *App
-	nav    *base.Nav[route]
-	states []*pageState // the pushed pages' on Android, the top one last
-	// covered is whether a page not on its way out is over the shell; deep
-	// whether pages are over each other, which hides the shell as the page
-	// below one that leaves is not the shell.
-	covered, deep *core.Signal[bool]
+	a   *App
+	cx  *core.Scope
+	nav *base.Nav[route] // iOS's
+	// layers are Android's pages, the top one last.
+	layers *core.Signal[[]*pageLayer]
+	nextID int
 }
 
 func (a *App) newPageStack(cx *core.Scope) *pageStack {
-	return &pageStack{a: a, nav: base.NewNav(cx, route{}), covered: core.NewSignal(cx, false), deep: core.NewSignal(cx, false)}
+	return &pageStack{a: a, cx: cx, nav: base.NewNav(cx, route{}), layers: core.NewSignalFunc(cx, []*pageLayer(nil), nil)}
 }
 
-func (s *pageStack) android() bool { return s.a.cx.Env().OS() == core.OSAndroid }
+func (s *pageStack) android() bool { return s.cx.Env().OS() == core.OSAndroid }
 
-// refresh brings covered and deep up to the pages in states.
-func (s *pageStack) refresh() {
-	s.covered.Set(slices.ContainsFunc(s.states, func(x *pageState) bool { return !x.leaving.GetUntracked() }))
-	s.deep.Set(len(s.states) >= 2)
+// top is the topmost layer not on its way out, with its index, or -1.
+func (s *pageStack) top(layers []*pageLayer, leaving func(*pageLayer) bool) (int, *pageLayer) {
+	for i := len(layers) - 1; i >= 0; i-- {
+		if !leaving(layers[i]) {
+			return i, layers[i]
+		}
+	}
+	return -1, nil
 }
 
-// Depth is how many pages are over the shell.
-func (s *pageStack) Depth() int { return s.nav.Depth() }
+// Depth is how many pages are over the shell, without those on their way
+// out.
+func (s *pageStack) Depth() int {
+	if !s.android() {
+		return s.nav.Depth()
+	}
+	n := 0
+	for _, l := range s.layers.Get() {
+		if !l.leaving.Get() {
+			n++
+		}
+	}
+	return n
+}
 
 // Push shows a page over the others.
-func (s *pageStack) Push(r route) { s.nav.Push(r) }
+func (s *pageStack) Push(r route) {
+	if !s.android() {
+		s.nav.Push(r)
+		return
+	}
+	// The stack owns the layer and its timer: a push from a sheet that
+	// closes as it pushes would otherwise take them away with the sheet.
+	s.cx.Run(func() {
+		s.nextID++
+		l := &pageLayer{id: s.nextID, route: r, shown: core.NewSignal(s.cx, false), leaving: core.NewSignal(s.cx, false)}
+		s.layers.Set(append(slices.Clone(s.layers.GetUntracked()), l))
+		// The page comes in on the next frame, after it was laid out in place.
+		s.cx.AfterFunc(16*time.Millisecond, func() { l.shown.Set(true) })
+	})
+}
 
 // Pop takes the top page away. iOS animates a pop itself; on Android the page
-// goes out first, as a back gesture's does.
+// slides out first.
 func (s *pageStack) Pop() bool {
-	if s.nav.Depth() == 0 {
-		return false
-	}
-	i := len(s.states) - 1
-	for i >= 0 && s.states[i].leaving.GetUntracked() {
-		i--
-	}
-	if i < 0 {
+	if !s.android() {
+		if s.nav.Depth() == 0 {
+			return false
+		}
 		s.nav.Pop(1)
 		return true
 	}
-	st := s.states[i]
-	st.leaving.Set(true)
-	s.refresh()
-	motion := pageMotion
-	if st.fades {
-		motion = fadeMotion
+	_, l := s.top(s.layers.GetUntracked(), func(l *pageLayer) bool { return l.leaving.GetUntracked() })
+	if l == nil {
+		return false
 	}
-	s.a.cx.AfterFunc(motion+30*time.Millisecond, func() {
-		// A back gesture may have popped it meanwhile.
-		if slices.Contains(s.states, st) {
-			s.nav.Pop(1)
-		}
+	l.leaving.Set(true)
+	s.cx.Run(func() {
+		s.cx.AfterFunc(pageMotion+30*time.Millisecond, func() {
+			s.layers.Set(slices.DeleteFunc(slices.Clone(s.layers.GetUntracked()), func(x *pageLayer) bool { return x == l }))
+		})
 	})
 	return true
 }
 
+// covers reports whether a page not on its way out is over layer i, or over
+// the shell for i of -1.
+func (s *pageStack) covers(i int) bool {
+	top, _ := s.top(s.layers.Get(), func(l *pageLayer) bool { return l.leaving.Get() })
+	return top > i
+}
+
 // view is the stack, the shell at its bottom.
 func (s *pageStack) view(cx *core.Scope, shell func(cx *core.Scope) core.Node, page func(cx *core.Scope, r route) core.Node) core.Node {
-	android := s.android()
+	if s.android() {
+		return core.Group{
+			s.under(func() bool { return s.covers(-1) }, shell(cx), nil),
+			core.Each(s.layers.Get, func(l *pageLayer) int { return l.id }, func(cx *core.Scope, item func() *pageLayer, _ func() int) core.Node {
+				l := core.Untracked(cx, item)
+				index := func() int { return slices.Index(s.layers.Get(), l) }
+				return s.under(func() bool { return s.covers(index()) }, page(cx, l.route), func() core.Style {
+					if !l.shown.Get() || l.leaving.Get() {
+						return core.Style{Transform: core.Transform{TranslateXPercent: 100}}
+					}
+					return core.Style{}
+				})
+			}),
+		}
+	}
 	stack := s.nav.Stack(fill.Merge(core.Style{PointerEvents: core.PointerEventsBoxNone}), func(cx *core.Scope, r route, _ func() int) base.NavPage {
 		if r.kind == "" {
 			// The shell is under the stack: a screen another covers is hidden and
@@ -110,73 +148,36 @@ func (s *pageStack) view(cx *core.Scope, shell func(cx *core.Scope) core.Node, p
 		// The image viewer covers the page: iOS's edge swipe, which goes to the
 		// stack before any handler, must not pop the page under it.
 		viewing := func() bool { return s.a.viewing.Get() != nil }
-		if !android {
-			return base.NavPage{HeaderHidden: true, Class: "bg-background", NoPopOnSwipeFunc: viewing, Children: []core.Node{page(cx, r)}}
-		}
-		return base.NavPage{HeaderHidden: true, NoPopOnSwipeFunc: viewing, Children: []core.Node{s.moving(cx, r, page(cx, r))}}
+		return base.NavPage{HeaderHidden: true, Class: "bg-background", NoPopOnSwipeFunc: viewing, Children: []core.Node{page(cx, r)}}
 	})
-	if !android {
-		// iOS's navigation controller slides the pages over it.
-		return core.Group{core.View{Class: "bg-background", Style: fillAbs, Children: []core.Node{shell(cx)}}, stack}
-	}
-	return core.Group{s.shellLayer(shell(cx)), stack}
+	// iOS's navigation controller slides the pages over it.
+	return core.Group{core.View{Class: "bg-background", Style: fillAbs, Children: []core.Node{shell(cx)}}, stack}
 }
 
-// shellLayer holds the shell under the stack, moved and dimmed as pages cover it.
-func (s *pageStack) shellLayer(shell core.Node) core.Node {
+// under is a layer of Android's stack: the shell or a page, which shifts and
+// dims while covered and takes no touches then. place, when not nil, is
+// where the layer is while not covered.
+func (s *pageStack) under(covered func() bool, content core.Node, place func() core.Style) core.Node {
 	return core.View{
 		Class: "bg-background",
-		Style: fill.Merge(core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0), Overflow: core.Hidden, Transition: pageTransition}),
+		Style: fillAbs.Merge(core.Style{Overflow: core.Hidden, Transition: pageTransition}),
 		StyleFunc: func() core.Style {
-			if s.covered.Get() {
+			if covered() {
 				return core.Style{Transform: core.Transform{TranslateXPercent: shellShift}, PointerEvents: core.PointerEventsNone}
+			}
+			if place != nil {
+				return place()
 			}
 			return core.Style{}
 		},
 		Children: []core.Node{
+			core.View{Style: fill, Children: []core.Node{content}},
 			core.View{
-				Style:     fill,
-				StyleFunc: func() core.Style { return core.Style{Opacity: core.Alpha(shown(!s.deep.Get()))} },
-				Children:  []core.Node{shell},
-			},
-			core.View{
-				Class: "bg-black/10",
-				Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0), Transition: pageTransition, PointerEvents: core.PointerEventsNone},
-				StyleFunc: func() core.Style {
-					return core.Style{Opacity: core.Alpha(shown(s.covered.Get()))}
-				},
+				Class:     "bg-black/10",
+				Style:     fillAbs.Merge(core.Style{Transition: pageTransition, PointerEvents: core.PointerEventsNone}),
+				StyleFunc: func() core.Style { return core.Style{Opacity: core.Alpha(shown(covered()))} },
 			},
 		},
-	}
-}
-
-// moving slides a page in from the right and out again, over a background of
-// its own: the screen holding it is transparent, so the shell shows beside it.
-func (s *pageStack) moving(cx *core.Scope, r route, content core.Node) core.Node {
-	st := &pageState{shown: core.NewSignal(cx, false), leaving: core.NewSignal(cx, false), fades: len(s.states) > 0}
-	s.states = append(s.states, st)
-	cx.Cleanup(func() {
-		s.states = slices.DeleteFunc(s.states, func(x *pageState) bool { return x == st })
-		s.a.cx.AfterFunc(time.Millisecond, s.refresh)
-	})
-	// The page comes in on the next frame, after it was laid out in place.
-	cx.AfterFunc(16*time.Millisecond, func() {
-		st.shown.Set(true)
-		s.refresh()
-	})
-	return core.View{
-		Class: "bg-background",
-		Style: fill.Merge(core.Style{Transition: pageTransition}),
-		StyleFunc: func() core.Style {
-			if st.shown.Get() && !st.leaving.Get() {
-				return core.Style{}
-			}
-			if st.fades {
-				return core.Style{Opacity: core.Alpha(0), Transition: fadeTransition}
-			}
-			return core.Style{Transform: core.Transform{TranslateXPercent: 100}}
-		},
-		Children: []core.Node{content},
 	}
 }
 
