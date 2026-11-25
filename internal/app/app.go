@@ -27,7 +27,7 @@ func Root(newBackend func(dir string) (backend.Backend, error)) func(cx *core.Sc
 		a.nav = a.newPageStack(cx)
 		a.viewing = core.NewSignalFunc(cx, (*viewer)(nil), nil)
 		a.viewerShown = core.NewSignal(cx, false)
-		a.searchHistory = core.NewSignalFunc(cx, []string(nil), nil)
+		a.searchHistory = core.NewSignalFunc(cx, a.local.Searches, nil)
 		a.history = core.NewSignalFunc(cx, a.local.History, nil)
 		a.topics = a.newTopicHome(cx)
 		a.applyAppearance()
@@ -73,14 +73,15 @@ func (a *App) view(cx *core.Scope) core.Node {
 	a.discovery = a.newTabGroup(cx, discoveryTabs, 0)
 	topics := a.topics.view
 	dests := []destination{
-		{"首页", &symbols.Home, &symbols.HomeFill, a.homePage},
-		{"数码", &symbols.Devices, &symbols.DevicesFill, func(cx *core.Scope) core.Node {
+		{title: "首页", outline: &symbols.Home, filled: &symbols.HomeFill, content: a.homePage},
+		{title: "数码", outline: &symbols.Devices, filled: &symbols.DevicesFill, content: func(cx *core.Scope) core.Node {
 			return column(fill, "bg-background", a.rootTopBar("数码"), a.digital.view(cx, topics))
 		}},
-		{"发现", &symbols.Explore, &symbols.ExploreFill, func(cx *core.Scope) core.Node {
+		{title: "发现", outline: &symbols.Explore, filled: &symbols.ExploreFill, content: func(cx *core.Scope) core.Node {
 			return column(fill, "bg-background", a.rootTopBar("发现"), a.discovery.view(cx, topics))
 		}},
-		{"我的", &symbols.Person, &symbols.PersonFill, a.mePage},
+		{title: "我的", outline: &symbols.Person, filled: &symbols.PersonFill, content: a.mePage,
+			unread: func() int { return a.account.unread.Get().Total() }},
 	}
 	stack := a.nav.view(cx, func(cx *core.Scope) core.Node {
 		return core.Group{a.rootBack(), a.shell(cx, dests)}
@@ -95,8 +96,14 @@ func (a *App) page(cx *core.Scope, r route) core.Node {
 		return a.detailPage(cx, r.id)
 	case routeLogin:
 		return a.loginPage(cx)
+	case routeWeb:
+		return a.webPage(cx, r.id)
 	case routeUser:
 		return a.userPage(cx, r.id)
+	case routeFollows:
+		return a.peoplePage(cx, r.id, backend.UserFollowing)
+	case routeFans:
+		return a.peoplePage(cx, r.id, backend.UserFans)
 	case routeTopic:
 		return a.topicPage(cx, r.id)
 	case routeList:
@@ -111,35 +118,27 @@ func (a *App) page(cx *core.Scope, r route) core.Node {
 		return a.devicePage(cx)
 	case routeSearch:
 		return a.searchPage(cx, r.id)
+	case routeChat:
+		return a.chatPage(cx, r.id)
 	case routeMessages:
-		return a.screen(titled("消息"), nil, a.messagesPage(cx))
+		return a.screen(titled("通知中心"), nil, a.messagesPage(cx))
+	case routeNotices:
+		return a.noticesPage(cx, r.id)
 	}
 	return a.screen(titled(r.kind), nil)
 }
 
-// rootBack takes back while no page is pushed, and for the pages too where
-// Android's back is a button. The engine previews the system's back gesture,
-// the top page following the finger, only while no handler takes back, so
-// with gesture navigation the stack alone takes it; a button has no gesture
-// to follow, so Pop gives the page its way out.
+// rootBack takes back while no page is pushed, and on Android for the pages
+// too, which are the app's own layers there. iOS's stack pops its pages
+// itself.
 func (a *App) rootBack() core.Node {
 	return core.Show{
-		When: func() bool { return a.nav.Depth() == 0 || a.buttonNavigation() },
+		When: func() bool { return a.nav.android() || a.nav.Depth() == 0 },
 		Then: func(cx *core.Scope) core.Node {
 			cx.OnBackPress(a.backFromRoot)
 			return core.Group{}
 		},
 	}
-}
-
-// threeButtonBar is the least height in points of Android's navigation bar
-// with buttons; the gesture navigation's bar is 24 or less.
-const threeButtonBar = 36
-
-// buttonNavigation reports whether Android's bar has back as a button.
-func (a *App) buttonNavigation() bool {
-	env := a.cx.Env()
-	return env.OS() == core.OSAndroid && env.SafeArea().Bottom > threeButtonBar
 }
 
 // headlineTab is the home tab the app opens on, and back leads to.

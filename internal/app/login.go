@@ -36,17 +36,18 @@ func (a *App) openLogin() {
 // cookies after each page and every second, as some steps finish in the
 // page's scripts without a navigation.
 func (a *App) loginPage(cx *core.Scope) core.Node {
+	// importing is true while the session found in the cookies is verified.
 	importing := core.NewSignal(cx, false)
-	failed := false
+	checking, failed := false, false
 	errText := core.NewSignal(cx, "")
 	closed := false
 	cx.Cleanup(func() { closed = true })
 
 	check := func() {
-		if importing.GetUntracked() || failed || closed {
+		if checking || failed || closed {
 			return
 		}
-		importing.Set(true)
+		checking = true
 		cx.WebCookies(core.WebCookieFilter{URL: "https://account.coolapk.com/"}, func(cookies []core.WebCookie, err error) {
 			values := make(map[string]string)
 			for _, ck := range cookies {
@@ -56,18 +57,21 @@ func (a *App) loginPage(cx *core.Scope) core.Node {
 			}
 			uid, token := values["uid"], values["token"]
 			if err != nil || uid == "" || token == "" {
-				importing.Set(false)
+				checking = false
 				return
 			}
+			importing.Set(true)
 			go func() {
 				err := a.backend.ImportSession(context.Background(), uid, values["username"], token)
 				cx.Post(func() {
 					importing.Set(false)
 					if err != nil {
-						failed = true
+						checking, failed = false, true
 						errText.Set("登录失败：" + err.Error())
 						return
 					}
+					// The page is leaving: checking stays set, so the cookies
+					// are not imported again while it slides out.
 					a.resetAccount()
 					a.loadAccount()
 					a.home.reload(tabFollow, tabHeadline)
@@ -98,13 +102,14 @@ func (a *App) loginPage(cx *core.Scope) core.Node {
 		if !importing.Get() {
 			return core.Group{}
 		}
-		return core.View{Class: "bg-primary", Style: core.Style{Height: core.Pt(3), Width: core.Pct(100)}}
+		// Laid over the page: a row of its own would resize the web view.
+		return core.View{Class: "bg-primary", Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0), Height: core.Pt(3)}}
 	})
 	return a.screen(titled("登录酷安"), nil,
-		column(fill, "", progress, banner, core.WebView{
+		column(fill, "", banner, core.WebView{
 			Source:    core.WebSource{Src: coolapk.LoginURL},
 			UserAgent: a.backend.UserAgent(),
 			OnLoad:    func(core.WebNavigation) { check() },
 			Style:     fill,
-		}))
+		}, progress))
 }

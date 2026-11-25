@@ -85,10 +85,15 @@ func ResolveLink(raw string) LinkTarget {
 	case strings.HasPrefix(s, "//"):
 		s = "https:" + s
 	}
+	// web is the address as the link gave it, which the browser opens when the
+	// app has no page for it: the site's hosts (m., www., account.) serve
+	// different pages.
+	web := ""
 	if u, err := url.Parse(s); err == nil && u.Host != "" {
-		if !isCoolapkHost(u.Hostname()) {
+		if !IsCoolapkHost(u.Hostname()) && !isShareMirror(u.Hostname()) {
 			return LinkTarget{URL: s}
 		}
+		web = s
 		s = u.RequestURI()
 	} else if !strings.HasPrefix(s, "/") {
 		if strings.Contains(s, "://") {
@@ -138,17 +143,47 @@ func ResolveLink(raw string) LinkTarget {
 		}
 		return LinkTarget{Kind: LinkPage, Param: ProductCategoriesURL}
 	}
+	if path == "/feed/writer" {
+		// The official client writes a post here; the app shows what the
+		// post would be about.
+		if u, err := url.Parse(s); err == nil {
+			q := u.Query()
+			if tag := q.Get("tag"); tag != "" {
+				return LinkTarget{Kind: LinkTopic, Param: tag}
+			}
+			if id := q.Get("targetId"); id != "" && q.Get("targetType") == "product" {
+				return LinkTarget{Kind: LinkProduct, Param: id}
+			}
+		}
+		return LinkTarget{}
+	}
+	if path == TradeCityURL {
+		return LinkTarget{Kind: LinkPage, Param: TradeCityURL, Title: "同城交易"}
+	}
+	if path == TradeBrandsURL {
+		return LinkTarget{Kind: LinkPage, Param: TradeBrandsURL, Title: "品牌分类"}
+	}
 	if strings.HasPrefix(strings.TrimSpace(raw), "#/") {
 		// The routes of the official client's own lists, which are page urls.
 		return LinkTarget{Kind: LinkPage, Param: strings.TrimSpace(raw)}
 	}
+	if web != "" {
+		return LinkTarget{URL: web}
+	}
 	return LinkTarget{URL: coolapkWebURL(s)}
 }
 
-// isCoolapkHost reports whether host belongs to coolapk.com.
-func isCoolapkHost(host string) bool {
+// IsCoolapkHost reports whether host belongs to coolapk.com.
+func IsCoolapkHost(host string) bool {
 	host = strings.ToLower(host)
 	return host == "coolapk.com" || strings.HasSuffix(host, ".coolapk.com")
+}
+
+// isShareMirror reports whether host is coolapk1s.com, whose paths are the
+// site's and which the app shares posts by.
+func isShareMirror(host string) bool {
+	host = strings.ToLower(host)
+	return host == "coolapk1s.com" || strings.HasSuffix(host, ".coolapk1s.com")
 }
 
 // trimPathID returns the positive numeric id after prefix.

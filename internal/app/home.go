@@ -63,8 +63,13 @@ func titled(s string) func() string { return func() string { return s } }
 // the way back, the title and what trails it, over body. The bar is the
 // app's, 56dp high as Google Play's is, so every page has the same one.
 func (a *App) screen(title func() string, trailing core.Node, body ...core.Node) core.Node {
+	return a.screenBack(func() { a.nav.Pop() }, title, trailing, body...)
+}
+
+// screenBack is screen with a way back of the page's own.
+func (a *App) screenBack(back func(), title func() string, trailing core.Node, body ...core.Node) core.Node {
 	bar := []core.Node{
-		iconAction(&symbols.Back, "返回", func() { a.nav.Pop() }),
+		iconAction(&symbols.Back, "返回", back),
 		core.Text{ContentFunc: title, MaxLines: 1, Class: "text-on-surface", Style: fill.Merge(textStyle(textTitle, 400))},
 	}
 	if trailing != nil {

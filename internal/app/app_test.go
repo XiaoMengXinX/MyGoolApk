@@ -55,7 +55,9 @@ func (b *fakeBackend) SearchSuggestions(context.Context, string) ([]string, erro
 func (b *fakeBackend) User(_ context.Context, uid string) (backend.UserProfile, error) {
 	return backend.UserProfile{Author: backend.Author{ID: uid, Name: "用户 " + uid}, FeedCount: 5}, nil
 }
-func (b *fakeBackend) UserFeeds(context.Context, string, int) (backend.FeedPage, error) {
+func (b *fakeBackend) CastVote(context.Context, string, []string) error { return nil }
+func (b *fakeBackend) DeleteReply(context.Context, string) error        { return nil }
+func (b *fakeBackend) UserFeeds(context.Context, string, backend.UserFeedKind, int) (backend.FeedPage, error) {
 	return backend.FeedPage{Feeds: []backend.Feed{b.feed}}, nil
 }
 func (b *fakeBackend) UserConnections(context.Context, string, backend.UserConnectionKind, int) (backend.UserConnectionPage, error) {
@@ -101,9 +103,19 @@ func (b *fakeBackend) ResetDeviceID(ctx context.Context) error { return nil }
 func (b *fakeBackend) UnreadCounts(context.Context) (backend.UnreadCounts, error) {
 	return backend.UnreadCounts{}, nil
 }
-func (b *fakeBackend) Notifications(context.Context, int) (backend.NotificationPage, error) {
+func (b *fakeBackend) Notifications(context.Context, backend.NoticeKind, int) (backend.NotificationPage, error) {
 	return backend.NotificationPage{}, nil
 }
+func (b *fakeBackend) NoticeSenders(context.Context) ([]backend.NoticeSender, error) {
+	return nil, nil
+}
+func (b *fakeBackend) ServiceNotices(context.Context, string, int) (backend.NotificationPage, error) {
+	return backend.NotificationPage{}, nil
+}
+func (b *fakeBackend) Chat(context.Context, string, int) (backend.ChatPage, error) {
+	return backend.ChatPage{}, nil
+}
+func (b *fakeBackend) SendMessage(context.Context, string, string) error { return nil }
 func (b *fakeBackend) Conversations(context.Context, int) (backend.ConversationPage, error) {
 	return backend.ConversationPage{}, nil
 }
@@ -115,6 +127,10 @@ func (b *fakeBackend) SetFeedLike(_ context.Context, _ string, liked bool) (int,
 }
 func (b *fakeBackend) SetReplyLike(context.Context, string, bool) (int, error) { return 0, nil }
 func (b *fakeBackend) SetUserFollow(context.Context, string, bool) error       { return nil }
+func (b *fakeBackend) Topic(context.Context, string, string) (backend.TopicDetail, error) {
+	return backend.TopicDetail{}, nil
+}
+func (b *fakeBackend) SetTopicFollow(context.Context, string, string, bool) error { return nil }
 func (b *fakeBackend) Collections(context.Context, string, int) (backend.CollectionPage, error) {
 	return backend.CollectionPage{}, nil
 }
@@ -180,8 +196,8 @@ func TestCommentSortSwitches(t *testing.T) {
 	settle(app)
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if n := len(b.sorts); n < 2 || b.sorts[0] != backend.RepliesHot || b.sorts[n-1] != backend.RepliesLatest {
-		t.Errorf("reply sorts asked for: %v, want hot first and latest last", b.sorts)
+	if n := len(b.sorts); n < 2 || b.sorts[0] != backend.RepliesRecent || b.sorts[n-1] != backend.RepliesLatest {
+		t.Errorf("reply sorts asked for: %v, want recent first and latest last", b.sorts)
 	}
 }
 

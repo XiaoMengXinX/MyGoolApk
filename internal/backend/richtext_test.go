@@ -125,6 +125,7 @@ func TestResolveRichLink(t *testing.T) {
 		{"searchTab://all?keyword=酷安", LinkSearch, "酷安", ""},
 		{"/apk/com.example", LinkExternal, "", "https://www.coolapk.com/apk/com.example"},
 		{"/event/9", LinkExternal, "", "https://www.coolapk.com/event/9"},
+		{"https://m.coolapk.com/mp/productSelector/configSearch?a=1", LinkExternal, "", "https://m.coolapk.com/mp/productSelector/configSearch?a=1"},
 		{"https://example.com/a?b=1", LinkExternal, "", "https://example.com/a?b=1"},
 		{"/feed/abc", LinkExternal, "", "https://www.coolapk.com/feed/abc"},
 		{"", LinkExternal, "", ""},

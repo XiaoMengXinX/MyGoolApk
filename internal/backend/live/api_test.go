@@ -125,3 +125,66 @@ func TestSelectorEntry(t *testing.T) {
 		t.Errorf("no selector gave %q", u)
 	}
 }
+
+// A page that ends with its tabs lists them as the card that chooses the rows
+// below, and the people and events a tab's list holds as links.
+func TestTabPagesAndLinkRows(t *testing.T) {
+	data := json.RawMessage(`[
+		{"entityType":"card","entityTemplate":"messageCard","description":"读 <a href=\"t/今日热点\">#今日热点#</a>"},
+		{"entityType":"card","entityTemplate":"iconTabLinkGridCard","entities":[
+			{"entityType":"iconTabLink","title":"众测","url":"/page?url=V8_A"},
+			{"entityType":"iconTabLink","title":"线下","url":"V8_B"},
+			{"entityType":"iconTabLink","title":"投票","url":"#/feed/digestList?type=16"}]},
+		{"entityType":"card","entityTemplate":"configCard","title":"默认配置"},
+		{"entityType":"user","uid":12202,"username":"酷安小编","fans":140466},
+		{"entityType":"pear_goods","id":7,"goods_title":"摄影活动","goods_promo_title":"2026年8月8日","goods_tags":"北京,8人","goods_url":"https://m.coolapk.com/activity/x"}
+	]`)
+	objects, err := decodeAPIObjects(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := entriesFromObjects(objects)
+	if len(entries) != 4 {
+		t.Fatalf("got %d entries, want 4: %+v", len(entries), entries)
+	}
+	if c := entries[0].Card; c == nil || c.Kind != backend.CardNote || len(c.Note) == 0 {
+		t.Errorf("note = %+v", entries[0].Card)
+	}
+	tabs := entries[1].Card
+	if tabs == nil || !tabs.Chooses() || len(tabs.Items) != 3 {
+		t.Fatalf("tabs = %+v", tabs)
+	}
+	for i, want := range []string{"/page?url=V8_A", "/page?url=V8_B", "#/feed/digestList?type=16"} {
+		if got := tabs.Items[i].URL; got != want {
+			t.Errorf("tab %d url = %q, want %q", i, got, want)
+		}
+	}
+	if e := entries[2]; e.Kind != backend.EntryLink || e.URL != "/u/12202" || e.Title != "酷安小编" || !e.Round || e.Subtitle != "140466粉丝" {
+		t.Errorf("user = %+v", e)
+	}
+	if e := entries[3]; e.Kind != backend.EntryLink || e.URL != "https://m.coolapk.com/activity/x" || e.Subtitle != "2026年8月8日  北京 8人" {
+		t.Errorf("event = %+v", e)
+	}
+}
+
+func TestVoteCounts(t *testing.T) {
+	parse := func(src string) *backend.Vote {
+		var o map[string]any
+		if err := json.Unmarshal([]byte(src), &o); err != nil {
+			t.Fatal(err)
+		}
+		return voteFromObject(o)
+	}
+	open := parse(`{"id":1,"type":0,"total_vote_num":6,"max_select_num":1,"options":[
+		{"id":6337,"title":"A","total_select_num":-999,"color":"#F44336"},{"id":6338,"title":"B","total_select_num":-999,"color":"#2196F3"}]}`)
+	if open.Counted || !open.Versus || open.Options[0].Votes != 0 || open.Options[0].Color != 0xF44336 || open.Voters != 6 {
+		t.Errorf("open versus vote = %+v", open)
+	}
+	if listed := parse(`{"id":2,"type":1,"options":[{"id":1,"title":"A"},{"id":2,"title":"B"}]}`); listed.Counted || listed.Versus {
+		t.Errorf("listed vote = %+v", listed)
+	}
+	done := parse(`{"id":3,"type":1,"max_select_num":2,"user_selected_option":1,"options":[{"id":1,"title":"A","total_select_num":3},{"id":2,"title":"B","total_select_num":0}]}`)
+	if !done.Counted || done.Options[0].Votes != 3 || done.MaxSelect != 2 || !done.Options[0].Chosen || done.Options[1].Chosen {
+		t.Errorf("counted vote = %+v", done)
+	}
+}

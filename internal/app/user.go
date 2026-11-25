@@ -8,8 +8,8 @@ import (
 	"app/internal/backend"
 )
 
-// userPageState is one user page: the profile and three independently paged
-// tabs.
+// userPageState is one user page: the profile over the account's posts,
+// long posts, and questions and answers, each paged on its own.
 type userPageState struct {
 	a          *App
 	uid        string
@@ -20,11 +20,12 @@ type userPageState struct {
 	gen        int
 	followBusy bool
 
-	tab       *core.Signal[int]
-	feeds     *pager[backend.Feed]
-	following *pager[backend.Author]
-	fans      *pager[backend.Author]
+	tab   *core.Signal[int]
+	feeds [3]*pager[backend.Feed]
 }
+
+// userTabs are the lists of a user page, in the order of UserFeedKind.
+var userTabs = []string{"动态", "图文", "问答"}
 
 func (a *App) userPage(cx *core.Scope, uid string) core.Node {
 	u := &userPageState{
@@ -34,45 +35,36 @@ func (a *App) userPage(cx *core.Scope, uid string) core.Node {
 		err:     core.NewSignal(cx, ""),
 		tab:     core.NewSignal(cx, 0),
 	}
-	u.feeds = newPager(cx, func(ctx context.Context, page int) ([]backend.Feed, bool, error) {
-		r, err := a.backend.UserFeeds(ctx, uid, page)
-		return r.Feeds, r.HasMore, err
-	}, func(f backend.Feed) string { return f.ID })
-	people := func(kind backend.UserConnectionKind) *pager[backend.Author] {
-		return newPager(cx, func(ctx context.Context, page int) ([]backend.Author, bool, error) {
-			r, err := a.backend.UserConnections(ctx, uid, kind, page)
-			return r.Users, r.HasMore, err
-		}, func(p backend.Author) string { return p.ID })
+	for i := range u.feeds {
+		kind := backend.UserFeedKind(i)
+		u.feeds[i] = newPager(cx, func(ctx context.Context, page int) ([]backend.Feed, bool, error) {
+			r, err := a.backend.UserFeeds(ctx, uid, kind, page)
+			return r.Feeds, r.HasMore, err
+		}, func(f backend.Feed) string { return f.ID })
 	}
-	u.following, u.fans = people(backend.UserFollowing), people(backend.UserFans)
 	u.load()
 
-	refresh := func() {
-		u.load()
-		switch u.tab.GetUntracked() {
-		case 1:
-			u.following.reload()
-		case 2:
-			u.fans.reload()
-		default:
-			u.feeds.reload()
-		}
-	}
-	header := column(core.Style{}, "", u.header(cx), simpleTabs(u.tab, "动态", "关注", "粉丝"))
+	// The profile is over the tabs' lists and scrolls away with the shown one.
+	over := newHeaded(cx, u.tab, len(userTabs), func(i int) *core.Ref { return &u.feeds[i].list })
+	at := core.NewSignal(cx, float32(0))
+	pages := tabPages(cx, u.tab, at, len(userTabs), func(cx *core.Scope, i int) core.Node {
+		p := u.feeds[i]
+		spec := over.under(cx, i, listSpec{pushed: true, empty: "暂无内容", bottom: 24, skeleton: skeletonCard,
+			onRefresh: func() {
+				u.load()
+				p.reload()
+			}}, func() { p.items.Get(); p.loaded.Get() })
+		return pagerList(cx, p, spec,
+			func(cx *core.Scope, get func() backend.Feed, r core.ListRow) core.Node { return a.feedCard(cx, get) })
+	})
+	// The page is built again only as loading fails or recovers: a profile
+	// that arrives after the lists leaves them where they are.
+	failed := core.NewMemo(cx, func() bool { return !u.loaded.Get() && u.err.Get() != "" })
 	body := core.Dynamic(func(cx *core.Scope) core.Node {
-		if !u.loaded.Get() && u.err.Get() != "" {
+		if failed.Get() {
 			return statusBlock("加载失败", u.err.Get(), "重试", func() { u.err.Set(""); u.load() })
 		}
-		switch u.tab.Get() {
-		case 1:
-			return pagerList(cx, u.following, listSpec{pushed: true, header: header, empty: "暂无关注", onRefresh: refresh, bottom: 24},
-				func(cx *core.Scope, get func() backend.Author, r core.ListRow) core.Node { return a.personRow(cx, get) })
-		case 2:
-			return pagerList(cx, u.fans, listSpec{pushed: true, header: header, empty: "暂无粉丝", onRefresh: refresh, bottom: 24},
-				func(cx *core.Scope, get func() backend.Author, r core.ListRow) core.Node { return a.personRow(cx, get) })
-		}
-		return pagerList(cx, u.feeds, listSpec{pushed: true, header: header, empty: "暂无动态", onRefresh: refresh, bottom: 24, skeleton: skeletonCard},
-			func(cx *core.Scope, get func() backend.Feed, r core.ListRow) core.Node { return a.feedCard(cx, get) })
+		return over.view(u.header(cx), simpleTabs(u.tab, at, userTabs...), pages)
 	})
 	return a.screen(func() string { return u.profile.Get().Author.Name }, nil,
 		core.Dynamic(func(cx *core.Scope) core.Node {
@@ -81,6 +73,21 @@ func (a *App) userPage(cx *core.Scope, uid string) core.Node {
 			}
 			return core.Group{}
 		}), body)
+}
+
+// peoplePage lists the accounts a user follows, or their followers.
+func (a *App) peoplePage(cx *core.Scope, uid string, kind backend.UserConnectionKind) core.Node {
+	title, empty := "关注", "暂无关注"
+	if kind == backend.UserFans {
+		title, empty = "粉丝", "暂无粉丝"
+	}
+	people := newPager(cx, func(ctx context.Context, page int) ([]backend.Author, bool, error) {
+		r, err := a.backend.UserConnections(ctx, uid, kind, page)
+		return r.Users, r.HasMore, err
+	}, func(p backend.Author) string { return p.ID })
+	return a.screen(titled(title), nil,
+		pagerList(cx, people, listSpec{pushed: true, empty: empty, bottom: 24},
+			func(cx *core.Scope, get func() backend.Author, r core.ListRow) core.Node { return a.personRow(cx, get) }))
 }
 
 func (u *userPageState) load() {
@@ -106,62 +113,111 @@ func (u *userPageState) load() {
 		})
 }
 
+// The header's text is white over the cover under a scrim, whatever the
+// appearance.
+var (
+	onCover    = core.RGB(0xFFFFFF)
+	onCoverDim = core.RGBA(0xFFFFFF, 0.8)
+)
+
+func coverText(get func() string, size core.Points, weight core.FontWeight, color core.Color, lines int) core.Node {
+	return core.Text{ContentFunc: get, MaxLines: lines, Style: textStyle(size, weight).Merge(core.Style{Color: color, FlexShrink: 1})}
+}
+
+// header is the profile over the account's cover, laid out as the official
+// client's: the avatar and the follow button, the name with the level, the
+// verification, the bio, the counts, and where and when the account was seen.
 func (u *userPageState) header(cx *core.Scope) core.Node {
 	a := u.a
 	p := func() backend.UserProfile { return u.profile.Get() }
 	author := func() backend.Author { return p().Author }
-	cover := core.View{Class: "bg-secondary-container", Style: core.Style{Width: core.Pct(100), Height: core.Pt(128), Overflow: core.Hidden},
-		Children: []core.Node{a.pic(cx, func() string {
-			if c := p().CoverURL; c != "" {
-				return thumbURL(backend.Image{URL: c}, thumbMedium)
-			}
-			return ""
-		}, core.Cover, "", fillAbs)}}
-	stat := func(i int, n func() int, name string) core.Node {
-		return tap(name, func() { u.tab.Set(i) }, core.Style{Direction: core.Row, Gap: 4, AlignItems: core.AlignBaseline}, "",
-			core.Text{ContentFunc: func() string { return formatCount(n()) }, Class: "text-on-surface", Style: textStyle(textBody, 600)},
-			label(name, textSecondary, 400, "text-on-surface-variant"))
+	cover := a.pic(cx, func() string {
+		if c := p().CoverURL; c != "" {
+			return thumbURL(backend.Image{URL: c}, thumbMedium)
+		}
+		return ""
+	}, core.Cover, "", fillAbs)
+	stat := func(n func() int, name string, open func()) core.Node {
+		kids := []core.Node{
+			coverText(func() string { return formatCount(n()) }, textBody, 600, onCover, 1),
+			coverText(func() string { return name }, textSecondary, 400, onCoverDim, 1),
+		}
+		s := core.Style{Direction: core.Row, Gap: 4, AlignItems: core.AlignBaseline, Padding: core.Symmetric(6, 0)}
+		if open == nil {
+			return core.View{Style: s, Children: kids}
+		}
+		return tap(name, open, s, "", kids...)
 	}
-	info := []core.Node{
-		row(core.Style{Gap: 8, AlignItems: core.AlignCenter}, "",
-			authorName(cx, author, textTitle),
-			core.Dynamic(func(cx *core.Scope) core.Node {
-				if p().Level <= 0 {
-					return core.Group{}
-				}
-				return tonalPill(func() string { return "Lv." + formatCount(p().Level) })
-			})),
-		core.Dynamic(func(cx *core.Scope) core.Node {
-			if p().VerifyTitle == "" {
+	chip := func(text func() string) core.Node {
+		return core.Dynamic(func(cx *core.Scope) core.Node {
+			if text() == "" {
 				return core.Group{}
 			}
-			return core.Text{ContentFunc: func() string { return p().VerifyTitle }, MaxLines: 1, Class: "text-primary", Style: textStyle(textSecondary, 400)}
-		}),
+			return core.View{Style: core.Style{Background: core.RGBA(0xFFFFFF, 0.2), CornerRadius: 8, Padding: core.Symmetric(2, 8)},
+				Children: []core.Node{coverText(text, textCaption, 400, onCover, 1)}}
+		})
 	}
-	return column(core.Style{}, "bg-background",
+	line := func(glyph *symbol, text func() string, lines int) core.Node {
+		return core.Dynamic(func(cx *core.Scope) core.Node {
+			if text() == "" {
+				return core.Group{}
+			}
+			kids := []core.Node{coverText(text, textSecondary, 400, onCoverDim, lines)}
+			if glyph != nil {
+				kids = []core.Node{core.View{Style: core.Style{Height: core.Pt(20), JustifyContent: core.JustifyCenter},
+					Children: []core.Node{icon(glyph, 16, "text-white")}}, kids[0]}
+			}
+			return row(core.Style{Gap: 6, AlignItems: core.AlignStart}, "", kids...)
+		})
+	}
+	return column(core.Style{Background: core.RGB(0x2E312F), Overflow: core.Hidden}, "",
 		cover,
-		column(core.Style{Padding: core.Edges{Right: 16, Bottom: 16, Left: 16}, Gap: 12}, "",
-			row(core.Style{Gap: 12, AlignItems: core.AlignEnd, Margin: core.Edges{Top: -36}}, "",
-				column(core.Style{Width: core.Pt(80), Height: core.Pt(80), CornerRadius: 40, Padding: core.All(4), AlignItems: core.AlignCenter,
-					JustifyContent: core.JustifyCenter, FlexShrink: 0}, "bg-background", a.avatar(cx, author, 72)),
+		core.View{Style: fillAbs.Merge(core.Style{Background: core.RGBA(0x000000, 0.45)})},
+		column(core.Style{Padding: core.Edges{Top: 16, Right: 16, Bottom: 12, Left: 16}, Gap: 12}, "",
+			row(core.Style{AlignItems: core.AlignCenter}, "",
+				column(core.Style{Width: core.Pt(76), Height: core.Pt(76), CornerRadius: 38, AlignItems: core.AlignCenter,
+					JustifyContent: core.JustifyCenter, FlexShrink: 0, Background: core.RGBA(0xFFFFFF, 0.9)}, "", a.avatar(cx, author, 72)),
 				spacer,
 				u.followButton(cx),
 			),
-			column(core.Style{Gap: 4}, "", info...),
-			core.Dynamic(func(cx *core.Scope) core.Node {
-				if p().Bio == "" {
-					return core.Group{}
-				}
-				return core.Text{ContentFunc: func() string { return p().Bio }, MaxLines: 4, Class: "text-on-surface-variant", Style: textStyle(textSecondary, 400)}
-			}),
+			column(core.Style{Gap: 6}, "",
+				row(core.Style{Gap: 8, AlignItems: core.AlignCenter}, "",
+					coverText(func() string { return displayName(author().Name) }, textTitle, 500, onCover, 1),
+					core.Dynamic(func(cx *core.Scope) core.Node {
+						if p().Level <= 0 {
+							return core.Group{}
+						}
+						return tonalPill(func() string { return "Lv." + formatCount(p().Level) })
+					})),
+				line(&symbols.Verified, func() string { return p().VerifyTitle }, 1),
+				line(nil, func() string { return p().Bio }, 4),
+			),
 			core.Dynamic(func(cx *core.Scope) core.Node {
 				if !u.loaded.Get() {
 					return core.Group{}
 				}
-				return row(core.Style{Gap: 24}, "",
-					stat(0, func() int { return p().FeedCount }, "动态"),
-					stat(1, func() int { return p().FollowCount }, "关注"),
-					stat(2, func() int { return p().FansCount }, "粉丝"))
+				return column(core.Style{Gap: 6}, "",
+					row(core.Style{Gap: 20}, "",
+						stat(func() int { return p().LikeCount }, "获赞", nil),
+						stat(func() int { return p().FollowCount }, "关注", func() { a.push(routeFollows, u.uid) }),
+						stat(func() int { return p().FansCount }, "粉丝", func() { a.push(routeFans, u.uid) })),
+					row(core.Style{Gap: 8, Wrap: core.Wrap}, "",
+						chip(func() string {
+							switch p().Gender {
+							case 1:
+								return "♂"
+							case 0:
+								return "♀"
+							}
+							return ""
+						}),
+						chip(func() string { return p().Region }),
+						chip(func() string {
+							if t := p().LastActive; !t.IsZero() {
+								return formatTimeNow(t) + "活跃"
+							}
+							return ""
+						})))
 			}),
 		),
 	)
@@ -175,8 +231,8 @@ func (u *userPageState) followButton(cx *core.Scope) core.Node {
 			return core.Group{}
 		}
 		if followed.Get() {
-			return tap("取消关注", u.toggleFollow, core.Style{Padding: core.Symmetric(10, 24), CornerRadius: 20, BorderWidth: 1, Overflow: core.Hidden}, "border-outline",
-				label("已关注", textSecondary, 500, "text-on-surface"))
+			return tap("取消关注", u.toggleFollow, core.Style{Padding: core.Symmetric(10, 24), CornerRadius: 20, BorderWidth: 1,
+				BorderColor: onCoverDim}, "", coverText(func() string { return "已关注" }, textSecondary, 500, onCover, 1))
 		}
 		return tap("关注", u.toggleFollow, core.Style{Direction: core.Row, Padding: core.Symmetric(10, 24), CornerRadius: 20, Gap: 8, Overflow: core.Hidden}, "bg-primary",
 			icon(&symbols.Add, 18, "text-on-primary"), label("关注", textSecondary, 500, "text-on-primary"))

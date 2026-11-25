@@ -12,10 +12,12 @@ import (
 // richOptions styles one rich paragraph.
 type richOptions struct {
 	size       core.Points
-	class      string // text color
+	lineHeight core.Points // of the size's own without one
+	class      string      // text color
 	maxLines   int
 	selectable bool
 	press      func() // runs on a press outside the links, which the text would otherwise take
+	hold       func() // runs on a long press
 }
 
 // richText renders what get reads as one paragraph, falling back to the
@@ -24,7 +26,9 @@ type richOptions struct {
 // are pictures from the app's resources, a little taller than the text.
 func (a *App) richText(cx *core.Scope, get func() ([]backend.RichSpan, string), o richOptions) core.Node {
 	style := textStyle(o.size, 400)
-	style.LineHeight = lineHeight(o.size)
+	if o.lineHeight > 0 {
+		style.LineHeight = o.lineHeight
+	}
 	// The text takes touches only within its own box: it does not clip its
 	// content, and Android would hand it touches meant for what is before it.
 	return core.View{Style: core.Style{Overflow: core.Hidden}, Children: []core.Node{a.richTextNode(cx, get, o, style)}}
@@ -32,6 +36,12 @@ func (a *App) richText(cx *core.Scope, get func() ([]backend.RichSpan, string), 
 
 func (a *App) richTextNode(cx *core.Scope, get func() ([]backend.RichSpan, string), o richOptions, style core.Style) core.Node {
 	emoji := map[string][]*core.Image{}
+	// Only a text with something to do on a long press hears one: a text
+	// that listens takes the drags over it from the pages that swipe.
+	var hold func(core.PressEvent)
+	if o.hold != nil {
+		hold = func(core.PressEvent) { o.hold() }
+	}
 	return core.Text{
 		Class:      o.class,
 		Style:      style,
@@ -42,6 +52,7 @@ func (a *App) richTextNode(cx *core.Scope, get func() ([]backend.RichSpan, strin
 				o.press()
 			}
 		},
+		OnLongPress: hold,
 		SpansFunc: func() []core.Span {
 			used := map[string]int{}
 			spans, fallback := get()
@@ -111,12 +122,14 @@ func (a *App) openLink(raw string) {
 	a.openInApp(backend.ResolveLink(raw))
 }
 
-// openRichSpan follows a topic, mention or link: in the app where it has a
-// page, else in the browser.
-func (a *App) openRichSpan(cx *core.Scope, sp backend.RichSpan) {
-	target := backend.ResolveLink(sp.URL)
-	if !a.openInApp(target) && target.URL != "" {
-		cx.OpenURL(target.URL, nil)
+// openRichSpan follows a topic, mention or link.
+func (a *App) openRichSpan(cx *core.Scope, sp backend.RichSpan) { a.openURL(sp.URL) }
+
+// openURL opens what a link leads to: in the app where it has a page, else
+// in the browser.
+func (a *App) openURL(raw string) {
+	if target := backend.ResolveLink(raw); !a.openInApp(target) && target.URL != "" {
+		a.openWeb(target.URL)
 	}
 }
 

@@ -1,6 +1,9 @@
 package backend
 
-import "context"
+import (
+	"context"
+	"net/url"
+)
 
 // Backend is the data source the native UI reads. The Coolapk adapter
 // implements it; the UI never performs HTTP requests itself.
@@ -22,8 +25,10 @@ type Backend interface {
 	SearchSuggestions(ctx context.Context, keyword string) ([]string, error)
 	// User returns a public user profile.
 	User(ctx context.Context, uid string) (UserProfile, error)
-	// UserFeeds returns posts from one public user.
-	UserFeeds(ctx context.Context, uid string, page int) (FeedPage, error)
+	// CastVote votes for options of the vote of a post.
+	CastVote(ctx context.Context, feedID string, optionIDs []string) error
+	// UserFeeds returns posts of kind from one public user.
+	UserFeeds(ctx context.Context, uid string, kind UserFeedKind, page int) (FeedPage, error)
 	// UserConnections returns followed accounts or followers.
 	UserConnections(ctx context.Context, uid string, kind UserConnectionKind, page int) (UserConnectionPage, error)
 
@@ -57,9 +62,22 @@ type Backend interface {
 	// UnreadCounts returns message-center badges.
 	UnreadCounts(ctx context.Context) (UnreadCounts, error)
 	// Notifications returns one page of message-center entries.
-	Notifications(ctx context.Context, page int) (NotificationPage, error)
+	Notifications(ctx context.Context, kind NoticeKind, page int) (NotificationPage, error)
+	// NoticeSenders returns the senders of service notices.
+	NoticeSenders(ctx context.Context) ([]NoticeSender, error)
+	// ServiceNotices returns one page of a sender's notices, by its kind.
+	ServiceNotices(ctx context.Context, sender string, page int) (NotificationPage, error)
+	// Topic returns the page of a topic by name, or of a product by id.
+	Topic(ctx context.Context, name, productID string) (TopicDetail, error)
+	// SetTopicFollow follows or leaves the topic, or the product when id is set.
+	SetTopicFollow(ctx context.Context, name, productID string, follow bool) error
 	// Conversations returns one page of private-message threads.
 	Conversations(ctx context.Context, page int) (ConversationPage, error)
+	// Chat returns one page of the thread ukey names, newest first, and
+	// marks the thread read with its first page.
+	Chat(ctx context.Context, ukey string, page int) (ChatPage, error)
+	// SendMessage sends text to the account uid.
+	SendMessage(ctx context.Context, uid, text string) error
 	// SetFeedLike likes or unlikes a feed and returns its like count.
 	SetFeedLike(ctx context.Context, id string, liked bool) (int, error)
 	// SetReplyLike likes or unlikes a reply and returns its like count.
@@ -70,6 +88,8 @@ type Backend interface {
 	Collections(ctx context.Context, feedID string, page int) (CollectionPage, error)
 	// SetCollection adds a feed to a favorite folder or removes it.
 	SetCollection(ctx context.Context, collectionID, feedID string, add bool) error
+	// DeleteReply removes a comment or a nested reply of the account's.
+	DeleteReply(ctx context.Context, id string) error
 	// CreateReply publishes a comment or a nested reply.
 	CreateReply(ctx context.Context, draft ReplyDraft) (Reply, error)
 	// CreateFeed publishes a text feed and returns its ID.
@@ -101,6 +121,19 @@ type TopicPage struct {
 // is no page url but an endpoint of its own.
 const ProductCategoriesURL = "/product/categoryList"
 
+// TradeBrandsURL is the PageQuery.URL of the kinds of second-hand goods, an
+// endpoint of its own as the product categories are.
+const TradeBrandsURL = "/ershou/ershouProductBrandList"
+
+// TradeCityURL is the route of the second-hand posts of one city.
+const TradeCityURL = "/ershou/location"
+
+// TradeListURL is the page url of the second-hand posts of a product, a city
+// or both, each "" for any.
+func TradeListURL(product, city string) string {
+	return "#/feed/ershouList?brand=&productId=" + url.QueryEscape(product) + "&cityId=" + url.QueryEscape(city) + "&ershouType=&dataListType=staggered"
+}
+
 // HeadlineURL and FollowURL are the PageQuery.URL of the home's headline and
 // follow tabs, which are no page urls: the headline has an endpoint of its
 // own, and the follow tab's url depends on the account.
@@ -109,12 +142,20 @@ const (
 	FollowURL   = "follow"
 )
 
-// The signed-in account's own lists, which are no page urls either: what it
-// liked, its comments, and the posts it opened on any device.
+// The signed-in account's own lists. The my: ones are no page urls: what it
+// liked, its comments, the posts it opened on any device, the accounts it
+// blocks and its collections.
 const (
-	MyLikesURL      = "my:likes"
-	MyRepliesURL    = "my:replies"
-	MyFootprintsURL = "my:footprints"
+	MyLikesURL       = "my:likes"
+	MyRepliesURL     = "my:replies"
+	MyFootprintsURL  = "my:footprints"
+	MyBlocksURL      = "my:blocks"
+	MyCollectionsURL = "my:collections"
+	// MyTopicsURL and MyProductsURL are server lists of what the account follows.
+	MyTopicsURL   = "#/topic/userFollowTagList"
+	MyProductsURL = "#/product/followProductList"
+	// CollectionURLPrefix leads the url of what a collection holds, before its id.
+	CollectionURLPrefix = "collection:"
 )
 
 // PageQuery names a page of a server list: the url the clients ask
@@ -151,15 +192,34 @@ type FeedPage struct {
 type ReplySort int
 
 const (
-	RepliesHot ReplySort = iota
+	// RepliesRecent is the default: the comments answered last first.
+	RepliesRecent ReplySort = iota
 	RepliesLatest
+	RepliesHot
+	// RepliesAuthor lists only the comments of the post's author.
+	RepliesAuthor
+)
+
+// ReplyOf is what a post lists under it.
+type ReplyOf int
+
+const (
+	// RepliesOfPost are comments.
+	RepliesOfPost ReplyOf = iota
+	// RepliesOfVote are the opinions of a vote, each a post of its own that
+	// stands for an option.
+	RepliesOfVote
+	// RepliesOfQuestion are the answers to a question, each a post of its own.
+	RepliesOfQuestion
 )
 
 // ReplyQuery names a comment page. ParentID is empty for top-level
 // comments, and names a comment whose nested replies are wanted otherwise.
+// Of says what the post keeps as its comments.
 type ReplyQuery struct {
 	FeedID   string
 	ParentID string
+	Of       ReplyOf
 	Sort     ReplySort
 	Page     int
 }

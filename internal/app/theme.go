@@ -26,6 +26,10 @@ func lineHeight(size core.Points) core.Points {
 	}
 }
 
+// feedLineHeight is the line of a post's text, which reads at length: as
+// airy as the official client's.
+const feedLineHeight core.Points = 27
+
 // text styles a run of text of size and weight.
 func textStyle(size core.Points, weight core.FontWeight) core.Style {
 	return core.Style{FontSize: size, LineHeight: lineHeight(size), FontWeight: weight}
@@ -54,5 +58,8 @@ func newTheme() *core.Theme {
 		p.SetColor("accent-container", role("secondary-container"))
 		p.Danger = role("error")
 	}
+	// The stars of ratings are gold, as the official client's.
+	t.Light.SetColor("star", core.RGB(0xF5A623))
+	t.Dark.SetColor("star", core.RGB(0xFFC94D))
 	return t
 }

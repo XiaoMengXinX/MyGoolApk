@@ -24,6 +24,9 @@ type coolapkBackend struct {
 	mu          sync.Mutex
 	cursors     map[string]apiCursor
 	productTags map[string]string // product id -> the tag its feed is listed under
+	// configs are the versions of the products shown, by product id: the
+	// product's page tells them, and the card of its list shows them.
+	configs     map[string][]map[string]any
 	followURL   string
 	followTitle string
 }
@@ -106,6 +109,7 @@ func New(dir string) (backend.Backend, error) {
 		installTime: identity.InstallTime,
 		cursors:     make(map[string]apiCursor),
 		productTags: make(map[string]string),
+		configs:     make(map[string][]map[string]any),
 	}, nil
 }
 
@@ -180,11 +184,10 @@ func (b *coolapkBackend) productTag(ctx context.Context, id, title string) (stri
 	if ok {
 		return tag, nil
 	}
-	n, err := strconv.Atoi(id)
-	if err != nil {
+	if _, err := strconv.Atoi(id); err != nil {
 		return "", fmt.Errorf("无效的产品编号")
 	}
-	response, err := b.client.GetRawWithCtx(ctx, "/product/detail", map[string]interface{}{"id": n})
+	response, err := b.client.GetProductDetailWithCtx(ctx, id)
 	if err != nil {
 		return "", err
 	}
@@ -223,7 +226,7 @@ func (b *coolapkBackend) FeedDetail(ctx context.Context, id string) (backend.Fee
 }
 
 func (b *coolapkBackend) Replies(ctx context.Context, q backend.ReplyQuery) (backend.ReplyPage, error) {
-	key := fmt.Sprintf("reply:%s:%s:%d", q.FeedID, q.ParentID, q.Sort)
+	key := fmt.Sprintf("reply:%s:%s:%d:%d", q.FeedID, q.ParentID, q.Sort, q.Of)
 	cursor := b.cursor(key, q.Page)
 	id := q.FeedID
 	if q.ParentID != "" {
@@ -235,23 +238,37 @@ func (b *coolapkBackend) Replies(ctx context.Context, q backend.ReplyQuery) (bac
 	}
 
 	var response *coolapk.RawResponse
-	if q.ParentID != "" {
+	entity := "feed_reply"
+	list := coolapk.ListRequest{Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last}
+	switch {
+	case q.ParentID != "":
 		response, err = b.client.GetChildRepliesWithCtx(ctx, numericID, coolapk.ReplyPage{
 			Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last,
 		})
-	} else if q.Sort == backend.RepliesHot {
-		response, err = b.client.GetHotRepliesWithCtx(ctx, numericID, q.Page)
-	} else {
+	case q.Of == backend.RepliesOfVote:
+		entity = "feed"
+		response, err = b.client.GetVoteCommentListWithCtx(ctx, id, "", list)
+	case q.Of == backend.RepliesOfQuestion:
+		entity = "feed"
+		sort := map[backend.ReplySort]string{backend.RepliesLatest: "dateline", backend.RepliesHot: "like"}[q.Sort]
+		if sort == "" {
+			sort = "reply"
+		}
+		response, err = b.client.GetAnswerListWithCtx(ctx, id, sort, list)
+	default:
+		listType := map[backend.ReplySort]string{
+			backend.RepliesRecent: "lastupdate_desc", backend.RepliesLatest: "dateline_desc", backend.RepliesHot: "popular",
+		}[q.Sort]
 		response, err = b.client.GetFeedRepliesWithCtx(ctx, numericID, coolapk.ReplyPage{
 			Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last,
-		}, "dateline_desc", false)
+		}, listType, q.Sort == backend.RepliesAuthor)
 	}
 	objects, err := listObjects(response, err)
 	if err != nil {
 		return backend.ReplyPage{}, err
 	}
 	// A page can end with a card that is no comment.
-	objects = slices.DeleteFunc(objects, func(o map[string]any) bool { return firstAPIString(o, "entityType") != "feed_reply" })
+	objects = slices.DeleteFunc(objects, func(o map[string]any) bool { return firstAPIString(o, "entityType") != entity })
 	replies := make([]backend.Reply, 0, len(objects))
 	for _, object := range objects {
 		replies = append(replies, replyFromObject(object))
@@ -374,6 +391,14 @@ func feedFromObject(object map[string]any) backend.Feed {
 		feed.Blocks = blocksFromObject(object)
 	}
 	feed.Answers, feed.Followers = apiInt(object, "question_answer_num"), apiInt(object, "question_follow_num")
+	if feed.Kind == backend.PostRating {
+		// A rating's title is made of its author's name ("某某的点评"),
+		// which the official client leaves out.
+		feed.Title, feed.Rating = "", ratingFromObject(object)
+	}
+	if trade := apiObject(object, "ershou_info"); trade != nil {
+		feed.Price = price(trade, "product_price")
+	}
 	if link := firstAPIString(object, "extra_url"); link != "" {
 		feed.Link = &backend.Link{
 			URL: link, Title: firstAPIString(object, "extra_title"),
@@ -384,11 +409,7 @@ func feedFromObject(object map[string]any) backend.Feed {
 		feed.Video = videoFromObject(object)
 	}
 	if vote := apiObject(object, "vote"); vote != nil {
-		parsed := &backend.Vote{Title: firstAPIString(vote, "message_title"), Expired: apiTime(vote, "end_time").Before(time.Now()) && apiInt(vote, "end_time") > 0}
-		for _, option := range apiObjects(vote, "options") {
-			parsed.Options = append(parsed.Options, backend.VoteOption{Text: firstAPIString(option, "title"), Votes: apiInt(option, "total_select_num")})
-		}
-		feed.Vote = parsed
+		feed.Vote = voteFromObject(vote)
 	}
 	if forward := apiObject(object, "forwardSourceFeed"); forward != nil {
 		forwardContent, forwardRich := backend.RichTextFromAPI(firstAPIString(forward, "message"))
@@ -396,6 +417,11 @@ func feedFromObject(object map[string]any) backend.Feed {
 			Author: authorFromObject(forward), Content: forwardContent, Rich: forwardRich,
 			Images: imagesFromObject(forward),
 		}
+	}
+	for _, top := range apiObjects(object, "topReplyRows") {
+		reply := replyFromObject(top)
+		reply.Pinned = true
+		feed.Pinned = append(feed.Pinned, reply)
 	}
 	return feed
 }
@@ -461,6 +487,8 @@ func postKindFromAPI(feedType string) backend.PostKind {
 		return backend.PostVote
 	case "trade":
 		return backend.PostTrade
+	case "rating":
+		return backend.PostRating
 	}
 	return backend.PostText
 }
@@ -524,6 +552,10 @@ func replyFromObject(object map[string]any) backend.Reply {
 		Liked:         apiInt(apiObject(object, "userAction"), "like") != 0,
 		IsAuthor:      apiInt(object, "isFeedAuthor") == 1,
 		ChildrenTotal: apiInt(object, "replynum"),
+	}
+	reply.Post = firstAPIString(object, "entityType") == "feed"
+	if firstAPIString(object, "feedType") == "voteComment" {
+		reply.Stance = firstAPIString(object, "extra_title")
 	}
 	for _, child := range apiObjects(object, "replyRows") {
 		reply.Children = append(reply.Children, replyFromObject(child))
@@ -702,4 +734,74 @@ func tagsFromAPI(raw string) []string {
 		}
 	}
 	return tags
+}
+
+// voteFromObject reads the vote of a post.
+func voteFromObject(vote map[string]any) *backend.Vote {
+	v := &backend.Vote{
+		Title:  firstAPIString(vote, "message_title"),
+		EndsAt: apiTime(vote, "end_time"), Voters: apiInt(vote, "total_vote_num"),
+		MaxSelect: max(apiInt(vote, "max_select_num"), 1),
+	}
+	v.Expired = !v.EndsAt.IsZero() && v.EndsAt.Before(time.Now())
+	// The counts are told once the account has voted or the vote is over:
+	// before that the detail sends -999, and a list sends none.
+	options := apiObjects(vote, "options")
+	v.Counted = len(options) > 0
+	// user_selected_option names the options the account voted for.
+	chosen := strings.Split(firstAPIString(vote, "user_selected_option"), ",")
+	for _, option := range options {
+		o := backend.VoteOption{ID: apiID(option), Text: firstAPIString(option, "title")}
+		o.Chosen = slices.Contains(chosen, o.ID)
+		if _, ok := option["total_select_num"]; ok && apiInt(option, "total_select_num") >= 0 {
+			o.Votes = apiInt(option, "total_select_num")
+		} else {
+			v.Counted = false
+		}
+		if c, err := strconv.ParseUint(strings.TrimPrefix(firstAPIString(option, "color"), "#"), 16, 32); err == nil {
+			o.Color = uint32(c)
+		}
+		v.Options = append(v.Options, o)
+	}
+	v.Versus = apiInt(vote, "type") == 0 && len(v.Options) == 2
+	return v
+}
+
+// ratingWords name a rating's stars, one to five, as the official client
+// words them.
+var ratingWords = []string{"很差", "较差", "一般", "不错", "非常好"}
+
+// ratingFromObject reads a rating post: its stars (star, else rating_score
+// out of ten), the sides it scores out of ten with words for their stars
+// (rating_item_info), and its text, a JSON object of sections whose order
+// v4_rating_message_key gives.
+func ratingFromObject(object map[string]any) *backend.FeedRating {
+	stars := apiInt(object, "star")
+	if stars <= 0 {
+		stars = (apiInt(object, "rating_score") + 1) / 2
+	}
+	r := &backend.FeedRating{Stars: min(stars, 5), Owner: apiInt(object, "is_owner") == 1}
+	if r.Stars > 0 {
+		r.Word = ratingWords[r.Stars-1]
+	}
+	for _, item := range apiObjects(object, "rating_item_info") {
+		side := backend.RatedSide{Name: firstAPIString(item, "name"), Stars: min((apiInt(item, "v4_score")+1)/2, 5)}
+		if words := apiStrings(item, "star_desc"); side.Stars > 0 && side.Stars <= len(words) {
+			side.Word = words[side.Stars-1]
+		}
+		if side.Name != "" && side.Stars > 0 {
+			r.Sides = append(r.Sides, side)
+		}
+	}
+	var texts map[string]string
+	var order []string
+	_ = json.Unmarshal([]byte(firstAPIString(object, "v4_rating_message")), &texts)
+	_ = json.Unmarshal([]byte(firstAPIString(object, "v4_rating_message_key")), &order)
+	for _, title := range order {
+		if text := strings.TrimSpace(texts[title]); text != "" {
+			plain, rich := backend.RichTextFromAPI(text)
+			r.Sections = append(r.Sections, backend.RatingSection{Title: title, Text: plain, Rich: rich})
+		}
+	}
+	return r
 }

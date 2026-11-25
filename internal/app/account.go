@@ -78,6 +78,21 @@ func (a *App) loadAccount() {
 	}()
 }
 
+// refreshUnread reads the message-center badges again, as the account opens
+// the places that show them.
+func (a *App) refreshUnread() {
+	s := &a.account
+	if s.uid.GetUntracked() == "" {
+		return
+	}
+	gen := s.gen
+	background(a, a.backend.UnreadCounts, func(unread backend.UnreadCounts, err error) {
+		if err == nil && gen == s.gen {
+			s.unread.Set(unread)
+		}
+	})
+}
+
 // resetAccount forgets the signed-in profile after signing in or out.
 func (a *App) resetAccount() {
 	s := &a.account
@@ -144,8 +159,15 @@ func (a *App) mePage(cx *core.Scope) core.Node {
 	group := core.Dynamic(func(cx *core.Scope) core.Node {
 		var items []core.Node
 		if signedIn() {
-			items = append(items, listItem(&symbols.Mail, "消息", badge(func() int { return s.unread.Get().Notifications + s.unread.Get().Messages }),
+			items = append(items, listItem(&symbols.Mail, "消息", badge(func() int { return s.unread.Get().Total() }),
 				func() { a.push(routeMessages, "") }))
+		}
+		if signedIn() {
+			items = append(items,
+				listItem(&symbols.Tag, "关注的话题", nil, func() { a.openList("关注的话题", backend.MyTopicsURL) }),
+				listItem(&symbols.Devices, "关注的数码", nil, func() { a.openList("关注的数码", backend.MyProductsURL) }),
+				listItem(&symbols.Folder, "收藏单", nil, func() { a.openList("收藏单", backend.MyCollectionsURL) }),
+				listItem(&symbols.Block, "黑名单", nil, func() { a.openList("黑名单", backend.MyBlocksURL) }))
 		}
 		items = append(items,
 			listItem(&symbols.History, "浏览历史", nil, a.openHistory),

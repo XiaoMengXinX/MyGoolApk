@@ -19,17 +19,26 @@ var cardKinds = map[string]backend.CardKind{
 	"iconLinkGridCard":        backend.CardIcons,
 	"iconGridCard":            backend.CardIcons,
 	"iconLongTitleGridCard":   backend.CardIcons,
-	"iconMiniGridCard":        backend.CardList,
+	"iconMiniGridCard":        backend.CardPairs,
+	"iconScrollCard":          backend.CardAvatars,
 	"iconMiniScrollCard":      backend.CardChips,
 	"iconMiniLinkGridCard":    backend.CardChips,
 	"capsuleListCard":         backend.CardChips,
 	"iconListCard":            backend.CardList,
 	"productTimelineListCard": backend.CardList,
 	"imageTextScrollCard":     backend.CardScroll,
-	"imageSquareScrollCard":   backend.CardScroll,
+	"imageSquareScrollCard":   backend.CardTiles,
 	"feedScrollCard":          backend.CardScroll,
 	"titleCard":               backend.CardTitle,
 	"selectorLinkCard":        backend.CardSelector,
+	"sortSelectCard":          backend.CardSelector,
+	"iconGridHorizonCard":     backend.CardLogos,
+	"iconTabLinkGridCard":     backend.CardTabs,
+	"imageTextGridCard":       backend.CardBanner,
+	"iconButtonGridCard":      backend.CardButtons,
+	"messageCard":             backend.CardNote,
+	"listCard":                backend.CardList,
+	"productConfigList":       backend.CardConfigs,
 }
 
 // cardFromObject reads a server card, or nil when the app does not show it
@@ -47,15 +56,72 @@ func cardFromObject(o map[string]any) *backend.Card {
 		}
 		return c
 	}
+	if kind == backend.CardNote {
+		if _, c.Note = backend.RichTextFromAPI(firstAPIString(o, "description")); len(c.Note) == 0 {
+			return nil
+		}
+		return c
+	}
+	if m := dimensionRatio.FindStringSubmatch(firstAPIString(o, "extraData")); m != nil {
+		w, _ := strconv.Atoi(m[1])
+		h, _ := strconv.Atoi(m[2])
+		if w > 0 && h > 0 {
+			c.Ratio = float32(w) / float32(h)
+		}
+	}
+	// A grid of products the server ranks shows their ranks.
+	if kind == backend.CardIcons && strings.Contains(firstAPIString(o, "extraData"), `"withRanking":"1"`) {
+		kind, c.Kind = backend.CardRanking, backend.CardRanking
+	}
+	switch kind {
+	case backend.CardList, backend.CardConfigs, backend.CardAvatars, backend.CardPairs, backend.CardRanking:
+		c.URL, c.More = firstAPIString(o, "url"), firstAPIString(o, "subTitle")
+	}
 	for _, e := range apiObjects(o, "entities") {
-		if item, ok := cardItem(e); ok {
+		switch item, ok := cardItem(e); {
+		case kind == backend.CardConfigs:
+			// A version has no entity type: its name, price and page.
+			c.Items = append(c.Items, backend.CardItem{Title: firstAPIString(e, "title"), Subtitle: price(e, "price"), URL: firstAPIString(e, "url")})
+		case ok && kind == backend.CardList && firstAPIString(e, "entityType") == "product":
+			// A product in a list has a line for its price and what it is made of.
+			specs, _ := e["product_specs"].([]any)
+			parts := []string{price(e, "price_min")}
+			for _, s := range specs {
+				if s, ok := s.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+			if line := joinNonEmpty("  ", parts...); line != "" {
+				item.Subtitle = line
+			}
+			c.Items = append(c.Items, item)
+		case ok && kind == backend.CardSelector && item.Title == "应用关注":
+			// The apps an account follows belong to the market, which the app leaves out.
+		case ok:
 			c.Items = append(c.Items, item)
 		}
 	}
 	if len(c.Items) == 0 {
 		return nil
 	}
+	// A lone picture with a title of its own (imageTextGridCard) shows under
+	// that title.
+	if c.Title == "" && len(c.Items) == 1 && firstAPIString(o, "entityTemplate") == "imageTextGridCard" {
+		c.Title = c.Items[0].Title
+	}
 	return c
+}
+
+// dimensionRatio reads the shape a card's extraData asks its pictures to
+// show at.
+var dimensionRatio = regexp.MustCompile(`"dimensionRatio":"(\d+):(\d+)"`)
+
+// price is the price o holds under key, "" when it has none.
+func price(o map[string]any, key string) string {
+	if n := apiInt(o, key); n > 0 {
+		return "¥" + strconv.Itoa(n)
+	}
+	return ""
 }
 
 // picSize reads the "@WxH" the CDN names a picture's size with.
@@ -131,6 +197,11 @@ func cardItem(e map[string]any) (backend.CardItem, bool) {
 		it.Subtitle = firstAPIString(e, "subTitle", "description")
 		it.Pic = firstAPIString(e, "pic", "logo")
 		it.URL = firstAPIString(e, "url")
+		// A tab of an iconTabLinkGridCard may name a server page alone.
+		if firstAPIString(e, "entityType") == "iconTabLink" && it.URL != "" &&
+			!strings.HasPrefix(it.URL, "#") && !strings.HasPrefix(it.URL, "/") && !strings.Contains(it.URL, "://") {
+			it.URL = "/page?url=" + it.URL
+		}
 	}
 	it.Title = strings.TrimSpace(it.Title)
 	it.Pic = normalizeCoolapkImage(it.Pic)

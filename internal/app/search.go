@@ -20,6 +20,7 @@ type searchPageState struct {
 	input   *core.Signal[string]
 	keyword *core.Signal[string]
 	tab     *core.Signal[int]
+	at      *core.Signal[float32] // where between the tabs' pages the scroll is
 	feeds   *pager[backend.Feed]
 	users   *pager[backend.Author]
 
@@ -39,6 +40,7 @@ func (a *App) searchPage(cx *core.Scope, keyword string) core.Node {
 		input:       core.NewSignal(cx, ""),
 		keyword:     core.NewSignal(cx, ""),
 		tab:         core.NewSignal(cx, 0),
+		at:          core.NewSignal(cx, float32(0)),
 		hot:         core.NewSignalFunc(cx, []string(nil), nil),
 		hotLoading:  core.NewSignal(cx, false),
 		hotErr:      core.NewSignal(cx, ""),
@@ -88,8 +90,8 @@ func (a *App) searchPage(cx *core.Scope, keyword string) core.Node {
 		case s.keyword.Get() == "":
 			return s.discovery(cx)
 		}
-		return column(fill, "", simpleTabs(s.tab, "动态", "用户"), core.Dynamic(func(cx *core.Scope) core.Node {
-			if s.tab.Get() == 0 {
+		return column(fill, "", simpleTabs(s.tab, s.at, "动态", "用户"), tabPages(cx, s.tab, s.at, 2, func(cx *core.Scope, i int) core.Node {
+			if i == 0 {
 				return pagerList(cx, s.feeds, listSpec{pushed: true, empty: "没有找到相关动态", emptyHint: "换个关键词试试。", bottom: 24, skeleton: skeletonCard},
 					func(cx *core.Scope, get func() backend.Feed, r core.ListRow) core.Node { return a.feedCard(cx, get) })
 			}
@@ -162,13 +164,19 @@ func (s *searchPageState) submit(raw string) {
 	if q == "" {
 		return
 	}
+	// A pasted link of the site opens the page it names.
+	if strings.HasPrefix(q, "http://") || strings.HasPrefix(q, "https://") {
+		if t := backend.ResolveLink(q); t.Kind != backend.LinkSearch && s.a.openInApp(t) {
+			return
+		}
+	}
 	s.input.Set(q)
 	s.keyword.Set(q)
 	s.tab.Set(0)
 	s.suggestions.Set(nil)
 	s.suggestFor = ""
 	s.suggestGen++
-	s.a.searchHistory.Update(func(h []string) []string { return prependUnique(h, q, 10) })
+	s.a.keepSearches(prependUnique(s.a.searchHistory.GetUntracked(), q, 10))
 	s.feeds.reset()
 	s.users.reset()
 }
@@ -193,7 +201,7 @@ func (s *searchPageState) discovery(cx *core.Scope) core.Node {
 				if len(h) == 0 {
 					return core.Group{}
 				}
-				return chipSection("最近搜索", h, s.submit, func() { a.searchHistory.Set(nil) })
+				return chipSection("最近搜索", h, s.submit, func() { a.keepSearches(nil) })
 			}),
 			core.Dynamic(func(cx *core.Scope) core.Node {
 				switch {

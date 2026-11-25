@@ -51,17 +51,33 @@ type Link struct {
 	CoverURL string
 }
 
-// Vote is a poll attached to a feed. It is shown read-only.
+// Vote is a poll attached to a feed.
 type Vote struct {
 	Title   string
 	Options []VoteOption
 	Expired bool
+	EndsAt  time.Time
+	// Voters is how many accounts voted.
+	Voters int
+	// MaxSelect is how many options one account may choose.
+	MaxSelect int
+	// Versus is set for a vote between two sides, each with its color.
+	Versus bool
+	// Counted is whether the options' votes are known: the server tells them
+	// to an account that has voted.
+	Counted bool
 }
 
 // VoteOption is one choice of a Vote.
 type VoteOption struct {
+	ID    string
 	Text  string
 	Votes int
+	// Color is the side's color of a Versus vote, as 0xRRGGBB; 0 when not
+	// given.
+	Color uint32
+	// Chosen is set for the options the account voted for.
+	Chosen bool
 }
 
 // RichSpanKind names one kind of inline rich text.
@@ -126,6 +142,9 @@ const (
 	// EntryCard is one of the cards a server page leads with: a banner, a
 	// row of entries, a selector of what the list below shows.
 	EntryCard
+	// EntryLink is a row that leads where its URL says, as ResolveLink reads
+	// it: a person of a ranking, an offline event.
+	EntryLink
 )
 
 // CardKind is how a card of a server page shows.
@@ -152,14 +171,51 @@ const (
 	// CardSelector chooses what the list below it shows (selectorLinkCard):
 	// each item's URL is a page url of its own.
 	CardSelector
+	// CardTabs chooses as a selector does, and shows as the tabs of the page
+	// (iconTabLinkGridCard).
+	CardTabs
+	// CardButtons is pictures side by side, each a link (iconButtonGridCard).
+	CardButtons
+	// CardNote is a notice in rich text (messageCard).
+	CardNote
+	// CardConfigs is the versions a product sells in, each with its price
+	// and the page of its specifications (productConfigList).
+	CardConfigs
+	// CardAvatars is people in a row that scrolls, as the followed accounts
+	// with news (iconScrollCard); the card's URL lists them all.
+	CardAvatars
+	// CardPairs is names with small icons, two to a row (iconMiniGridCard).
+	CardPairs
+	// CardRanking is a grid of products in the order of their rank
+	// (iconLongTitleGridCard with a ranking).
+	CardRanking
+	// CardTiles is square pictures under their names, in a row that scrolls
+	// (imageSquareScrollCard).
+	CardTiles
+	// CardLogos is the logos of brands in two rows that scroll sideways
+	// (iconGridHorizonCard).
+	CardLogos
 )
 
 // Card is a card of a server page.
 type Card struct {
 	Kind  CardKind
 	Title string
+	// URL, when set, is where the card's title leads, as ResolveLink reads
+	// it, and More what the title says of it.
+	URL   string
+	More  string
 	Items []CardItem
+	// Note is the text of a CardNote.
+	Note []RichSpan
+	// Ratio is the width over the height the server asks a banner to show
+	// at, 0 without one.
+	Ratio float32
 }
+
+// Chooses reports whether the card's items choose what the list below it
+// shows.
+func (c *Card) Chooses() bool { return c.Kind == CardSelector || c.Kind == CardTabs }
 
 // CardItem is one entry of a card.
 type CardItem struct {
@@ -176,7 +232,8 @@ type CardItem struct {
 	Ratio float32
 }
 
-// PageEntry is one row of a server page: a post, a product, or a category.
+// PageEntry is one row of a server page: a post, a product, a category, a
+// link, or a card.
 type PageEntry struct {
 	Kind     EntryKind
 	ID       string
@@ -184,7 +241,13 @@ type PageEntry struct {
 	Title    string
 	Subtitle string
 	LogoURL  string
-	// URL is the page url of the list a category opens.
+	// Round is set for people, whose pictures are avatars.
+	Round bool
+	// Hot is how much a product is talked of, as the server words it
+	// ("201.1万").
+	Hot string
+	// URL is the page url of the list a category opens, or where a link
+	// leads.
 	URL  string
 	Card *Card
 }
@@ -226,6 +289,8 @@ const (
 	// PostComment is a comment shown as a card of the post it is on, as the
 	// account's own comments list: its text is the comment's, not the post's.
 	PostComment
+	// PostRating rates a product: its stars and text are in Feed.Rating.
+	PostRating
 )
 
 // Label names the kind in the badge of a card; plain posts have none.
@@ -247,8 +312,36 @@ func (k PostKind) Label() string {
 		return "二手"
 	case PostComment:
 		return "评论"
+	case PostRating:
+		return "点评"
 	}
 	return ""
+}
+
+// FeedRating is what a rating post says of its product: its stars out of
+// five and the word for them, whether the author owns the product, the
+// score of each side, and its text in sections, as 点评 or 优点.
+type FeedRating struct {
+	Stars    int
+	Word     string
+	Owner    bool
+	Sides    []RatedSide
+	Sections []RatingSection
+}
+
+// RatedSide is the stars a rating gives one side of a product, as its
+// battery, and the word for them.
+type RatedSide struct {
+	Name  string
+	Stars int
+	Word  string
+}
+
+// RatingSection is a part of a rating's text under its heading.
+type RatingSection struct {
+	Title string
+	Text  string
+	Rich  []RichSpan
 }
 
 // Feed is one card of a feed list or one post's detail.
@@ -261,10 +354,12 @@ type Feed struct {
 	Target      *Target
 	Tags        []string
 	Title       string
-	Content     string
-	Rich        []RichSpan
-	IsArticle   bool
-	Kind        PostKind
+	// Price is what a second-hand post asks, as "¥2100", "" for the others.
+	Price     string
+	Content   string
+	Rich      []RichSpan
+	IsArticle bool
+	Kind      PostKind
 	// Blocks is an article's body, where the detail has one.
 	Blocks []Block
 	// Cover is the picture of an article or a trade, which has no others.
@@ -276,9 +371,13 @@ type Feed struct {
 	Link               *Link
 	Vote               *Vote
 	Forward            *Forward
+	Rating             *FeedRating
 	Stats              Stats
-	Liked              bool
-	Favorited          bool
+	// Pinned are the comments the author keeps at the top, which the post's
+	// own page tells.
+	Pinned    []Reply
+	Liked     bool
+	Favorited bool
 }
 
 // Reply is one comment. Children holds the first level of nested replies.
@@ -297,6 +396,13 @@ type Reply struct {
 	Children        []Reply
 	ChildrenTotal   int
 	ChildrenHasMore bool
+	// Pinned says the post's author keeps the comment at the top.
+	Pinned bool
+	// Post is set for an opinion on a vote and an answer to a question, which
+	// are posts of their own that ID names.
+	Post bool
+	// Stance is the option an opinion on a vote stands for.
+	Stance string
 }
 
 // SearchKind selects a global search result tab.
@@ -334,7 +440,25 @@ type UserProfile struct {
 	FansCount   int
 	IsFollowed  bool
 	VerifyTitle string
+	// LikeCount is the likes the account's posts have got.
+	LikeCount int
+	// Gender is 1 for male and 0 for female, -1 when not given.
+	Gender int
+	// Region is the province and city of the profile.
+	Region     string
+	LastActive time.Time
 }
+
+// UserFeedKind selects which of an account's posts a list shows.
+type UserFeedKind int
+
+const (
+	UserFeedAll UserFeedKind = iota
+	// UserFeedArticles are the long posts with a title (图文).
+	UserFeedArticles
+	// UserFeedQA are questions and answers.
+	UserFeedQA
+)
 
 // UserConnectionKind selects followers or followed accounts.
 type UserConnectionKind int
@@ -352,19 +476,87 @@ type UserConnectionPage struct {
 
 // UnreadCounts are the notification badges of a logged-in account.
 type UnreadCounts struct {
-	Notifications int
+	Notifications int // what other accounts wrote to this one
+	Likes         int
+	Follows       int
 	Messages      int
+	Service       int // the notices of the site itself
+	Badge         int // the server's own total
 }
 
-// Notification is one message-center entry.
+// Total is the count the entry of the message center shows.
+func (u UnreadCounts) Total() int {
+	return max(u.Badge, u.Notifications+u.Likes+u.Follows+u.Messages+u.Service)
+}
+
+// TopicDetail is the page of a topic or a product: its head and the lists
+// under it, which PageEntries reads by their urls.
+type TopicDetail struct {
+	Title     string
+	LogoURL   string
+	Intro     string
+	Hot       string // as the server words it, "94.4万"
+	Comments  int
+	Followers int
+	Followed  bool
+	Tabs      []TopicTab
+	Selected  int // the tab shown first
+	// Rating is what its owners make of a product, nil while it has none,
+	// and Tags what the product is, its release first.
+	Rating *Rating
+	Tags   []string
+}
+
+// Rating is a product's score out of 10 from the accounts that own it, the
+// score of each of its sides, and how many rated it and how many in detail.
+type Rating struct {
+	Score    string
+	Sides    []RatingSide
+	Owners   int
+	Detailed int
+}
+
+// RatingSide is one side of a product, as its battery, and its score.
+type RatingSide struct {
+	Name  string
+	Score float32
+}
+
+// TopicTab is one list of a topic's page.
+type TopicTab struct {
+	Title string
+	URL   string
+}
+
+// NoticeKind is a list of the message center.
+type NoticeKind int
+
+const (
+	// NoticesAll are what other accounts wrote to this one: comments,
+	// replies and mentions.
+	NoticesAll NoticeKind = iota
+	NoticesLikes
+	NoticesFollows
+)
+
+// Notification is one message-center entry. Action words the button of a
+// service notice that leads to URL.
 type Notification struct {
 	ID        string
 	Title     string
 	Summary   string
 	AvatarURL string
 	URL       string
+	Action    string
 	CreatedAt time.Time
 	Unread    bool
+}
+
+// NoticeSender is a sender of service notices, as the system or the
+// activities: its note type and its name.
+type NoticeSender struct {
+	Kind string
+	Name string
 }
 
 // NotificationPage is one page of message-center entries.
@@ -375,12 +567,31 @@ type NotificationPage struct {
 
 // Conversation is one private-message thread.
 type Conversation struct {
-	Ukey        string
+	Ukey string
+	// UID is the other account's, which a message to it names.
+	UID         string
 	Title       string
 	AvatarURL   string
 	LastMessage string
 	LastTime    time.Time
 	Unread      int
+}
+
+// ChatMessage is one message of a private-message thread. A picture
+// message has no text.
+type ChatMessage struct {
+	ID        string
+	Author    Author
+	Mine      bool
+	Text      string
+	Picture   bool
+	CreatedAt time.Time
+}
+
+// ChatPage is one page of a thread's messages, newest first.
+type ChatPage struct {
+	Items   []ChatMessage
+	HasMore bool
 }
 
 // ConversationPage is one page of private-message threads.

@@ -15,13 +15,26 @@ var (
 )
 
 // navBarHeight is the height of the navigation bar above the system's:
-// the 64dp Google Play draws, with a 56x32 indicator.
-const navBarHeight core.Points = 64
+// the 64dp Google Play draws, with a 56x32 indicator. On iOS the bar sits
+// over the home indicator's 34 points, as the system's tab bar does, and
+// keeps to 54, near the system's 49.
+const navBarHeight, navBarHeightIOS core.Points = 64, 54
+
+// navBar is the height of the navigation bar on this platform, and the
+// room above its indicator and below it, over its label.
+func (a *App) navBar() (height, top, gap core.Points) {
+	if a.cx.Env().OS() == core.OSIOS {
+		return navBarHeightIOS, 4, 2
+	}
+	return navBarHeight, 6, 4
+}
 
 type destination struct {
 	title           string
 	outline, filled *symbol
 	content         func(cx *core.Scope) core.Node
+	// unread counts what waits behind the destination, nil for none.
+	unread func() int
 }
 
 // shell is the app's four top-level destinations over a navigation bar.
@@ -32,14 +45,28 @@ func (a *App) shell(cx *core.Scope, dests []destination) core.Node {
 		i, d := i, d
 		seen := false
 		on := func() bool { return a.tab.Get() == i }
+		// away is set once a destination has faded out: it then waits a
+		// screen to the right, where no touch reaches it. Faded out in place,
+		// Android still gave the sideways drags over the shown destination to
+		// the tabs of a later one (the discovery's over the home's).
+		away := core.NewSignal(cx, false)
 		sections[i] = core.View{
-			Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0), Transition: fadeThrough},
+			Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Bottom: core.Pt(0), Transition: fadeThrough},
 			StyleFunc: func() core.Style {
+				var s core.Style
 				if on() {
-					return core.Style{Opacity: core.Alpha(1)}
+					s = core.Style{Opacity: core.Alpha(1)}
+				} else {
+					s = core.Style{Opacity: core.Alpha(0), PointerEvents: core.PointerEventsNone, Transform: core.Transform{Scale: 0.96}}
 				}
-				return core.Style{Opacity: core.Alpha(0), PointerEvents: core.PointerEventsNone, Transform: core.Transform{Scale: 0.96}}
+				if away.Get() && !on() {
+					s.Left, s.Right = core.Pct(100), core.Pct(-100)
+				} else {
+					s.Left, s.Right = core.Pt(0), core.Pt(0)
+				}
+				return s
 			},
+			OnTransitionEnd: func() { away.Set(!on()) },
 			Children: []core.Node{core.Show{
 				When: func() bool { seen = seen || on(); return seen },
 				Then: d.content,
@@ -50,16 +77,18 @@ func (a *App) shell(cx *core.Scope, dests []destination) core.Node {
 	for i, d := range dests {
 		items[i] = a.navItem(i, d)
 	}
+	barHeight, _, _ := a.navBar()
 	return column(fill, "bg-background",
 		core.View{Style: fill, Children: sections},
 		row(core.Style{Padding: core.Symmetric(0, 8), FlexShrink: 0, PaddingEnv: core.EnvEdges{Bottom: core.EnvSafeArea}}, "bg-surface-container",
-			core.View{Style: core.Style{Direction: core.Row, Height: core.Pt(navBarHeight), FlexGrow: 1}, Role: core.RoleTabList, Label: "酷安", Children: items}),
+			core.View{Style: core.Style{Direction: core.Row, Height: core.Pt(barHeight), FlexGrow: 1}, Role: core.RoleTabList, Label: "酷安", Children: items}),
 	)
 }
 
 // navItem is a destination of the bar: its icon in a 56x32 pill that grows
 // from the center when the destination is selected, over its label.
 func (a *App) navItem(i int, d destination) core.Node {
+	_, top, gap := a.navBar()
 	on := func() bool { return a.tab.Get() == i }
 	selected := core.NewMemo(a.cx, on)
 	pill := core.View{
@@ -87,12 +116,20 @@ func (a *App) navItem(i int, d destination) core.Node {
 				return
 			}
 			a.tab.Set(i)
+			a.refreshUnread()
 		},
-		Style: core.Style{FlexGrow: 1, FlexBasis: core.Pt(0), Height: core.Pct(100), Padding: core.Edges{Top: 6, Bottom: 6}, Gap: 4,
+		Style: core.Style{FlexGrow: 1, FlexBasis: core.Pt(0), Height: core.Pct(100), Padding: core.Edges{Top: top}, Gap: gap,
 			AlignItems: core.AlignCenter, Overflow: core.Hidden},
 		Children: []core.Node{
 			core.View{Style: core.Style{Width: core.Pt(56), Height: core.Pt(32), AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter},
-				Children: []core.Node{pill, glyph}},
+				Children: []core.Node{pill, glyph,
+					core.View{Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(32)}, PointerEvents: core.PointerEventsNone,
+						Children: []core.Node{badge(func() int {
+							if d.unread == nil {
+								return 0
+							}
+							return d.unread()
+						})}}}},
 			core.Text{Content: d.title, MaxLines: 1, Style: textStyle(textCaption, 500), ClassFunc: func() string {
 				if on() {
 					return "text-on-surface"

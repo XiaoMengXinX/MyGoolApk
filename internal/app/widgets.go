@@ -99,36 +99,36 @@ func toggleRow(title string, on func() bool, set func(bool)) core.Node {
 }
 
 // simpleTabs are Material 3 primary tabs: equal-width labels, the selected
-// one in primary with an indicator as wide as its label, over a rule.
-func simpleTabs(selected *core.Signal[int], titles ...string) core.Node {
+// one in primary, over a rule. The indicator stands under the page at, which
+// goes between pages as a finger drags them.
+func simpleTabs(selected *core.Signal[int], at *core.Signal[float32], titles ...string) core.Node {
 	tabs := make([]core.Node, len(titles))
 	for i, title := range titles {
 		i := i
-		on := func() bool { return selected.Get() == i }
 		tabs[i] = core.View{
 			Role: core.RoleTab, Label: title,
-			Style:   fill.Merge(core.Style{Height: core.Pct(100), JustifyContent: core.JustifyEnd, AlignItems: core.AlignCenter, Overflow: core.Hidden}),
+			Style:   fill.Merge(core.Style{Height: core.Pct(100), JustifyContent: core.JustifyCenter, AlignItems: core.AlignCenter, Overflow: core.Hidden}),
 			OnPress: func(core.PressEvent) { selected.Set(i) },
 			Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
-			Children: []core.Node{column(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
-				core.Text{Content: title, Style: textStyle(textSecondary, 500), Class: "text-on-surface-variant", ClassFunc: func() string {
-					if on() {
-						return "text-primary"
-					}
-					return "text-on-surface-variant"
-				}},
-				core.View{Class: "bg-primary", Style: core.Style{Height: core.Pt(3), CornerRadii: core.Corners{TopLeft: 3, TopRight: 3}},
-					StyleFunc: func() core.Style {
-						if on() {
-							return core.Style{Width: core.Pt(32)}
-						}
-						return core.Style{Width: core.Pt(0)}
-					}},
-			)},
+			Children: []core.Node{core.Text{Content: title, Style: textStyle(textSecondary, 500), Class: "text-on-surface-variant", ClassFunc: func() string {
+				if selected.Get() == i {
+					return "text-primary"
+				}
+				return "text-on-surface-variant"
+			}}},
 		}
 	}
+	share := 100 / float32(len(titles))
+	indicator := core.View{
+		PointerEvents: core.PointerEventsNone,
+		Style:         core.Style{Position: core.Absolute, Bottom: core.Pt(0), Width: core.Pct(share), AlignItems: core.AlignCenter},
+		StyleFunc:     func() core.Style { return core.Style{Left: core.Pct(at.Get() * share)} },
+		Children: []core.Node{core.View{Class: "bg-primary",
+			Style: core.Style{Width: core.Pt(32), Height: core.Pt(3), CornerRadii: core.Corners{TopLeft: 3, TopRight: 3}}}},
+	}
 	return column(core.Style{FlexShrink: 0}, "bg-background",
-		row(core.Style{Height: core.Pt(48), Padding: core.Symmetric(0, 8)}, "", tabs...),
+		core.View{Style: core.Style{Height: core.Pt(48), Padding: core.Symmetric(0, 8)}, Children: []core.Node{
+			core.View{Style: fill.Merge(core.Style{Direction: core.Row}), Children: append(tabs, indicator)}}},
 		core.View{Style: core.Style{Height: core.Pt(1)}, Class: "bg-surface-container-highest"})
 }
 

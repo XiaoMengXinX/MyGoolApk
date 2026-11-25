@@ -91,31 +91,107 @@ func (b *coolapkBackend) UnreadCounts(ctx context.Context) (backend.UnreadCounts
 		return backend.UnreadCounts{}, err
 	}
 	return backend.UnreadCounts{
-		Notifications: apiInt(object, "notification_v18", "notification"),
+		Notifications: apiInt(object, "notification_v18"),
+		Likes:         apiInt(object, "feedlike"),
+		Follows:       apiInt(object, "contacts_follow"),
 		Messages:      apiInt(object, "message"),
+		Service:       apiInt(object, "notification_v18_service"),
+		Badge:         apiInt(object, "badge_v18"),
 	}, nil
 }
 
-func (b *coolapkBackend) Notifications(ctx context.Context, page int) (backend.NotificationPage, error) {
-	cursor := b.cursor("notifications", page)
-	objects, err := listObjects(b.client.GetNotificationV18WithCtx(ctx, page, cursor.last))
+// noticeLists are the lists of the message center.
+var noticeLists = map[backend.NoticeKind]coolapk.NotificationKind{
+	backend.NoticesAll:     coolapk.NotificationAll,
+	backend.NoticesLikes:   coolapk.NotificationFeedLike,
+	backend.NoticesFollows: coolapk.NotificationFollow,
+}
+
+// serviceNotice says whether an entry of the main list stands for a sender
+// of service notices, whose notices are a list of their own.
+func serviceNotice(object map[string]any) bool {
+	return apiInt(object, "subitem_notify") != 0
+}
+
+func (b *coolapkBackend) Notifications(ctx context.Context, kind backend.NoticeKind, page int) (backend.NotificationPage, error) {
+	key := fmt.Sprintf("notifications:%d", kind)
+	cursor := b.cursor(key, page)
+	objects, err := listObjects(b.client.GetNotificationListWithCtx(ctx, noticeLists[kind], coolapk.ListRequest{Page: page, LastItem: cursor.last}))
 	if err != nil {
 		return backend.NotificationPage{}, err
 	}
-	b.storeCursor("notifications", page, feedCursor(objects))
+	b.storeCursor(key, page, feedCursor(objects))
 	items := make([]backend.Notification, 0, len(objects))
 	for _, object := range objects {
-		items = append(items, backend.Notification{
-			ID:        apiID(object),
-			Title:     firstAPIString(object, "noteTypeTitle", "title"),
-			Summary:   cleanAPIText(firstAPIString(object, "note", "message")),
-			AvatarURL: normalizeCoolapkImage(firstAPIString(object, "fromUserAvatar", "userAvatar")),
-			URL:       firstAPIString(object, "url"),
-			CreatedAt: apiTime(object, "dateline"),
-			Unread:    apiInt(object, "isnew") != 0,
-		})
+		if kind == backend.NoticesAll && serviceNotice(object) {
+			continue
+		}
+		items = append(items, noticeFromObject(object, kind))
 	}
 	return backend.NotificationPage{Items: items, HasMore: len(objects) > 0}, nil
+}
+
+func (b *coolapkBackend) NoticeSenders(ctx context.Context) ([]backend.NoticeSender, error) {
+	objects, err := listObjects(b.client.GetNotificationListWithCtx(ctx, coolapk.NotificationAll, coolapk.ListRequest{Page: 1}))
+	if err != nil {
+		return nil, err
+	}
+	var senders []backend.NoticeSender
+	seen := map[string]bool{}
+	for _, object := range objects {
+		kind := firstAPIString(object, "note_type")
+		if !serviceNotice(object) || kind == "" || seen[kind] {
+			continue
+		}
+		seen[kind] = true
+		senders = append(senders, backend.NoticeSender{Kind: kind, Name: firstAPIString(object, "from_username", "fromusername")})
+	}
+	return senders, nil
+}
+
+func (b *coolapkBackend) ServiceNotices(ctx context.Context, sender string, page int) (backend.NotificationPage, error) {
+	key := "notifications:service:" + sender
+	cursor := b.cursor(key, page)
+	objects, err := listObjects(b.client.GetServiceNotificationsWithCtx(ctx, sender, page, cursor.last))
+	if err != nil {
+		return backend.NotificationPage{}, err
+	}
+	b.storeCursor(key, page, feedCursor(objects))
+	items := make([]backend.Notification, 0, len(objects))
+	for _, object := range objects {
+		n := noticeFromObject(object, backend.NoticesAll)
+		n.Action = firstAPIString(object, "url_btn_title")
+		items = append(items, n)
+	}
+	return backend.NotificationPage{Items: items, HasMore: len(objects) > 0}, nil
+}
+
+// noticeFromObject reads a notice: who it is from, what it says after its
+// kind, and where it leads. A like says what was liked.
+func noticeFromObject(object map[string]any, kind backend.NoticeKind) backend.Notification {
+	said := cleanAPIText(firstAPIString(object, "note", "message"))
+	if kind == backend.NoticesLikes {
+		// What was liked is its text, or for an article its cover's address.
+		said = cleanAPIText(firstAPIString(object, "addition_info", "note"))
+		if strings.HasPrefix(said, "http") {
+			said = ""
+		}
+	}
+	n := backend.Notification{
+		ID:        apiID(object),
+		Title:     firstAPIString(object, "fromusername", "from_username", "username", "title"),
+		Summary:   joinNonEmpty("：", firstAPIString(object, "noteTypeTitle"), said),
+		AvatarURL: normalizeCoolapkImage(firstAPIString(object, "fromUserAvatar", "userAvatar")),
+		URL:       firstAPIString(object, "url"),
+		CreatedAt: apiTime(object, "dateline"),
+		Unread:    apiInt(object, "isnew") != 0,
+	}
+	if n.URL == "" {
+		if uid := firstAPIString(object, "fromuid", "from_uid", "uid"); uid != "" {
+			n.URL = "/u/" + uid
+		}
+	}
+	return n
 }
 
 func (b *coolapkBackend) Conversations(ctx context.Context, page int) (backend.ConversationPage, error) {
@@ -133,6 +209,7 @@ func (b *coolapkBackend) Conversations(ctx context.Context, page int) (backend.C
 		}
 		items = append(items, backend.Conversation{
 			Ukey:        firstAPIString(object, "ukey"),
+			UID:         firstAPIString(object, "messageUid"),
 			Title:       firstAPIString(object, "messageUsername", "username"),
 			AvatarURL:   normalizeCoolapkImage(firstAPIString(object, "messageUserAvatar", "userAvatar")),
 			LastMessage: last,
@@ -141,6 +218,40 @@ func (b *coolapkBackend) Conversations(ctx context.Context, page int) (backend.C
 		})
 	}
 	return backend.ConversationPage{Items: items, HasMore: len(objects) > 0}, nil
+}
+
+func (b *coolapkBackend) Chat(ctx context.Context, ukey string, page int) (backend.ChatPage, error) {
+	objects, err := listObjects(b.client.GetChatHistoryWithCtx(ctx, ukey, page))
+	if err != nil {
+		return backend.ChatPage{}, err
+	}
+	if page == 1 {
+		// The thread is read once shown; a failure leaves it marked unread.
+		b.client.MarkChatReadWithCtx(ctx, ukey)
+	}
+	me := b.SessionUID()
+	items := make([]backend.ChatMessage, 0, len(objects))
+	for _, object := range objects {
+		if firstAPIString(object, "entityType") != "message" {
+			continue // the server's notes between the messages
+		}
+		from := firstAPIString(object, "fromuid")
+		items = append(items, backend.ChatMessage{
+			ID: apiID(object),
+			Author: backend.Author{ID: from, Name: firstAPIString(object, "fromusername"),
+				AvatarURL: normalizeCoolapkImage(firstAPIString(object, "fromUserAvatar"))},
+			Mine:      from == me,
+			Text:      cleanAPIText(firstAPIString(object, "message")),
+			Picture:   firstAPIString(object, "message_pic") != "",
+			CreatedAt: apiTime(object, "dateline"),
+		})
+	}
+	return backend.ChatPage{Items: items, HasMore: len(objects) > 0}, nil
+}
+
+func (b *coolapkBackend) SendMessage(ctx context.Context, uid, text string) error {
+	_, err := b.client.SendMessageWithCtx(ctx, coolapk.MessageRequest{UID: uid, Message: text})
+	return err
 }
 
 func (b *coolapkBackend) SetFeedLike(ctx context.Context, id string, liked bool) (int, error) {
@@ -158,6 +269,11 @@ func (b *coolapkBackend) SetFeedLike(ctx context.Context, id string, liked bool)
 		return 0, err
 	}
 	return decodeLikeCount(response)
+}
+
+func (b *coolapkBackend) DeleteReply(ctx context.Context, id string) error {
+	_, err := b.client.DeleteReplyWithCtx(ctx, id)
+	return err
 }
 
 func (b *coolapkBackend) SetReplyLike(ctx context.Context, id string, liked bool) (int, error) {
@@ -277,4 +393,75 @@ func (b *coolapkBackend) CreateFeed(ctx context.Context, draft backend.FeedDraft
 		return "", fmt.Errorf("发帖响应缺少编号")
 	}
 	return id, nil
+}
+
+func (b *coolapkBackend) CastVote(ctx context.Context, feedID string, optionIDs []string) error {
+	_, err := b.client.VoteWithCtx(ctx, feedID, optionIDs)
+	return err
+}
+
+func (b *coolapkBackend) Topic(ctx context.Context, name, productID string) (backend.TopicDetail, error) {
+	var response *coolapk.RawResponse
+	var err error
+	if productID != "" {
+		response, err = b.client.GetProductDetailWithCtx(ctx, productID)
+	} else {
+		response, err = b.client.GetTopicDetailWithCtx(ctx, name)
+	}
+	if err != nil {
+		return backend.TopicDetail{}, err
+	}
+	object, err := decodeAPIObject(response.Data)
+	if err != nil {
+		return backend.TopicDetail{}, err
+	}
+	d := backend.TopicDetail{
+		Title:     firstAPIString(object, "title"),
+		LogoURL:   normalizeCoolapkImage(firstAPIString(object, "logo")),
+		Intro:     strings.TrimSpace(firstAPIString(object, "intro", "description")),
+		Hot:       firstAPIString(object, "hot_num_txt"),
+		Comments:  apiInt(object, "commentnum", "feed_comment_num"),
+		Followers: apiInt(object, "follownum", "follow_num"),
+		Followed:  apiInt(apiObject(object, "userAction"), "follow") != 0,
+	}
+	if productID != "" {
+		if release := firstAPIString(object, "release_time"); release != "" {
+			d.Tags = append(d.Tags, release+"上市")
+		}
+		d.Tags = append(d.Tags, apiStrings(object, "tagArr")...)
+		if n := apiInt(object, "owner_star_total_count"); n > 0 {
+			d.Rating = &backend.Rating{Score: firstAPIString(object, "owner_star_average_score"), Owners: n,
+				Detailed: apiInt(object, "v4_rating_owner_total_count")}
+			for _, side := range apiObjects(object, "rating_item_info") {
+				score, _ := strconv.ParseFloat(firstAPIString(side, "owner_average_score"), 32)
+				d.Rating.Sides = append(d.Rating.Sides, backend.RatingSide{Name: firstAPIString(side, "name"), Score: float32(score)})
+			}
+		}
+		b.mu.Lock()
+		b.configs[productID] = apiObjects(object, "configRows")
+		b.mu.Unlock()
+	}
+	selected := firstAPIString(object, "selectedTab")
+	for _, tab := range apiObjects(object, "tabList") {
+		if link := firstAPIString(tab, "url"); link != "" {
+			if firstAPIString(tab, "page_name") == selected {
+				d.Selected = len(d.Tabs)
+			}
+			d.Tabs = append(d.Tabs, backend.TopicTab{Title: firstAPIString(tab, "title"), URL: link})
+		}
+	}
+	return d, nil
+}
+
+func (b *coolapkBackend) SetTopicFollow(ctx context.Context, name, productID string, follow bool) error {
+	var err error
+	switch {
+	case productID != "":
+		_, err = b.client.ChangeProductFollowWithCtx(ctx, productID, follow)
+	case follow:
+		_, err = b.client.FollowTopicWithCtx(ctx, name)
+	default:
+		_, err = b.client.UnfollowTopicWithCtx(ctx, name)
+	}
+	return err
 }

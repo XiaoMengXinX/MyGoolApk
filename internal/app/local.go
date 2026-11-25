@@ -17,13 +17,15 @@ type historyEntry struct {
 	ViewedAt  time.Time `json:"viewedAt"`
 }
 
-// localState is what the app keeps on the device: the browsing history and
-// the appearance.
+// localState is what the app keeps on the device: the browsing history, the
+// recent searches and the appearance.
 type localState struct {
 	History        []historyEntry `json:"history,omitempty"`
 	HistoryEnabled bool           `json:"historyEnabled"`
 	ThemeMode      int            `json:"themeMode"` // 0 follows the system, 1 light, 2 dark
 	FollowGroup    int            `json:"followGroup,omitempty"`
+	Searches       []string       `json:"searches,omitempty"`
+	TradeCity      string         `json:"tradeCity,omitempty"` // the city of the second-hand posts nearby
 }
 
 func loadLocalState(dir string) localState {
@@ -83,5 +85,12 @@ func (a *App) recordHistory(feed backend.Feed) {
 	}
 	a.local.History = history
 	a.history.Set(history)
+	a.saveLocalState()
+}
+
+// keepSearches shows and stores h as the recent searches.
+func (a *App) keepSearches(h []string) {
+	a.searchHistory.Set(h)
+	a.local.Searches = h
 	a.saveLocalState()
 }
