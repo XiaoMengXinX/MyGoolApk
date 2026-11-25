@@ -111,7 +111,7 @@ func (a *App) settingsPage(cx *core.Scope) core.Node {
 			listGroup(listItem(&symbols.Settings, "设备信息", nil, a.openDevice)),
 			settingsLabel("关于"),
 			listGroup(column(core.Style{Padding: core.Symmetric(12, 16), Gap: 2}, "",
-				label("酷安 MyGO", textBody, 400, "text-on-surface"),
+				label("MyGoolApk", textBody, 400, "text-on-surface"),
 				label(buildLabel(), textSecondary, 400, "text-on-surface-variant"))),
 			bottomSpace(24, true),
 		)}})

@@ -1,4 +1,4 @@
-name: CoolApk MyGO
+name: MyGoolApk
 id: com.lemonfish.mycoolapkgo
 version: 1.0.0
 
@@ -6,7 +6,7 @@ icon:
   png: assets/Icon.png
   android:
     foreground: assets/IconForeground.png
-    background: "#159a6c"
+    background: "#16b36c"
 
 url_schemes: [coolmarket]
 
