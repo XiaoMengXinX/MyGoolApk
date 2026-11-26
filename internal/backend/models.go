@@ -273,6 +273,7 @@ type Block struct {
 	Kind    BlockKind
 	Text    string
 	Rich    []RichSpan
+	Markup  string
 	Image   Image
 	Caption string
 	Link    *Link
@@ -345,9 +346,10 @@ type RatedSide struct {
 
 // RatingSection is a part of a rating's text under its heading.
 type RatingSection struct {
-	Title string
-	Text  string
-	Rich  []RichSpan
+	Title  string
+	Text   string
+	Rich   []RichSpan
+	Markup string
 }
 
 // Feed is one card of a feed list or one post's detail.
@@ -362,9 +364,12 @@ type Feed struct {
 	Tags        []string
 	Title       string
 	// Price is what a second-hand post asks, as "¥2100", "" for the others.
-	Price     string
-	Content   string
-	Rich      []RichSpan
+	Price   string
+	Content string
+	Rich    []RichSpan
+	// Markup is the original body of a detail response, before whitespace
+	// and formatting are flattened for a feed card.
+	Markup    string
 	IsArticle bool
 	Kind      PostKind
 	// Blocks is an article's body, where the detail has one.

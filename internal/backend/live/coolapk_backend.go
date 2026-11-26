@@ -226,6 +226,7 @@ func (b *coolapkBackend) FeedDetail(ctx context.Context, id string) (backend.Fee
 	if feed.ID == "" {
 		return backend.Feed{}, fmt.Errorf("帖子响应缺少编号")
 	}
+	feed.Markup = firstAPIString(object, "message")
 	return feed, nil
 }
 
@@ -481,9 +482,10 @@ func blocksFromObject(object map[string]any) []backend.Block {
 		switch item.Type {
 		case "text":
 			// <!--break--> marks where the summary ends.
-			text, rich := backend.RichTextFromAPI(strings.ReplaceAll(item.Message, "<!--break-->", ""))
-			if text != "" {
-				blocks = append(blocks, backend.Block{Kind: backend.BlockText, Text: text, Rich: rich})
+			markup := strings.ReplaceAll(item.Message, "<!--break-->", "")
+			if strings.TrimSpace(markup) != "" {
+				text, rich := backend.RichTextFromAPI(markup)
+				blocks = append(blocks, backend.Block{Kind: backend.BlockText, Text: text, Rich: rich, Markup: markup})
 			}
 		case "image":
 			if images := imagesFromURLs(item.URL); len(images) > 0 {
@@ -828,9 +830,9 @@ func ratingFromObject(object map[string]any) *backend.FeedRating {
 	_ = json.Unmarshal([]byte(firstAPIString(object, "v4_rating_message")), &texts)
 	_ = json.Unmarshal([]byte(firstAPIString(object, "v4_rating_message_key")), &order)
 	for _, title := range order {
-		if text := strings.TrimSpace(texts[title]); text != "" {
+		if text := texts[title]; strings.TrimSpace(text) != "" {
 			plain, rich := backend.RichTextFromAPI(text)
-			r.Sections = append(r.Sections, backend.RatingSection{Title: title, Text: plain, Rich: rich})
+			r.Sections = append(r.Sections, backend.RatingSection{Title: title, Text: plain, Rich: rich, Markup: text})
 		}
 	}
 	return r

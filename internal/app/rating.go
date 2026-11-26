@@ -75,7 +75,8 @@ func (a *App) ratingSummary(cx *core.Scope, get func() backend.Feed) core.Node {
 // ratingDetail is a rating on its post's page: a box of the product, the
 // stars of the rating and of each side with their words, then each part of
 // its text under its heading.
-func (a *App) ratingDetail(cx *core.Scope, f backend.Feed) core.Node {
+func (d *detail) ratingDetail(cx *core.Scope, f backend.Feed, docs map[int]postDocument) core.Node {
+	a := d.a
 	r := f.Rating
 	box := []core.Node{}
 	if t := f.Target; t != nil {
@@ -101,10 +102,10 @@ func (a *App) ratingDetail(cx *core.Scope, f backend.Feed) core.Node {
 		box = append(box, line(s.Name, s.Stars, s.Word, 16))
 	}
 	kids := []core.Node{column(core.Style{Padding: core.All(16), Gap: 10, CornerRadius: 12}, "bg-surface-container-low", box...)}
-	for _, s := range r.Sections {
+	for i, s := range r.Sections {
 		kids = append(kids, ratingTag(s.Title, "bg-primary text-on-primary"),
-			a.richText(cx, func() ([]backend.RichSpan, string) { return s.Rich, s.Text },
-				richOptions{size: textBody, lineHeight: feedLineHeight, class: "text-on-surface", selectable: true}))
+			a.postDocument(cx, docs[i], d.markdown.Get,
+				func() ([]backend.RichSpan, string) { return s.Rich, s.Text }))
 	}
 	return column(core.Style{Gap: 10}, "", kids...)
 }

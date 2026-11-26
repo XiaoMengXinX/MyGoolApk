@@ -20,6 +20,8 @@ type detail struct {
 	err            *core.Signal[string]
 	loading        bool
 	refreshReplies bool
+	documents      *core.Signal[*postDocuments]
+	markdown       *core.Signal[bool]
 
 	sort     *core.Signal[int] // a backend.ReplySort
 	replies  *pager[backend.Reply]
@@ -64,6 +66,8 @@ func (a *App) newDetail(cx *core.Scope, id string, seed backend.Feed) *detail {
 		summaryModel:  core.NewSignal(cx, ""),
 		summaryError:  core.NewSignal(cx, false),
 		asked:         core.NewSignal(cx, false),
+		documents:     core.NewSignal(cx, new(postDocuments)),
+		markdown:      core.NewSignal(cx, true),
 	}
 	replyID := func(r backend.Reply) string { return r.ID }
 	d.replies = newQueryPager(cx, func() detailReplyQuery {
@@ -159,6 +163,10 @@ func (d *detail) load() {
 	d.cx.Run(func() { ctx = d.cx.Context() })
 	go func() {
 		feed, err := d.a.backend.FeedDetail(ctx, d.id)
+		var docs postDocuments
+		if err == nil {
+			docs = preparePostDocuments(feed)
+		}
 		d.cx.Post(func() {
 			d.loading = false
 			refreshReplies := d.refreshReplies
@@ -168,6 +176,7 @@ func (d *detail) load() {
 				d.err.Set(err.Error())
 			} else {
 				d.feed.Set(feed)
+				d.documents.Set(&docs)
 				d.has.Set(true)
 				d.err.Set("")
 				d.a.recordHistory(feed)
@@ -245,7 +254,17 @@ func (a *App) detailPage(cx *core.Scope, id string) core.Node {
 			d.actionBar(cx),
 		)
 	})
-	return a.screen(titled("帖子"), nil, content, d.threadSheet(cx), d.composer.sheet(d), d.favorites.sheet(), d.replyMenu())
+	markdown := core.Show{
+		When: func() bool { return d.documents.Get().hasMarkdown },
+		Then: func(*core.Scope) core.Node {
+			button := filterChip("Markdown", d.markdown.Get, func() { d.markdown.Set(!d.markdown.GetUntracked()) })
+			button.Style.CornerRadius = 16
+			button.Style.FlexShrink = 0
+			button.HitSlop = core.Symmetric(8, 0)
+			return button
+		},
+	}
+	return a.screen(titled("帖子"), markdown, content, d.threadSheet(cx), d.composer.sheet(d), d.favorites.sheet(), d.replyMenu())
 }
 
 func (d *detail) postBody(cx *core.Scope) core.Node {
@@ -256,11 +275,12 @@ func (d *detail) postBody(cx *core.Scope) core.Node {
 		blocks, rich          int
 		target, counted, text bool
 		voted                 bool
+		documents             *postDocuments
 	}
 	return dynamicShape(cx, func() shape {
 		f := get()
-		return shape{shapeOfFeed(f, 0), len(f.Blocks), len(f.Rich), f.Target != nil, f.Answers > 0 || f.Followers > 0, f.Content != "", f.Vote != nil && f.Vote.Counted}
-	}, func(cx *core.Scope, _ shape) core.Node {
+		return shape{shapeOfFeed(f, 0), len(f.Blocks), len(f.Rich), f.Target != nil, f.Answers > 0 || f.Followers > 0, f.Content != "" || f.Markup != "", f.Vote != nil && f.Vote.Counted, d.documents.Get()}
+	}, func(cx *core.Scope, shape shape) core.Node {
 		f := core.Untracked(cx, get)
 		s := shapeOfFeed(f, 0)
 		kids := []core.Node{a.feedHeader(cx, get, 40)}
@@ -290,11 +310,12 @@ func (d *detail) postBody(cx *core.Scope) core.Node {
 		})
 		switch {
 		case f.Rating != nil:
-			kids = append(kids, a.ratingDetail(cx, f))
+			kids = append(kids, d.ratingDetail(cx, f, shape.documents.parts))
 		case len(f.Blocks) > 0:
-			kids = append(kids, a.articleBlocks(cx, f))
-		case len(f.Rich) > 0 || f.Content != "":
-			kids = append(kids, a.feedRich(cx, get, richOptions{size: textBody, lineHeight: feedLineHeight, class: "text-on-surface", selectable: true}))
+			kids = append(kids, d.articleBlocks(cx, f, shape.documents.parts))
+		case len(f.Rich) > 0 || shape.text:
+			kids = append(kids, a.postDocument(cx, shape.documents.body, d.markdown.Get,
+				func() ([]backend.RichSpan, string) { f := get(); return f.Rich, f.Content }))
 		}
 		if s.video || s.images > 0 || s.link || s.vote || s.fw {
 			kids = append(kids, a.feedMedia(cx, get, s, true, d.castVote))
@@ -338,7 +359,8 @@ func (d *detail) summaryCard(*core.Scope) core.Node {
 // articleBlocks shows an article's body in order: paragraphs, pictures with
 // their captions, link cards. A tap on a picture opens the viewer over all of
 // the article's pictures.
-func (a *App) articleBlocks(cx *core.Scope, f backend.Feed) core.Node {
+func (d *detail) articleBlocks(cx *core.Scope, f backend.Feed, docs map[int]postDocument) core.Node {
+	a := d.a
 	var images []backend.Image
 	for _, b := range f.Blocks {
 		if b.Kind == backend.BlockImage {
@@ -347,11 +369,11 @@ func (a *App) articleBlocks(cx *core.Scope, f backend.Feed) core.Node {
 	}
 	shown := 0
 	var kids []core.Node
-	for _, b := range f.Blocks {
-		b := b
+	for i, b := range f.Blocks {
 		switch b.Kind {
 		case backend.BlockText:
-			kids = append(kids, a.richText(cx, func() ([]backend.RichSpan, string) { return b.Rich, b.Text }, richOptions{size: textBody, lineHeight: feedLineHeight, class: "text-on-surface", selectable: true}))
+			kids = append(kids, a.postDocument(cx, docs[i], d.markdown.Get,
+				func() ([]backend.RichSpan, string) { return b.Rich, b.Text }))
 		case backend.BlockImage:
 			index := shown
 			shown++

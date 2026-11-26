@@ -5,15 +5,18 @@ go 1.27.3
 require (
 	github.com/XiaoMengXinX/CoolapkApi-Go v0.0.0
 	github.com/nsgo-dev/nsgo v0.3.4
+	github.com/yuin/goldmark v1.8.7
 	golang.org/x/net v0.62.0
 )
 
 require (
 	github.com/XiaoMengXinX/FuckCoolapkToken-iOS v0.0.0-20261017185757-9be3fa3a3993 // indirect
+	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
 	github.com/andybalholm/brotli v1.3.0 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/dlclark/regexp2/v2 v2.11.0 // indirect
 	github.com/ebitengine/purego v0.11.3 // indirect
 	github.com/evanw/esbuild v0.28.2 // indirect
 	github.com/gdamore/encoding v1.0.1 // indirect
@@ -29,7 +32,6 @@ require (
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/sergi/go-diff v1.1.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	github.com/yuin/goldmark v1.8.7 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/image v0.48.0 // indirect
