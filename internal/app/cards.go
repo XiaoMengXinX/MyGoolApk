@@ -215,6 +215,8 @@ func (a *App) cardView(cx *core.Scope, get func() backend.PageEntry, l *pageList
 			body = a.logosCard(cx, c)
 		case backend.CardScroll:
 			body = a.scrollCard(cx, c)
+		case backend.CardEditorial:
+			body = a.editorialCard(cx, c)
 		case backend.CardTitle:
 			return cardTitle(c.Title, core.Edges{Top: 16, Right: 16, Bottom: 4, Left: 16})
 		case backend.CardSelector:
@@ -524,6 +526,21 @@ func (a *App) configsCard(c *backend.Card) core.Node {
 			tonalButton("参数", func() { a.openCardItem(it) }))
 	}
 	return column(core.Style{Padding: core.Symmetric(12, 16), Gap: 8}, "", rows...)
+}
+
+func (a *App) editorialCard(cx *core.Scope, c *backend.Card) core.Node {
+	const width = 216
+	items := make([]core.Node, 0, len(c.Items))
+	for _, it := range c.Items {
+		items = append(items, tap(it.Title, func() { a.openCardItem(it) },
+			core.Style{Width: core.Pt(width), CornerRadius: 12, FlexShrink: 0}, "bg-surface-container-high",
+			a.clippedPic(cx, it.Pic, width, width*0.45, 0),
+			core.Text{Content: it.Title, MaxLines: 2, Class: "text-on-surface",
+				Style: textStyle(textSecondary, 600).Merge(core.Style{Padding: core.Symmetric(8, 12), MinHeight: core.Pt(52)})}))
+	}
+	return core.Scroll{Horizontal: true, HideIndicator: true, Children: []core.Node{
+		row(core.Style{Gap: 10, Padding: core.Symmetric(12, 8)}, "", items...),
+	}}
 }
 
 // scrollCard is pictures with titles that scroll sideways.

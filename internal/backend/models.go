@@ -164,8 +164,7 @@ const (
 	// CardList is a few rows under a title (iconListCard,
 	// productTimelineListCard, iconMiniGridCard).
 	CardList
-	// CardScroll is pictures with titles that scroll sideways
-	// (imageTextScrollCard, imageSquareScrollCard, feedScrollCard).
+	// CardScroll is a horizontal strip of posts (feedScrollCard).
 	CardScroll
 	// CardTitle heads the rows after it (titleCard).
 	CardTitle
@@ -196,6 +195,8 @@ const (
 	// CardLogos is the logos of brands in two rows that scroll sideways
 	// (iconGridHorizonCard).
 	CardLogos
+	// CardEditorial presents article covers and headlines in a horizontal strip.
+	CardEditorial
 )
 
 // Card is a card of a server page.
@@ -357,6 +358,7 @@ type Feed struct {
 	Device      string
 	Location    string
 	Target      *Target
+	Relation    *CardItem
 	Tags        []string
 	Title       string
 	// Price is what a second-hand post asks, as "¥2100", "" for the others.

@@ -232,7 +232,7 @@ func TestCommentSortSwitches(t *testing.T) {
 
 func TestTopicChipOpensTheTopicPage(t *testing.T) {
 	app := start(t, newFakeBackend())
-	app.Press("role:button 话题 >> nth=1")
+	app.Press("role:button 一加15 >> nth=1")
 	settle(app)
 	if !shows(app, "text:一加15") {
 		t.Fatalf("the topic page is not shown:\n%s", app.Dump())

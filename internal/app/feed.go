@@ -50,17 +50,41 @@ func (a *App) feedCard(cx *core.Scope, get func() backend.Feed) core.Node {
 			dynamicOnShape(cx, func() feedShape { return shapeOfFeed(get(), 6) },
 				func(cx *core.Scope, s feedShape) core.Node { return a.feedBody(cx, get, s) }),
 		)),
-		through(row(core.Style{Padding: core.Edges{Right: 16, Bottom: 8, Left: 16}, Gap: 16, AlignItems: core.AlignCenter}, "",
-			dynamicShape(cx, func() bool { return get().Target != nil }, func(cx *core.Scope, has bool) core.Node {
-				if !has {
-					return core.Group{}
-				}
-				return a.targetChip(cx, func() *backend.Target { return get().Target })
-			}),
-			tap("查看帖子", open, fill.Merge(core.Style{Direction: core.Row, JustifyContent: core.JustifyEnd, Height: core.Pt(32), AlignItems: core.AlignCenter}), "",
-				feedStats(get)),
-		)),
+		a.feedFooter(cx, get, open),
 		core.View{Style: core.Style{Height: core.Pt(8)}, Class: "bg-surface-container-low"})
+}
+
+func (a *App) feedFooter(cx *core.Scope, get func() backend.Feed, open func()) core.Node {
+	return dynamicShape(cx, func() [2]bool {
+		f := get()
+		return [2]bool{f.Target != nil, f.Relation != nil}
+	}, func(cx *core.Scope, has [2]bool) core.Node {
+		var chips []core.Node
+		if has[0] {
+			chips = append(chips, a.targetChip(cx, func() *backend.Target { return get().Target }))
+		}
+		if has[1] {
+			relation := func() backend.CardItem {
+				if it := get().Relation; it != nil {
+					return *it
+				}
+				return backend.CardItem{}
+			}
+			chips = append(chips, a.feedChip(cx, func() string { return relation().Title },
+				func() string { return relation().Pic }, func() { a.openCardItem(relation()) },
+				"bg-secondary-container", "text-on-secondary-container"))
+		}
+		var topics core.Node = core.Group{}
+		if len(chips) > 0 {
+			topics = through(row(core.Style{Gap: 6, MaxWidth: core.Pct(100), MinWidth: core.Pt(0)}, "", chips...))
+		}
+		stats := tap("查看帖子", open, core.Style{Height: core.Pt(32), AutoMargin: core.SideLeft,
+			JustifyContent: core.JustifyCenter, FlexShrink: 0}, "", feedStats(get))
+		return through(row(core.Style{
+			Padding: core.Edges{Right: 16, Bottom: 8, Left: 16},
+			Wrap:    core.Wrap, RowGap: 4, ColumnGap: 12, AlignItems: core.AlignCenter,
+		}, "", topics, stats))
+	})
 }
 
 // targetChip is an assist chip with the logo of the topic or product a post
@@ -72,25 +96,31 @@ func (a *App) targetChip(cx *core.Scope, get func() *backend.Target) core.Node {
 		}
 		return ""
 	}
-	return tap("话题", func() {
+	return a.feedChip(cx, title, func() string {
+		if t := get(); t != nil {
+			return t.LogoURL
+		}
+		return ""
+	}, func() {
 		if t := get(); t != nil {
 			a.openTarget(t)
 		}
-	}, core.Style{Direction: core.Row, Height: core.Pt(32), FlexShrink: 1, Padding: core.Edges{Left: 6, Right: 12}, Gap: 6,
-		AlignItems: core.AlignCenter, CornerRadius: 8, Overflow: core.Hidden}, "bg-surface-container-high",
-		dynamicShape(cx, func() bool { t := get(); return t != nil && t.LogoURL != "" }, func(cx *core.Scope, logo bool) core.Node {
-			if logo {
-				return a.pic(cx, func() string {
-					if t := get(); t != nil {
-						return t.LogoURL
-					}
-					return ""
-				}, core.Cover, "bg-surface-container-highest", core.Style{Width: core.Pt(20), Height: core.Pt(20), CornerRadius: 10, FlexShrink: 0})
+	}, "bg-surface-container-high", "text-on-surface")
+}
+
+func (a *App) feedChip(cx *core.Scope, title, logo func() string, open func(), background, foreground string) core.Node {
+	chip := tap("", open, core.Style{Direction: core.Row, Height: core.Pt(32), FlexShrink: 1, MinWidth: core.Pt(0),
+		Padding: core.Edges{Left: 6, Right: 8}, Gap: 4, AlignItems: core.AlignCenter, CornerRadius: 8}, background,
+		dynamicShape(cx, func() bool { return logo() != "" }, func(cx *core.Scope, has bool) core.Node {
+			if has {
+				return a.clippedPicFrom(cx, logo, 18, 18, 5)
 			}
-			return icon(&symbols.Tag, 18, "text-on-surface-variant")
+			return icon(&symbols.Tag, 18, foreground)
 		}),
-		core.Text{ContentFunc: title, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textSecondary, 500)},
-	)
+		core.Text{ContentFunc: title, MaxLines: 1, Class: foreground,
+			Style: textStyle(textSecondary, 500).Merge(core.Style{FlexShrink: 1, MinWidth: core.Pt(0)})})
+	chip.LabelFunc = title
+	return chip
 }
 
 func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Points) core.Node {

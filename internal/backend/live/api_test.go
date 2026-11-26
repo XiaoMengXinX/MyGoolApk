@@ -11,7 +11,7 @@ import (
 func TestMixedCardsAndFeedFields(t *testing.T) {
 	data := json.RawMessage(`[
 		{"entityType":"card","entities":[{"entityType":"feed","id":"41","feedType":"feedArticle","message_title":"Nested article","pic":"http://image.coolapk.com/feed/a@1200x600.jpg"}]},
-		{"entityType":"feed","id":42,"username":"Coolapk user","userAvatar":"http://avatar.coolapk.com/a.jpg","message":"Hello <a href=\"/t/mygo\">#MyGo#</a><br>native UI","dateline":1700000000,"likenum":"12","commentnum":7,"favnum":3,"picArr":["http://image.coolapk.com/feed/b@800x800.jpg"]}
+		{"entityType":"feed","id":42,"username":"Coolapk user","userAvatar":"http://avatar.coolapk.com/a.jpg","message":"Hello <a href=\"/t/mygo\">#MyGo#</a><br>native UI","dateline":1700000000,"likenum":"12","commentnum":7,"favnum":3,"targetRow":{"title":"OPPO Reno17","targetType":"product","id":86},"relationRows":[{"title":"酷安图赏与评测","url":"/page?url=channel"}],"picArr":["http://image.coolapk.com/feed/b@800x800.jpg"]}
 	]`)
 	objects, err := decodeAPIObjects(data)
 	if err != nil {
@@ -32,6 +32,9 @@ func TestMixedCardsAndFeedFields(t *testing.T) {
 	}
 	if feeds[1].Stats.Likes != 12 || feeds[1].Stats.Comments != 7 || feeds[1].Stats.Favorites != 3 {
 		t.Errorf("stats = %+v", feeds[1].Stats)
+	}
+	if got := feeds[1]; got.Target == nil || got.Target.ID != "86" || got.Relation == nil || got.Relation.URL != "/page?url=channel" {
+		t.Errorf("feed links = target %+v, relation %+v", got.Target, got.Relation)
 	}
 }
 

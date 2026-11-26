@@ -378,6 +378,12 @@ func feedFromObject(object map[string]any) backend.Feed {
 		Liked:     apiInt(action, "like") != 0,
 		Favorited: apiInt(action, "collect") == 1 || apiInt(action, "favorite") == 1,
 	}
+	for _, row := range apiObjects(object, "relationRows") {
+		if title, link := firstAPIString(row, "title"), firstAPIString(row, "url"); title != "" && link != "" {
+			feed.Relation = &backend.CardItem{Title: title, URL: link, Pic: normalizeCoolapkImage(firstAPIString(row, "logo"))}
+			break
+		}
+	}
 	feed.Kind = postKindFromAPI(firstAPIString(object, "feedType"))
 	if feed.Title == "" && feed.Kind != backend.PostText {
 		feed.Title = firstAPIString(object, "title")

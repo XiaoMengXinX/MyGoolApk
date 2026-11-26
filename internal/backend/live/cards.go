@@ -26,7 +26,7 @@ var cardKinds = map[string]backend.CardKind{
 	"capsuleListCard":         backend.CardChips,
 	"iconListCard":            backend.CardList,
 	"productTimelineListCard": backend.CardList,
-	"imageTextScrollCard":     backend.CardScroll,
+	"imageTextScrollCard":     backend.CardEditorial,
 	"imageSquareScrollCard":   backend.CardTiles,
 	"feedScrollCard":          backend.CardScroll,
 	"titleCard":               backend.CardTitle,
@@ -74,7 +74,7 @@ func cardFromObject(o map[string]any) *backend.Card {
 		kind, c.Kind = backend.CardRanking, backend.CardRanking
 	}
 	switch kind {
-	case backend.CardList, backend.CardConfigs, backend.CardAvatars, backend.CardPairs, backend.CardRanking:
+	case backend.CardList, backend.CardConfigs, backend.CardAvatars, backend.CardPairs, backend.CardRanking, backend.CardEditorial:
 		c.URL, c.More = firstAPIString(o, "url"), firstAPIString(o, "subTitle")
 		if strings.HasPrefix(c.URL, "tab://") {
 			c.More = firstAPIString(o, "description", "subTitle")
