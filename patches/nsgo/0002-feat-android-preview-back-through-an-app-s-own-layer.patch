@@ -1,0 +1,627 @@
+From 4ee87c21f9f372a26fbfc14cad0d09bcca031d67 Mon Sep 17 00:00:00 2001
+From: xiaomengxin <xibaole2333@gmail.com>
+Date: Fri, 27 Nov 2026 06:27:09 +0800
+Subject: [PATCH] feat(android): preview back through an app's own layers and
+ leave unhandled back to the system
+
+---
+ core/gate_test.go                             |   2 +-
+ core/hoist.go                                 |  44 +++--
+ core/keys.go                                  |  37 +++-
+ core/nav.go                                   |  34 +++-
+ core/nav_test.go                              |  47 +++++
+ core/tree.go                                  |  21 ++-
+ internal/driver/mount.go                      |  14 +-
+ internal/platform/android/android.go          |   5 +
+ .../java/dev/oneo/nsgo/BackGesture.java       |   2 +-
+ .../android/java/dev/oneo/nsgo/NsgoView.java  | 168 +++++++++++++++++-
+ 10 files changed, 343 insertions(+), 31 deletions(-)
+
+diff --git a/core/gate_test.go b/core/gate_test.go
+index 63c7ef6f..794bc71f 100644
+--- a/core/gate_test.go
++++ b/core/gate_test.go
+@@ -110,7 +110,7 @@ var exempt = map[string][]string{
+ 	"Access itself, Confine, and what ProvideHost, ProvideStorage and ProvideSecrets scope to the owner": {"ProvideAccess", "CheckAccess",
+ 		"ProvideHost", "HasHost", "HostParams", "OnHostEvent", "ProvideStorage", "Storage", "ProvideSecrets", "Confine"},
+ 	"the view the code shows and the user's input to it, which no capability holds": {"StartAnimation", "AnimateLayout",
+-		"MeasureText", "NewOffscreenImage", "SetPreferredFrameRate", "RequestAnimationFrame", "RunFrame", "RunFrameAt", "Animate", "Tween", "PlayHaptic", "PlayHapticPattern", "DeferSystemGestures", "OnKey", "OnKeyWith", "OnBackPress",
++		"MeasureText", "NewOffscreenImage", "SetPreferredFrameRate", "RequestAnimationFrame", "RunFrame", "RunFrameAt", "Animate", "Tween", "PlayHaptic", "PlayHapticPattern", "DeferSystemGestures", "OnKey", "OnKeyWith", "OnBackPress", "OnBackPressWith",
+ 		"SetTitle", "DismissKeyboard", "Announce", "SetScrollbars", "WatchScroll", "PopupMenu", "ShowAlert", "RegisterFont",
+ 		"SetTheme", "SetSubtreeAppearance", "SetAppearance", "SetLocale", "SelectInputSource", "RestoreInputSource",
+ 		"ServeScheme", "ServeSchemeRequest", "SetImageCacheLimit"},
+diff --git a/core/hoist.go b/core/hoist.go
+index 5b08a986..00568f6a 100644
+--- a/core/hoist.go
++++ b/core/hoist.go
+@@ -877,39 +877,59 @@ func (t *Tree) back() {
+ 	t.changed = true
+ }
+ 
+-// backPreview returns the screen back pops, as back routes it, when
+-// nothing takes it first: no overlay listening for cancel, no modal's
+-// OnRequestClose, no Scope.OnBackPress handler and no NoPopOnBack.
+-func (t *Tree) backPreview() driver.NodeID {
++// backPreview returns what a back gesture moves, as back routes it: the
++// screen back pops when nothing takes it first (no overlay listening for
++// cancel, no modal's OnRequestClose, no Scope.OnBackPress handler and no
++// NoPopOnBack), or the views the handler back goes to names with
++// BackOptions.Preview, the second the one the first uncovers.
++func (t *Tree) backPreview() (moving, uncovered, scrim driver.NodeID) {
+ 	if t.topmostCancel(t.view) != nil {
+-		return 0
++		return 0, 0, 0
+ 	}
+ 	host := t.view
+ 	for top := topModal(host); top != nil; top = topModal(host) {
+ 		host = top
+ 	}
+ 	if t.topOverlay(host) != nil || t.framedCancel(host) != nil {
+-		return 0
++		return 0, 0, 0
+ 	}
+ 	if host.kind != driver.KindModal {
+ 		places := t.keyPlaces()
+-		for _, b := range t.backs {
+-			if !b.owner.disposed && places.shows(b.owner, true) && t.focusWithin(b.within) {
+-				return 0
++		for i := len(t.backs) - 1; i >= 0; i-- {
++			if b := t.backs[i]; !b.owner.disposed && places.shows(b.owner, true) && t.focusWithin(b.within) {
++				return t.handlerPreview(b)
+ 			}
+ 		}
+ 	}
+ 	stack := t.innerStack(host)
+ 	if stack == nil {
+-		return 0
++		return 0, 0, 0
+ 	}
+ 	screens := stack.screens()
+ 	top := screens[len(screens)-1]
+ 	if s := top.screen.screen; s.NoPopOnBack || s.NoPopOnSwipe {
+-		return 0
++		return 0, 0, 0
+ 	}
+ 	t.peek(stack, screens[len(screens)-2])
+-	return top.id
++	return top.id, 0, 0
++}
++
++// handlerPreview returns the views back handler b's Preview names, the
++// moving and uncovered ones shown, or none; a scrim not shown is left out.
++func (t *Tree) handlerPreview(b *backHandler) (moving, uncovered, scrim driver.NodeID) {
++	if b.preview == nil {
++		return 0, 0, 0
++	}
++	var m, u, sc *Ref
++	t.within(b.owner, func() { m, u, sc = b.preview() })
++	if !m.placed() || !u.placed() {
++		return 0, 0, 0
++	}
++	t.previewing, t.previewed = b, m.n.id
++	if sc.placed() {
++		scrim = sc.n.id
++	}
++	return m.n.id, u.n.id, scrim
+ }
+ 
+ // peek lays screen below out under stack's top one for a back gesture, or
+diff --git a/core/keys.go b/core/keys.go
+index eced4f95..6711e977 100644
+--- a/core/keys.go
++++ b/core/keys.go
+@@ -353,6 +353,9 @@ func (t *Tree) removeKeyBinding(b *keyBinding) {
+ type backHandler struct {
+ 	owner, within *Scope
+ 	fn            func() bool
++	preview       func() (moving, uncovered, scrim *Ref)
++	previewed     func()
++	takes         func() bool
+ }
+ 
+ // confineKey is where Confine marks an owner.
+@@ -435,13 +438,43 @@ func (t *Tree) focusKeys() bool {
+ }
+ 
+ // OnBackPress runs fn when back is pressed (Escape, the back button or gesture, the browser's back) while the current owner lives and the user can see what it shows, as for OnKey: after the overlays and modals, which take it first, and before the navigation stacks, the newest handler first. fn returns true to take it; when none does, the top stack pops, else the platform goes back itself.
+-func (cx *Scope) OnBackPress(fn func() bool) {
++func (cx *Scope) OnBackPress(fn func() bool) { cx.OnBackPressWith(fn, BackOptions{}) }
++
++// BackOptions are how a back handler of OnBackPressWith takes back.
++type BackOptions struct {
++	// Preview, when set, names what a predictive back gesture (Android 14
++	// and later) moves while the handler is the one back goes to: the view
++	// that slides off to the right as the gesture goes on, the one it
++	// uncovers, which slides back from where it lies to its place, and an
++	// optional scrim over the uncovered one, which fades out with it. They
++	// follow the gesture on the platform's thread; a cancelled gesture puts
++	// them back, and a finished one leaves the moving view off the screen
++	// and the uncovered one in place, and runs Previewed in place of the
++	// handler. A nil view, or one not shown, leaves the gesture without a
++	// preview, as a handler without Preview does.
++	Preview func() (moving, uncovered, scrim *Ref)
++	// Previewed takes the view Preview named as moving away at once, as a
++	// gesture finished moving it off the screen: animating it again would
++	// show it twice. It must be set with Preview.
++	Previewed func()
++	// Takes, when set, says whether the handler takes back now: where it
++	// says no and nothing else would, Android leaves back to the system,
++	// which previews its way out of the app. Without it the handler is
++	// taken to take back whenever it is shown.
++	Takes func() bool
++}
++
++// OnBackPressWith is OnBackPress taking back as opts say.
++func (cx *Scope) OnBackPressWith(fn func() bool, opts BackOptions) {
+ 	t := cx.tree()
+ 	if t == nil {
+ 		return
+ 	}
+ 	owner := cx.current()
+-	b := &backHandler{owner: owner, within: confinement(owner), fn: fn}
++	if (opts.Preview == nil) != (opts.Previewed == nil) {
++		panic("core: BackOptions needs Preview and Previewed together")
++	}
++	b := &backHandler{owner: owner, within: confinement(owner), fn: fn, preview: opts.Preview, previewed: opts.Previewed, takes: opts.Takes}
+ 	t.backs = append(t.backs, b)
+ 	b.owner.addCleanup(func() { t.backs = slices.DeleteFunc(t.backs, func(o *backHandler) bool { return o == b }) })
+ }
+diff --git a/core/nav.go b/core/nav.go
+index 70aca7ee..4ce5a952 100644
+--- a/core/nav.go
++++ b/core/nav.go
+@@ -571,16 +571,44 @@ func (t *Tree) historyDepth() int {
+ 	return depth
+ }
+ 
++// backTaken reports whether something besides the stacks' screens and the
++// modals takes back now: an overlay hearing cancel, or a back handler shown
++// whose BackOptions.Takes does not say no.
++func (t *Tree) backTaken() bool {
++	if t.topmostCancel(t.view) != nil || t.topOverlay(t.view) != nil || t.framedCancel(t.view) != nil {
++		return true
++	}
++	if len(t.backs) == 0 {
++		return false
++	}
++	places := t.keyPlaces()
++	for _, b := range t.backs {
++		if b.owner.disposed || !places.shows(b.owner, true) || !t.focusWithin(b.within) {
++			continue
++		}
++		if b.takes == nil {
++			return true
++		}
++		takes := false
++		t.within(b.owner, func() { takes = Untracked(b.owner, b.takes) })
++		if takes {
++			return true
++		}
++	}
++	return false
++}
++
+ // emitHistory commits navigation depth and the application address together.
+ func (t *Tree) emitHistory() {
+ 	depth := t.historyDepth()
++	taken := depth > 0 || t.backTaken()
+ 	a := t.rt.address
+ 	addressed := a != nil && a.tree == t && a.page != ""
+-	if depth == t.history && !t.historyAgain && (!addressed || a.pending == nil) {
++	if depth == t.history && taken == t.historyTaken && !t.historyAgain && (!addressed || a.pending == nil) {
+ 		return
+ 	}
+-	t.history, t.historyAgain = depth, false
+-	item := driver.MountItem{Kind: driver.ItemHistory, Count: uint32(depth)}
++	t.history, t.historyTaken, t.historyAgain = depth, taken, false
++	item := driver.MountItem{Kind: driver.ItemHistory, Count: uint32(depth), BackTaken: taken}
+ 	if addressed {
+ 		item.Address = a.pending
+ 		if item.Address == nil {
+diff --git a/core/nav_test.go b/core/nav_test.go
+index dae4043c..9b55f85b 100644
+--- a/core/nav_test.go
++++ b/core/nav_test.go
+@@ -389,6 +389,53 @@ func TestBackPreviewNamesTheScreenBackPops(t *testing.T) {
+ 	}
+ }
+ 
++func TestBackPreviewNamesAHandlersViews(t *testing.T) {
++	var page, below, shade Ref
++	var viewing *Signal[bool]
++	var backs, previewed int
++	h := newPhone(t, phone, func(cx *Scope) Node {
++		viewing = NewSignal(cx, false)
++		cx.OnBackPressWith(func() bool { backs++; return true }, BackOptions{
++			Preview:   func() (moving, uncovered, scrim *Ref) { return &page, &below, &shade },
++			Previewed: func() { previewed++ },
++		})
++		return View{Style: Style{FlexGrow: 1}, Children: []Node{
++			View{Ref: &below, TestID: "below", Style: Style{FlexGrow: 1}, Children: []Node{View{Ref: &shade, TestID: "shade"}}},
++			View{Ref: &page, TestID: "page", Style: Style{FlexGrow: 1}},
++			Show{When: viewing.Get, Then: func(cx *Scope) Node {
++				cx.OnBackPress(func() bool { return true })
++				return View{}
++			}},
++		}}
++	})
++	h.commit()
++	preview := func() driver.MountItem {
++		h.tree.Dispatch(driver.Event{Kind: driver.EventBackStarted})
++		for _, it := range h.commit().Items {
++			if it.Kind == driver.ItemBackPreview {
++				return it
++			}
++		}
++		t.Fatal("no ItemBackPreview")
++		return driver.MountItem{}
++	}
++	if it := preview(); it.ID != h.find("page").id || it.Uncovered != h.find("below").id || it.Scrim != h.find("shade").id {
++		t.Errorf("preview = %v over %v under %v, want the handler's page over the view below and its scrim", it.ID, it.Uncovered, it.Scrim)
++	}
++	// The finished gesture takes the page away through Previewed; a later
++	// back, as a button's, goes to the handler.
++	h.tree.Dispatch(driver.Event{Kind: driver.EventBack, ID: h.find("page").id})
++	h.tree.Dispatch(driver.Event{Kind: driver.EventBack})
++	if previewed != 1 || backs != 1 {
++		t.Errorf("after a finished gesture and a back: Previewed ran %d times, the handler %d; want 1 and 1", previewed, backs)
++	}
++	// A newer handler without a preview takes back first.
++	viewing.Set(true)
++	if it := preview(); it.ID != 0 || it.Uncovered != 0 {
++		t.Errorf("preview = %v over %v under a newer handler, want none", it.ID, it.Uncovered)
++	}
++}
++
+ func TestScreenHeaderSystemItem(t *testing.T) {
+ 	h := newPhone(t, phone, func(cx *Scope) Node {
+ 		return Stack{Style: Style{FlexGrow: 1}, Children: []Node{
+diff --git a/core/tree.go b/core/tree.go
+index bb5cc81f..acd77f94 100644
+--- a/core/tree.go
++++ b/core/tree.go
+@@ -125,9 +125,14 @@ type Tree struct {
+ 	regions map[*node]struct{}
+ 	// peeking is the screen a back gesture may uncover (Tree.peek).
+ 	peeking *node
++	// previewing is the back handler whose BackOptions.Preview a back
++	// gesture moves, and previewed the view it moves, until the gesture ends.
++	previewing *backHandler
++	previewed  NodeID
+ 	// history is the depth ItemHistory last sent, which historyAgain
+-	// sends again.
++	// sends again, and historyTaken its BackTaken.
+ 	history      int
++	historyTaken bool
+ 	historyAgain bool
+ 	alertID      uint32
+ 	menuActions  map[uint32]menuAction
+@@ -2432,6 +2437,16 @@ func (t *Tree) Dispatch(ev driver.Event) {
+ 		t.inputModality(ev.Count)
+ 		return
+ 	case driver.EventBack:
++		if h := t.previewing; h != nil && ev.ID != 0 && ev.ID == t.previewed {
++			// The gesture moved the handler's views: it takes the moving one away.
++			t.previewing, t.previewed = nil, 0
++			if !h.owner.disposed {
++				t.within(h.owner, h.previewed)
++				t.changed = true
++				return
++			}
++		}
++		t.previewing, t.previewed = nil, 0
+ 		n := t.node(ev.ID)
+ 		// Escape on a view of an overlay is that overlay's, a confined owner's only while the focus is within it.
+ 		var overlay *node
+@@ -2455,10 +2470,12 @@ func (t *Tree) Dispatch(ev driver.Event) {
+ 		t.changed = true
+ 		return
+ 	case driver.EventBackCancelled:
++		t.previewing, t.previewed = nil, 0
+ 		t.peek(nil, nil)
+ 		return
+ 	case driver.EventBackStarted:
+-		t.commands = append(t.commands, driver.MountItem{Kind: driver.ItemBackPreview, ID: t.backPreview()})
++		moving, uncovered, scrim := t.backPreview()
++		t.commands = append(t.commands, driver.MountItem{Kind: driver.ItemBackPreview, ID: moving, Uncovered: uncovered, Scrim: scrim})
+ 		t.changed = true
+ 		return
+ 	case driver.EventScreenHeader:
+diff --git a/internal/driver/mount.go b/internal/driver/mount.go
+index ebda6250..d6490c2e 100644
+--- a/internal/driver/mount.go
++++ b/internal/driver/mount.go
+@@ -205,7 +205,8 @@ const (
+ 	ItemQuit
+ 	// ItemBackPreview answers EventBackStarted with the screen a back now
+ 	// pops (ID), for the platform to move it with the gesture; 0 when back
+-	// goes elsewhere first or nothing pops.
++	// goes elsewhere first or nothing pops. With Uncovered, ID is a view of
++	// the app's own stack and Uncovered the one it uncovers.
+ 	ItemBackPreview
+ 	// ItemHistory is how many entries back can go through (Count): the
+ 	// screens above each stack's first and the modals shown. The web
+@@ -580,6 +581,17 @@ type MountItem struct {
+ 	// Transition, when set, moves an ItemFrame's view from where it shows
+ 	// to Frame, as a batch's LayoutAnimation Update does, which wins.
+ 	Transition *LayoutTransition
++	// Uncovered is ItemBackPreview's: the view its ID uncovers, which an
++	// app's own back preview names (core.BackOptions.Preview), or 0 for a
++	// screen of a stack.
++	Uncovered NodeID
++	// Scrim is ItemBackPreview's view over Uncovered that fades out with
++	// the gesture, or 0.
++	Scrim NodeID
++	// BackTaken is ItemHistory's: whether the app takes back now, rather
++	// than leave it to the system. Android hands back to the system while
++	// it does not, which shows its predictive back to the home screen.
++	BackTaken bool
+ 	// Point and Animated are ItemScrollTo's.
+ 	Point    Point
+ 	Animated bool
+diff --git a/internal/platform/android/android.go b/internal/platform/android/android.go
+index ccd1c46d..aabad943 100644
+--- a/internal/platform/android/android.go
++++ b/internal/platform/android/android.go
+@@ -1674,6 +1674,11 @@ func encode(w *writer, b *driver.MountBatch, first bool, requests []uint32, nati
+ 			writeLayoutTransition(w, it.Transition)
+ 		case driver.ItemMatch:
+ 			w.u32(uint32(it.Before))
++		case driver.ItemHistory:
++			w.flags(it.BackTaken)
++		case driver.ItemBackPreview:
++			w.u32(uint32(it.Uncovered))
++			w.u32(uint32(it.Scrim))
+ 		case driver.ItemViewStyle:
+ 			writeViewStyle(w, it.ViewStyle)
+ 		case driver.ItemText:
+diff --git a/internal/platform/android/java/dev/oneo/nsgo/BackGesture.java b/internal/platform/android/java/dev/oneo/nsgo/BackGesture.java
+index c799f8e5..2b478154 100644
+--- a/internal/platform/android/java/dev/oneo/nsgo/BackGesture.java
++++ b/internal/platform/android/java/dev/oneo/nsgo/BackGesture.java
+@@ -16,7 +16,7 @@ final class BackGesture implements OnBackAnimationCallback {
+ 
+     @Override
+     public void onBackStarted(BackEvent event) {
+-        view.backStarted(event.getProgress());
++        view.backStarted(event.getProgress(), event.getSwipeEdge() == BackEvent.EDGE_RIGHT);
+     }
+ 
+     @Override
+diff --git a/internal/platform/android/java/dev/oneo/nsgo/NsgoView.java b/internal/platform/android/java/dev/oneo/nsgo/NsgoView.java
+index cc9804de..c62d7aa8 100644
+--- a/internal/platform/android/java/dev/oneo/nsgo/NsgoView.java
++++ b/internal/platform/android/java/dev/oneo/nsgo/NsgoView.java
+@@ -302,13 +302,28 @@ public class NsgoView extends FrameLayout implements NsgoEngine.Listener {
+      * The predictive back gesture, on the UI thread: whether one runs, its
+      * progress, the screen following it and the one it uncovers, their
+      * translations and visibility before it, how far off the screen is and
+-     * the animation settling it.
++     * the animation settling it. backLayers says the two are views of the
++     * app's own stack (BackOptions.Preview), which follow the gesture whole.
+      */
+-    private boolean backGesture;
++    private boolean backGesture, backLayers;
++    /** The back gesture comes from the screen's right edge. */
++    private boolean backFromRight;
++    /** The scrim over the uncovered layer, which fades with the gesture, and its opacity before it. */
++    private Node backScrim;
++    private float backScrimAlpha;
++    /** The moving layer's outline before a back gesture of the app's own layers rounded it. */
++    private android.view.ViewOutlineProvider backOutline;
++    private boolean backClip;
++    private float backCorner;
+     private float backProgress, backBase, backBelowBase, backAt;
+     private Node backScreen, backBelow;
+     private int backBelowVisibility;
+     private ValueAnimator backMove;
++    /**
++     * Whether the app takes back now (ITEM_HISTORY): while it does not, the
++     * view leaves back to the system, which previews leaving the app.
++     */
++    private boolean backTaken = true;
+     /** The OnBackInvokedDispatcher and OnBackInvokedCallback of back on API 33 and later. */
+     private Object backDispatcher, backCallback;
+     /** The keymap's bindings, oldest first: each key with its flags (1 fires in text, 2 repeats). */
+@@ -2830,8 +2845,21 @@ public class NsgoView extends FrameLayout implements NsgoEngine.Listener {
+         return true;
+     }
+ 
++    /** Follows whether the app takes back, holding back's callback only while it does. */
++    private void backTaken(boolean taken) {
++        if (taken == backTaken) return;
++        backTaken = taken;
++        if (Build.VERSION.SDK_INT < 33 || primary != null) return;
++        if (!taken) {
++            unregisterBack();
++        } else if (backCallback == null && isAttachedToWindow() && attached) {
++            registerBack();
++        }
++    }
++
+     /** Takes back on API 33 and later, where predictive back skips Activity.onBackPressed. */
+     private void registerBack() {
++        if (!backTaken) return;
+         OnBackInvokedDispatcher dispatcher = findOnBackInvokedDispatcher();
+         if (dispatcher == null) return;
+         OnBackInvokedCallback callback = Build.VERSION.SDK_INT >= 34 ? new BackGesture(this) : this::back;
+@@ -2844,9 +2872,10 @@ public class NsgoView extends FrameLayout implements NsgoEngine.Listener {
+      * A predictive back gesture began: the engine answers which screen it
+      * pops (ITEM_BACK_PREVIEW), which then follows the gesture.
+      */
+-    void backStarted(float progress) {
++    void backStarted(float progress, boolean fromRight) {
+         if (!inputGate.allowInput()) return;
+         backGesture = true;
++        backFromRight = fromRight;
+         backProgress = progress;
+         event(Protocol.EVENT_BACK_STARTED, 0, 0, 0, 0, "");
+     }
+@@ -2875,9 +2904,34 @@ public class NsgoView extends FrameLayout implements NsgoEngine.Listener {
+         }
+     }
+ 
+-    /** How far off its screen the gesture's progress moves: part of the way, as Android's own does. */
+-    private static float backDrag(float progress) {
+-        return progress * 0.4f;
++    /** How far off its screen the gesture's progress moves: part of the way, as Android's own does; the app's own layers take it whole (placeLayers). */
++    private float backDrag(float progress) {
++        return backLayers ? progress : progress * 0.4f;
++    }
++
++    /**
++     * Answers backStarted with the app's own layer n and the one below it,
++     * which slides from where it lies back to its place as n goes.
++     */
++    private void previewLayers(Node n, Node below, Node scrim) {
++        if (!backGesture || n == null || below == null || backScreen != null || backMove != null) return;
++        backLayers = true;
++        backScreen = n;
++        backBelow = below;
++        backBase = n.view.getTranslationX();
++        backBelowBase = below.view.getTranslationX();
++        backScrim = scrim;
++        if (scrim != null) backScrimAlpha = scrim.view.getAlpha();
++        backOutline = n.view.getOutlineProvider();
++        backClip = n.view.getClipToOutline();
++        n.view.setOutlineProvider(new android.view.ViewOutlineProvider() {
++            @Override
++            public void getOutline(View v, android.graphics.Outline outline) {
++                outline.setRoundRect(0, 0, v.getWidth(), v.getHeight(), backCorner);
++            }
++        });
++        n.view.setClipToOutline(true);
++        placeBack(backDrag(backProgress));
+     }
+ 
+     /** Answers backStarted with screen n, or null when back goes elsewhere first. */
+@@ -2909,14 +2963,102 @@ public class NsgoView extends FrameLayout implements NsgoEngine.Listener {
+     /** Moves the screen a fraction t of the way off, and the one below from a quarter of the way in. */
+     private void placeBack(float t) {
+         backAt = t;
++        if (backLayers) {
++            placeLayers(t);
++            return;
++        }
+         float w = backScreen.view.getWidth();
+         if (getLayoutDirection() == LAYOUT_DIRECTION_RTL) w = -w;
+         backScreen.view.setTranslationX(backBase + t * w);
+         if (backBelow != null) backBelow.view.setTranslationX(backBelowBase - (1 - t) * w * 0.25f);
+     }
+ 
++    /**
++     * Places the app's own layers a fraction t into a back gesture, as
++     * Android's predictive back draws a page going back: the layer shrinks
++     * to 90%, its corners round to 32dp and it leans away from the edge the
++     * gesture comes from, by a twentieth of its width less 8dp, over the
++     * layer below, which comes back from where it lies to its place.
++     */
++    private void placeLayers(float t) {
++        View v = backScreen.view;
++        float lean = backLean(v);
++        v.setScaleX(1 - 0.1f * t);
++        v.setScaleY(1 - 0.1f * t);
++        v.setTranslationX(backBase + t * lean);
++        backCorner = 32 * density * t;
++        v.invalidateOutline();
++        backBelow.view.setTranslationX(backBelowBase * (1 - t));
++        if (backScrim != null) backScrim.view.setAlpha(backScrimAlpha * (1 - t));
++    }
++
++    /** How far layer v leans in a back gesture, away from the edge it comes from. */
++    private float backLean(View v) {
++        float reach = Math.max(v.getWidth() / 20f - 8 * density, 0);
++        return backFromRight ? -reach : reach;
++    }
++
++    /**
++     * Ends a back gesture of the app's own layers: back in place, or, as
++     * Android's own pages go, the layer goes on from where the gesture left
++     * it, shrinking a little more and leaning on as it fades out, the one
++     * below settles in place, and the app hears back, which takes the layer
++     * away. Either way the layer gets its own scale, outline and opacity
++     * again.
++     */
++    private void settleLayers(boolean pop) {
++        Node screen = backScreen, below = backBelow;
++        View v = screen.view;
++        float from = v.getTranslationX(), belowFrom = below.view.getTranslationX(), scale = v.getScaleX();
++        float lean = backLean(v);
++        float at = backAt;
++        Node scrim = backScrim;
++        float scrimFrom = scrim != null ? scrim.view.getAlpha() : 0;
++        ValueAnimator a = ValueAnimator.ofFloat(0, 1);
++        a.setDuration(pop ? 200 : Math.round(200 * Math.max(at, 0.2f)));
++        a.setInterpolator(new DecelerateInterpolator(1.5f));
++        a.addUpdateListener(x -> {
++            float k = (float) x.getAnimatedValue();
++            if (pop) {
++                v.setScaleX(scale - 0.05f * k);
++                v.setScaleY(scale - 0.05f * k);
++                v.setTranslationX(from + lean * k);
++                v.setAlpha(1 - k);
++                below.view.setTranslationX(belowFrom * (1 - k));
++                if (scrim != null) scrim.view.setAlpha(scrimFrom * (1 - k));
++            } else {
++                placeLayers(at * (1 - k));
++            }
++        });
++        a.addListener(new android.animation.AnimatorListenerAdapter() {
++            @Override
++            public void onAnimationEnd(android.animation.Animator animation) {
++                backMove = null;
++                backScreen = backBelow = backScrim = null;
++                backLayers = false;
++                v.setScaleX(1);
++                v.setScaleY(1);
++                v.setAlpha(1);
++                v.setOutlineProvider(backOutline);
++                v.setClipToOutline(backClip);
++                backOutline = null;
++                if (pop) {
++                    // Until the app takes it away (BackOptions.Previewed).
++                    v.setVisibility(GONE);
++                    event(Protocol.EVENT_BACK, screen.id, 0, 0, 0, "");
++                }
++            }
++        });
++        backMove = a;
++        a.start();
++    }
++
+     /** Ends the gesture's motion: off, reporting the back, or back in place. */
+     private void settleBack(boolean pop) {
++        if (backLayers) {
++            settleLayers(pop);
++            return;
++        }
+         Node screen = backScreen, below = backBelow;
+         float base = backBase, belowBase = backBelowBase;
+         int belowVisibility = backBelowVisibility;
+@@ -4297,12 +4439,20 @@ public class NsgoView extends FrameLayout implements NsgoEngine.Listener {
+                 break;
+             }
+             case Protocol.ITEM_MENU:
++                // Desktop menus; Go writes no fields.
++                break;
+             case Protocol.ITEM_HISTORY:
+-                // Desktop menus and the web's history; Go writes no fields.
++                backTaken(Protocol.flag(in.readUnsignedByte(), 0));
+                 break;
+-            case Protocol.ITEM_BACK_PREVIEW:
+-                previewBack(n);
++            case Protocol.ITEM_BACK_PREVIEW: {
++                int uncovered = in.readInt(), scrim = in.readInt();
++                if (uncovered != 0) {
++                    previewLayers(n, nodes.get(uncovered), scrim != 0 ? nodes.get(scrim) : null);
++                } else {
++                    previewBack(n);
++                }
+                 break;
++            }
+             case Protocol.ITEM_BACK_UNHANDLED: {
+                 // As the system's back does from API 31: a task's root
+                 // activity goes to the background, keeping the app; any
+-- 
+2.54.0 (Apple Git-157)
+

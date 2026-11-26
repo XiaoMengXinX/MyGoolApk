@@ -44,6 +44,8 @@ git clone https://github.com/XiaoMengXinX/MyGoolApk.git app-nsgo
 # 拉取对应版本的 NSGo 并打上补丁（详见 app-nsgo/patches/nsgo/README.md）
 git clone --depth 1 --branch v0.3.4 https://github.com/nsgo-dev/nsgo.git nsgo
 git -C nsgo am "$PWD"/app-nsgo/patches/nsgo/*.patch
+# 补丁改了 Android 运行时的 Java，构建 Android 前需重编（JDK 17+，Android SDK platform 36、build-tools 36+）
+ANDROID_HOME=~/Library/Android/sdk sh nsgo/internal/platform/android/runtime/build.sh
 ```
 
 ### 运行测试与构建
