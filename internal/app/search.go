@@ -84,7 +84,7 @@ func (a *App) searchPage(cx *core.Scope, keyword string) core.Node {
 	)
 	showSuggestions := core.NewMemo(cx, func() bool {
 		query := strings.TrimSpace(s.input.Get())
-		return query != "" && query != s.submitted.Get().keyword && len(s.suggestions.Get()) > 0
+		return query != "" && query != s.submitted.Get().keyword && (isNumericFeedID(query) || len(s.suggestions.Get()) > 0)
 	})
 	body := core.Dynamic(func(cx *core.Scope) core.Node {
 		search := s.submitted.Get()
@@ -219,18 +219,31 @@ func (s *searchPageState) search(raw string, kind backend.SearchKind) {
 	s.a.keepSearches(prependUnique(s.a.searchHistory.GetUntracked(), q, 10))
 }
 
+func isNumericFeedID(query string) bool {
+	return query != "" && strings.Trim(query, "0123456789") == ""
+}
+
 func (s *searchPageState) suggestionList(cx *core.Scope) core.Node {
 	return core.Scroll{Style: fill, Behavior: core.ScrollBehavior{KeyboardShouldPersistTaps: core.KeyboardTapsHandled}, Children: []core.Node{core.Dynamic(func(cx *core.Scope) core.Node {
 		var rows []core.Node
+		add := func(title string, open func()) {
+			rows = append(rows, tap(title, open, core.Style{Direction: core.Row, Height: core.Pt(56), Padding: core.Symmetric(0, 16), Gap: 16, AlignItems: core.AlignCenter}, "",
+				icon(&symbols.Search, 24, "text-on-surface-variant"),
+				core.Text{Content: title, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 400)}))
+		}
+		if id := strings.TrimSpace(s.input.Get()); isNumericFeedID(id) {
+			add("动态ID："+id, func() {
+				s.cx.DismissKeyboard()
+				s.a.openFeed(backend.Feed{ID: id})
+			})
+		}
 		for _, item := range s.suggestions.Get() {
 			keyword, user := strings.CutPrefix(item, "搜索用户：")
 			kind := backend.SearchAll
 			if user {
 				kind = backend.SearchUsers
 			}
-			rows = append(rows, tap(item, func() { s.search(keyword, kind) }, core.Style{Direction: core.Row, Height: core.Pt(56), Padding: core.Symmetric(0, 16), Gap: 16, AlignItems: core.AlignCenter}, "",
-				icon(&symbols.Search, 24, "text-on-surface-variant"),
-				core.Text{Content: item, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 400)}))
+			add(item, func() { s.search(keyword, kind) })
 		}
 		return column(core.Style{}, "", rows...)
 	})}}

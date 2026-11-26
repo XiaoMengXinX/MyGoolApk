@@ -267,6 +267,24 @@ func TestSearchShowsResults(t *testing.T) {
 	}
 }
 
+func TestSearchNumericSuggestionOpensFeed(t *testing.T) {
+	app := start(t, newFakeBackend())
+	app.Press("role:button 搜索")
+	app.Type("label:搜索", "70035819x")
+	settle(app)
+	if shows(app, "role:button 动态ID：70035819x") {
+		t.Fatal("a mixed keyword offered a feed ID shortcut")
+	}
+	app.Press("role:button 清除")
+	app.Type("label:搜索", "70035819")
+	settle(app)
+	app.Press("role:button 动态ID：70035819")
+	settle(app)
+	if !shows(app, "text:帖子 70035819") {
+		t.Fatalf("the numeric shortcut did not open the post:\n%s", app.Dump())
+	}
+}
+
 func TestSearchQuestionFiltersIncludeAnswers(t *testing.T) {
 	app := start(t, newFakeBackend())
 	app.Press("role:button 搜索")
