@@ -2,6 +2,7 @@ package app
 
 import (
 	"path/filepath"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/ui"
@@ -66,6 +67,12 @@ type App struct {
 	history       *core.Signal[[]historyEntry]
 	topics        *topicHome
 	loginOpening  bool
+	// lastPress is the bar's last press on a destination, which a second
+	// press soon after makes a double press.
+	lastPress struct {
+		dest int
+		at   time.Time
+	}
 
 	home, digital, discovery *tabGroup
 }

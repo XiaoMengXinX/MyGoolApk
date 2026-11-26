@@ -157,20 +157,33 @@ func (a *App) navItem(i int, d destination, rail bool) core.Node {
 	})
 }
 
-// selectDestination shows destination i, or its first row when it is shown.
-// Pages over the destinations of a medium window go, as the rail beside them
-// leads elsewhere.
+// selectDestination shows destination i, or its first row when it is shown,
+// or on a double press the tab it opens on. Pages over the destinations of a
+// medium window go, as the rail beside them leads elsewhere.
 func (a *App) selectDestination(i int) {
 	if a.size.GetUntracked() == medium {
 		a.nav.Clear()
 	}
+	now := time.Now()
+	again := a.lastPress.dest == i && now.Sub(a.lastPress.at) < doublePress
+	a.lastPress.dest, a.lastPress.at = i, now
 	if a.tab.GetUntracked() == i {
+		// A second press soon after goes back to the tab the destination
+		// opens on.
+		if g := a.destinationTabs(i); again && g != nil {
+			g.home()
+			return
+		}
 		a.scrollDestinationToTop(i)
 		return
 	}
 	a.tab.Set(i)
 	a.refreshUnread()
 }
+
+// doublePress is how soon a second press on a destination of the bar makes
+// a double press.
+const doublePress = 350 * time.Millisecond
 
 // scrollDestinationToTop shows the first row of the destination's list: the
 // bar's tap on the destination already shown.

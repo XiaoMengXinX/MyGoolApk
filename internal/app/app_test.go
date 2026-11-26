@@ -443,3 +443,25 @@ func TestWideWindowShowsThePostBesideTheList(t *testing.T) {
 		t.Fatalf("the post is not beside the list:\n%s", app.Dump())
 	}
 }
+
+func TestDoublePressingTheBarGoesBackToTheHeadlineTab(t *testing.T) {
+	app := start(t, newFakeBackend())
+	// The headline tab is the home's third page.
+	page := func() int {
+		v := app.Find("id:pages >> nth=0")
+		return int(v.Offset.X/v.Frame.Size.Width + 0.5)
+	}
+	app.Press("role:tab 热榜")
+	app.FastForward(time.Second)
+	settle(app)
+	if page() == headlineTab {
+		t.Fatal("the hot tab's press left the headline tab in sight")
+	}
+	app.Press("role:tab 首页")
+	app.Press("role:tab 首页")
+	app.FastForward(time.Second)
+	settle(app)
+	if got := page(); got != headlineTab {
+		t.Errorf("a double press on 首页 shows page %d, want the headline tab's %d", got, headlineTab)
+	}
+}

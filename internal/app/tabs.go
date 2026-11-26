@@ -96,6 +96,8 @@ type tabGroup struct {
 	tabRefs  []*core.Ref
 	// jump shows page i, as the strip's taps and the back key do.
 	jump func(i int, animated bool)
+	// first is the tab the group opens on.
+	first int
 }
 
 // scrollToTop shows the first row of the selected tab.
@@ -121,6 +123,12 @@ func (g *tabGroup) refresh() {
 	}
 }
 
+// home shows the tab the group opens on, at its first row.
+func (g *tabGroup) home() {
+	g.selectTab(g.first)
+	g.scrollToTop()
+}
+
 // select shows tab i.
 func (g *tabGroup) selectTab(i int) {
 	if g.selected.GetUntracked() != i && g.jump != nil {
@@ -135,6 +143,7 @@ func (a *App) newTabGroup(cx *core.Scope, tabs []pageTab, selected int) *tabGrou
 		a: a, tabs: tabs,
 		lists:    make([]*pageList, len(tabs)),
 		selected: core.NewSignal(cx, selected),
+		first:    selected,
 		pos:      core.NewSignal(cx, float32(selected)),
 		width:    core.NewSignal(cx, core.Points(0)),
 		tabRefs:  make([]*core.Ref, len(tabs)),
