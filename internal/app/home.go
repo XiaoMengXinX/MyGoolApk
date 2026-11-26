@@ -65,7 +65,9 @@ func (a *App) rootTopBar(title string) core.Node {
 func (a *App) underStatusBar(children ...core.Node) core.Node {
 	env := a.cx.Env()
 	return core.View{Class: "bg-background", Style: core.Style{FlexShrink: 0},
-		StyleFunc: func() core.Style { return core.Style{Padding: core.Edges{Top: env.SafeArea().Top}} },
+		// A desktop's window has no status bar: the bar keeps 8dp from the title
+		// bar, which the 56dp row's 4dp alone leaves too close.
+		StyleFunc: func() core.Style { return core.Style{Padding: core.Edges{Top: max(env.SafeArea().Top, 8)}} },
 		Children:  children}
 }
 
