@@ -24,10 +24,16 @@ func tap(label string, fn func(), s core.Style, class string, children ...core.N
 var hoverable bool
 
 // pressable gives a view that takes presses the feedback of Material 3:
-// Android's ripple, and where a pointer hovers, the pointing hand and an
-// on-surface state layer at 8% over the view while hovered.
+// Android's ripple, and hoverFeedback.
 func pressable(v core.View) core.View {
 	v.Android.Ripple = &core.Ripple{}
+	return hoverFeedback(v)
+}
+
+// hoverFeedback gives a view that takes presses, where a pointer hovers, the
+// pointing hand and an on-surface state layer at 8% over the view while
+// hovered.
+func hoverFeedback(v core.View) core.View {
 	if !hoverable {
 		return v
 	}
