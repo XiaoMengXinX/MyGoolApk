@@ -96,7 +96,8 @@ func (a *App) rail(dests []destination) core.Node {
 	}
 	return core.View{
 		Role: core.RoleTabList, Label: "酷安", Class: "bg-surface-container",
-		Style: core.Style{Width: core.Pt(railWidth), FlexShrink: 0, Padding: core.Edges{Top: 16}, Gap: 12, AlignItems: core.AlignCenter,
+		// Its items are railWidth wide; the safe area at its side widens it.
+		Style: core.Style{FlexShrink: 0, Padding: core.Edges{Top: 16}, Gap: 12, AlignItems: core.AlignCenter,
 			PaddingEnv: core.EnvEdges{Top: core.EnvSafeArea, Left: core.EnvSafeArea, Bottom: core.EnvSafeArea}},
 		Children: items,
 	}
