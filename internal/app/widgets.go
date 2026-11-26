@@ -139,17 +139,11 @@ func filterChip(name string, on func() bool, fn func()) core.View {
 		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 		ClassFunc: func() string {
 			if on() {
-				return "bg-secondary-container"
+				return "bg-secondary-container border-transparent"
 			}
 			return "border-outline-variant"
 		},
-		StyleFunc: func() core.Style {
-			if on() {
-				return core.Style{}
-			}
-			return core.Style{BorderWidth: 1}
-		},
-		Style: core.Style{Height: core.Pt(32), Padding: core.Symmetric(0, 12), CornerRadius: 8, AlignItems: core.AlignCenter,
+		Style: core.Style{Height: core.Pt(32), Padding: core.Symmetric(0, 12), BorderWidth: 1, CornerRadius: 8, AlignItems: core.AlignCenter,
 			JustifyContent: core.JustifyCenter, Overflow: core.Hidden},
 		Children: []core.Node{core.Text{Content: name, Style: textStyle(textSecondary, 500), ClassFunc: func() string {
 			if on() {
