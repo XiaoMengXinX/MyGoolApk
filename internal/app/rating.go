@@ -9,15 +9,23 @@ import (
 	"app/internal/backend"
 )
 
-// stars are five stars, the first n of them filled.
-func stars(n int, size core.Points) core.Node {
+// stars shows a rating out of five, with a partial fill for fractional scores.
+func stars(n float64, size core.Points) core.Node {
 	kids := make([]core.Node, 5)
 	for i := range kids {
-		class := "text-outline-variant"
-		if i < n {
-			class = "text-star"
+		amount := n - float64(i)
+		switch {
+		case amount >= 1:
+			kids[i] = icon(&symbols.Star, size, "text-star")
+		case amount <= 0:
+			kids[i] = icon(&symbols.Star, size, "text-outline-variant")
+		default:
+			kids[i] = core.View{Style: core.Style{Width: core.Pt(size), Height: core.Pt(size)}, Children: []core.Node{
+				icon(&symbols.Star, size, "text-outline-variant"),
+				core.View{Style: core.Style{Position: core.Absolute, Left: core.Pt(0), Top: core.Pt(0), Width: core.Pt(size * core.Points(amount)), Height: core.Pt(size), Overflow: core.Hidden},
+					Children: []core.Node{icon(&symbols.Star, size, "text-star")}},
+			}}
 		}
-		kids[i] = icon(&symbols.Star, size, class)
 	}
 	return row(core.Style{Gap: 2, AlignItems: core.AlignCenter}, "", kids...)
 }
@@ -35,7 +43,7 @@ func ratingScore(r *backend.FeedRating, size core.Points) core.Node {
 	if r.Owner {
 		kids = append(kids, ratingTag("机主评分", "bg-tertiary-container text-on-tertiary-container"))
 	}
-	kids = append(kids, stars(r.Stars, size), label(r.Word, textCaption, 500, "text-on-surface-variant"))
+	kids = append(kids, stars(float64(r.Stars), size), label(r.Word, textCaption, 500, "text-on-surface-variant"))
 	return row(core.Style{Gap: 8, AlignItems: core.AlignCenter}, "", kids...)
 }
 
@@ -82,7 +90,7 @@ func (a *App) ratingDetail(cx *core.Scope, f backend.Feed) core.Node {
 	line := func(name string, n int, word string, size core.Points) core.Node {
 		return row(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
 			core.Text{Content: name, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textSecondary, 400).Merge(core.Style{Width: core.Pt(64)})},
-			stars(n, size), label(word, textCaption, 400, "text-on-surface-variant"))
+			stars(float64(n), size), label(word, textCaption, 400, "text-on-surface-variant"))
 	}
 	scorer := "评分"
 	if r.Owner {

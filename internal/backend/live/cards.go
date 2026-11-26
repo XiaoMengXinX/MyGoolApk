@@ -76,8 +76,19 @@ func cardFromObject(o map[string]any) *backend.Card {
 	switch kind {
 	case backend.CardList, backend.CardConfigs, backend.CardAvatars, backend.CardPairs, backend.CardRanking:
 		c.URL, c.More = firstAPIString(o, "url"), firstAPIString(o, "subTitle")
+		if strings.HasPrefix(c.URL, "tab://") {
+			c.More = firstAPIString(o, "description", "subTitle")
+		}
 	}
-	for _, e := range apiObjects(o, "entities") {
+	entities := apiObjects(o, "entities")
+	if kind == backend.CardList && (c.URL == "tab://product" || c.URL == "tab://feedTopic") {
+		c.Results = entriesFromObjects(entities)
+		if len(c.Results) == 0 {
+			return nil
+		}
+		return c
+	}
+	for _, e := range entities {
 		switch item, ok := cardItem(e); {
 		case kind == backend.CardConfigs:
 			// A version has no entity type: its name, price and page.
@@ -167,7 +178,7 @@ func cardItem(e map[string]any) (backend.CardItem, bool) {
 		} else if n := firstAPIString(e, "follow_num_txt"); n != "" && n != "0" {
 			it.Subtitle = n + "人关注"
 		}
-	case "user":
+	case "user", "contacts":
 		it.Title = firstAPIString(e, "displayUsername", "username")
 		it.Pic = firstAPIString(e, "userAvatar", "avatar")
 		it.Round = true
@@ -176,6 +187,13 @@ func cardItem(e map[string]any) (backend.CardItem, bool) {
 		}
 		if n := firstAPIString(e, "fans"); n != "" && n != "0" {
 			it.Subtitle = n + "粉丝"
+		}
+	case "dyh":
+		it.Title = firstAPIString(e, "title")
+		it.Pic = firstAPIString(e, "logo")
+		it.Subtitle = firstAPIString(e, "description")
+		if id := apiID(e); id != "" {
+			it.URL = "/dyh/" + id
 		}
 	case "feed":
 		f := feedFromObject(e)

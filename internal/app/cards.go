@@ -17,6 +17,8 @@ import (
 type pageList struct {
 	p      *pager[backend.PageEntry]
 	chosen *core.Signal[int]
+	// openCardTitle handles links that belong to the page holding this list.
+	openCardTitle func(backend.CardItem)
 	// onChoose, when set, hears the chosen item, as the follow tab keeps it.
 	onChoose func(i int)
 
@@ -68,9 +70,13 @@ func (a *App) newPageList(cx *core.Scope, url, title string, head []backend.Page
 		}
 		return r.Entries, r.HasMore, err
 	}, entryKey)
+	a.trackPageList(cx, l)
+	return l
+}
+
+func (a *App) trackPageList(cx *core.Scope, l *pageList) {
 	a.lists = append(a.lists, l)
 	cx.Cleanup(func() { a.lists = slices.DeleteFunc(a.lists, func(x *pageList) bool { return x == l }) })
-	return l
 }
 
 // belowHead leaves out of a chosen item's rows the cards that lead the list
@@ -189,6 +195,13 @@ func (a *App) cardView(cx *core.Scope, get func() backend.PageEntry, l *pageList
 		case backend.CardChips:
 			body = a.chipsCard(c)
 		case backend.CardList:
+			if len(c.Results) > 0 {
+				open := a.openCardItem
+				if l != nil && l.openCardTitle != nil {
+					open = l.openCardTitle
+				}
+				return a.searchPreview(cx, c, open)
+			}
 			body = a.listCard(cx, c)
 		case backend.CardAvatars:
 			return a.avatarsCard(cx, c)
@@ -221,7 +234,11 @@ func (a *App) cardView(cx *core.Scope, get func() backend.PageEntry, l *pageList
 		switch {
 		case c.Title != "" && c.URL != "":
 			// The title leads to all of what the card shows a few of.
-			parts = append(parts, tap(c.Title, func() { a.openCardItem(backend.CardItem{Title: c.Title, URL: c.URL}) },
+			open := a.openCardItem
+			if l != nil && l.openCardTitle != nil {
+				open = l.openCardTitle
+			}
+			parts = append(parts, tap(c.Title, func() { open(backend.CardItem{Title: c.Title, URL: c.URL}) },
 				core.Style{Direction: core.Row, Padding: core.Edges{Top: 12, Right: 12, Left: 16}, Gap: 4, AlignItems: core.AlignCenter}, "",
 				core.Text{Content: c.Title, MaxLines: 1, Class: "text-on-surface", Style: fill.Merge(textStyle(textBody, 600))},
 				label(c.More, textSecondary, 400, "text-on-surface-variant"),

@@ -78,6 +78,9 @@ type tabGroup struct {
 	a     *App
 	tabs  []pageTab
 	lists []*pageList
+	// A search supplies its own lists and starts them when selected.
+	newList  func(int) *pageList
+	listView func(*core.Scope, int, listSpec) core.Node
 	// pushed says the group is on a page pushed over the shell.
 	pushed bool
 	// head, when set, is above the tabs and scrolls away with the shown list.
@@ -108,6 +111,7 @@ func (g *tabGroup) scrollToTop() {
 func (g *tabGroup) selectTab(i int) {
 	if g.selected.GetUntracked() != i && g.jump != nil {
 		g.selected.Set(i)
+		g.tabRefs[i].Reveal(core.RevealOptions{})
 		g.jump(i, true)
 	}
 }
@@ -130,6 +134,11 @@ func (a *App) newTabGroup(cx *core.Scope, tabs []pageTab, selected int) *tabGrou
 // list returns the list of tab i, made when first shown.
 func (g *tabGroup) list(cx *core.Scope, i int) *pageList {
 	if l := g.lists[i]; l != nil {
+		return l
+	}
+	if g.newList != nil {
+		l := g.newList(i)
+		g.lists[i] = l
 		return l
 	}
 	a, tab := g.a, g.tabs[i]
@@ -194,8 +203,19 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 						return topics(cx)
 					}
 					l, spec := g.list(cx, i), listSpec{pushed: g.pushed}
+					if g.newList != nil {
+						spec.manualStart = true
+						cx.Effect(func() {
+							if g.selected.Get() == i {
+								l.p.ensure()
+							}
+						})
+					}
 					if over != nil {
 						spec = over.under(cx, i, spec, func() { l.p.items.Get(); l.p.loaded.Get() })
+					}
+					if g.listView != nil {
+						return g.listView(cx, i, spec)
 					}
 					return g.a.entryList(cx, l, spec)
 				},
@@ -251,6 +271,7 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 				placed = true
 				g.width.Set(w)
 				jump(g.selected.GetUntracked(), false)
+				g.tabRefs[g.selected.GetUntracked()].Reveal(core.RevealOptions{})
 			}
 		},
 		OnScrollDragStart: func(core.ScrollEvent) { glide = -1 }, // a drag takes over a glide
@@ -285,15 +306,15 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 		Children: []core.Node{row},
 	}
 	if over != nil {
-		return over.view(g.head, g.strip(cx, jump), pager)
+		return over.view(g.head, g.strip(cx), pager)
 	}
-	return column(fill, "", g.strip(cx, jump), pager)
+	return column(fill, "", g.strip(cx), pager)
 }
 
 // strip is MD3 primary tabs: each as wide as its label, the selected one in
 // primary, over an outline-variant rule. The 3dp indicator slides between
 // the tabs as the pages do. The strip scrolls when the tabs do not fit.
-func (g *tabGroup) strip(cx *core.Scope, jump func(i int, animated bool)) core.Node {
+func (g *tabGroup) strip(cx *core.Scope) core.Node {
 	// centers are the middles of the tabs in the strip, known once laid out.
 	centers := make([]core.Points, len(g.tabs))
 	laid := core.NewSignal(cx, 0)
@@ -311,11 +332,10 @@ func (g *tabGroup) strip(cx *core.Scope, jump func(i int, animated bool)) core.N
 			},
 			OnPress: func(core.PressEvent) {
 				if g.selected.GetUntracked() == i {
-					g.list(cx, i).p.list.ScrollTo(core.Point{}, true)
+					g.scrollToTop()
 					return
 				}
-				g.selected.Set(i)
-				jump(i, true)
+				g.selectTab(i)
 			},
 			Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 			Children: []core.Node{

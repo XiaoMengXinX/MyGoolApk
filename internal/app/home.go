@@ -34,7 +34,7 @@ func (a *App) homeTopBar(cx *core.Scope) core.Node {
 		tap("搜索", a.openSearch, fill.Merge(core.Style{Direction: core.Row, Height: core.Pt(48), CornerRadius: 24, Padding: core.Symmetric(0, 16),
 			Gap: 12, AlignItems: core.AlignCenter, Overflow: core.Hidden}), "bg-surface-container-high",
 			icon(&symbols.Search, 24, "text-on-surface-variant"),
-			core.Text{Content: "搜索动态和用户", MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textBody, 400)}),
+			core.Text{Content: "搜索酷安", MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textBody, 400)}),
 		iconAction(&symbols.Add, "发帖", a.openCompose),
 	)
 }

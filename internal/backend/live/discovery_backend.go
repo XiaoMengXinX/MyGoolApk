@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -40,41 +41,93 @@ func (b *coolapkBackend) Search(ctx context.Context, q backend.SearchQuery) (bac
 		}
 		return backend.SearchPage{HotSearches: hot}, nil
 	}
-	searchType := "user"
-	if q.Kind == backend.SearchFeeds {
-		searchType = "feed"
+	searchType := searchTypes[q.Kind]
+	feedType, sort := q.FeedType, q.Sort
+	if feedType == "" {
+		feedType = "all"
 	}
-	key := "search:" + searchType + ":" + q.Keyword
+	if sort == "" {
+		sort = "default"
+	}
+	key := "search:" + searchType + ":" + feedType + ":" + sort + ":" + q.City + ":" + q.Keyword
 	cursor := b.cursor(key, q.Page)
-	objects, err := listObjects(b.client.SearchWithCtx(ctx, coolapk.SearchRequest{
-		SearchValue: q.Keyword,
-		Type:        searchType,
-		FeedType:    "all",
-		Sort:        "default",
-		Page:        q.Page,
-		FirstItem:   cursor.first,
-		LastItem:    cursor.last,
-	}))
+	negotiable := q.Kind == backend.SearchTrades && sort == backend.SearchTradeNegotiable
+	if negotiable {
+		sort = "default"
+	}
+	params := map[string]any{
+		"type": searchType, "feedType": feedType, "sort": sort, "searchValue": q.Keyword,
+		"page": q.Page, "showAnonymous": -1, "isStrict": 0,
+	}
+	if sort == "none" {
+		params["isStrict"] = 1
+	}
+	if q.City != "" {
+		params["city_code"] = q.City
+	}
+	if cursor.first != "" {
+		params["firstItem"] = cursor.first
+	}
+	if cursor.last != "" {
+		params["lastItem"] = cursor.last
+	}
+	objects, err := listObjects(b.client.GetRawWithCtx(ctx, "/search", params))
 	if err != nil {
 		return backend.SearchPage{}, err
 	}
-	b.storeCursor(key, q.Page, feedCursor(objects))
-	if q.Kind == backend.SearchFeeds {
-		return backend.SearchPage{Feeds: feedsFromObjects(objects), HasMore: len(objects) > 0}, nil
+	objects = searchObjects(objects)
+	cursor = feedCursor(objects)
+	if q.Kind == backend.SearchAll {
+		cursor = feedEntityCursor(objects)
 	}
-	users := make([]backend.Author, 0, len(objects))
-	seen := make(map[string]bool)
+	b.storeCursor(key, q.Page, cursor)
+	more := len(objects) > 0
+	if negotiable {
+		// Imported listings can say 价格面议 even when the server's price filter omits them.
+		objects = slices.DeleteFunc(objects, func(object map[string]any) bool {
+			return firstAPIString(apiObject(object, "ershou_info"), "product_price") != "价格面议"
+		})
+	}
+	entries := entriesFromObjects(objects)
+	return backend.SearchPage{Entries: entries, HasMore: len(entries) > 0 || negotiable && more}, nil
+}
+
+var searchTypes = [...]string{
+	backend.SearchAll:       "all",
+	backend.SearchProducts:  "product",
+	backend.SearchFeeds:     "feed",
+	backend.SearchTopics:    "feedTopic",
+	backend.SearchUsers:     "user",
+	backend.SearchTrades:    "ershou",
+	backend.SearchQuestions: "ask",
+	backend.SearchChannels:  "dyh",
+}
+
+// searchObjects keeps community results, including the previews in 综合.
+func searchObjects(objects []map[string]any) []map[string]any {
+	var results []map[string]any
 	for _, object := range objects {
-		if firstAPIString(object, "entityType") != "user" && firstAPIString(object, "entityType") != "contacts" {
-			continue
-		}
-		author := authorFromObject(object)
-		if author.ID != "" && !seen[author.ID] {
-			seen[author.ID] = true
-			users = append(users, author)
+		switch firstAPIString(object, "entityType") {
+		case "feed", "feed_reply", "product", "topic", "user", "contacts", "dyh":
+			results = append(results, object)
+		case "card":
+			switch firstAPIString(object, "entityTemplate") {
+			case "listCard":
+				switch firstAPIString(object, "url") {
+				case "tab://product", "tab://feedTopic", "tab://user", "tab://feed", "tab://ershou", "tab://dyh":
+					var items []any
+					for _, child := range searchObjects(apiObjects(object, "entities")) {
+						items = append(items, child)
+					}
+					object["entities"] = items
+					results = append(results, object)
+				}
+			case "feedListCard":
+				results = append(results, searchObjects(apiObjects(object, "entities"))...)
+			}
 		}
 	}
-	return backend.SearchPage{Users: users, HasMore: len(objects) > 0}, nil
+	return results
 }
 
 func (b *coolapkBackend) SearchSuggestions(ctx context.Context, keyword string) ([]string, error) {
@@ -241,6 +294,20 @@ func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (
 	if strings.HasPrefix(q.URL, backend.CollectionURLPrefix) {
 		return b.myList(ctx, q)
 	}
+	if id, ok := strings.CutPrefix(q.URL, backend.ChannelURLPrefix); ok {
+		key := "channel:" + id
+		cursor := b.cursor(key, q.Page)
+		params := map[string]any{"dyhId": id, "page": q.Page}
+		if cursor.last != "" {
+			params["lastItem"] = cursor.last
+		}
+		objects, err := listObjects(b.client.GetRawWithCtx(ctx, "/dyhArticle/list", params))
+		if err != nil {
+			return backend.PageEntriesResult{}, err
+		}
+		b.storeCursor(key, q.Page, feedCursor(objects))
+		return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: len(objects) > 0}, nil
+	}
 	if q.URL == backend.TradeBrandsURL {
 		return b.tradeBrands(ctx, q.Page)
 	}
@@ -344,6 +411,7 @@ func entriesFromObjects(objects []map[string]any) []backend.PageEntry {
 					Kind: backend.EntryProduct, ID: id, Title: firstAPIString(o, "title"),
 					LogoURL:  normalizeCoolapkImage(firstAPIString(o, "logo")),
 					Subtitle: productSubtitle(o), Hot: firstAPIString(o, "hot_num_txt"),
+					Discussions: firstAPIString(o, "feed_comment_num_txt"), Score: searchScore(o, "owner_star_average_score", "star_average_score"),
 				})
 			}
 			return
@@ -356,7 +424,7 @@ func entriesFromObjects(objects []map[string]any) []backend.PageEntry {
 				})
 			}
 			return
-		case "user":
+		case "user", "contacts":
 			// A person of a ranking (#/member/rankList, #/user/statList).
 			if u := authorFromObject(o); u.ID != "" && !seen["user:"+u.ID] {
 				seen["user:"+u.ID] = true
@@ -366,13 +434,24 @@ func entriesFromObjects(objects []map[string]any) []backend.PageEntry {
 				})
 			}
 			return
+		case "dyh":
+			if id := apiID(o); id != "" && !seen["dyh:"+id] {
+				seen["dyh:"+id] = true
+				entries = append(entries, backend.PageEntry{
+					Kind: backend.EntryCategory, ID: "dyh:" + id, Title: firstAPIString(o, "title"),
+					LogoURL: normalizeCoolapkImage(firstAPIString(o, "logo")), Subtitle: firstAPIString(o, "description"),
+					URL: backend.ChannelURLPrefix + id,
+				})
+			}
+			return
 		case "topic":
 			if title := firstAPIString(o, "title"); title != "" && !seen["topic:"+title] {
 				seen["topic:"+title] = true
 				entries = append(entries, backend.PageEntry{
 					Kind: backend.EntryLink, ID: "topic:" + title, Title: title, LogoURL: normalizeCoolapkImage(firstAPIString(o, "logo")),
 					Subtitle: joinNonEmpty("  ", countText(firstAPIString(o, "hot_num_txt"), "热度"), countText(firstAPIString(o, "follownum"), "关注")),
-					URL:      "/t/" + title,
+					Hot:      firstAPIString(o, "hot_num_txt"), Discussions: firstAPIString(o, "commentnum_txt"), Score: searchScore(o, "star_average_score"),
+					URL: "/t/" + title,
 				})
 			}
 			return
@@ -455,6 +534,19 @@ func productSubtitle(o map[string]any) string {
 		parts = append(parts, follows+"人关注")
 	}
 	return strings.Join(parts, "  ")
+}
+
+func searchScore(o map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value := firstAPIString(o, key)
+		if score, err := strconv.ParseFloat(value, 64); err == nil && score > 0 {
+			if score == 10 {
+				return "10"
+			}
+			return value
+		}
+	}
+	return ""
 }
 
 // productCount is the size of a product category, "" when it is not known.

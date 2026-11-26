@@ -49,7 +49,27 @@ func (b *fakeBackend) Search(_ context.Context, q backend.SearchQuery) (backend.
 	if q.Keyword == "" {
 		return backend.SearchPage{HotSearches: []string{"新机资讯"}}, nil
 	}
-	return backend.SearchPage{Feeds: []backend.Feed{b.feed}}, nil
+	switch q.Kind {
+	case backend.SearchAll:
+		return backend.SearchPage{Entries: []backend.PageEntry{
+			{Kind: backend.EntryCard, ID: "products", Card: &backend.Card{Kind: backend.CardList, Title: "数码", URL: "tab://product", More: "更多相关数码", Results: []backend.PageEntry{{Kind: backend.EntryProduct, ID: "1", Title: "预览产品", Hot: "1.7万", Discussions: "2400", Score: "8.6"}}}},
+			{Kind: backend.EntryFeed, ID: b.feed.ID, Feed: &b.feed},
+		}}, nil
+	case backend.SearchProducts:
+		return backend.SearchPage{Entries: []backend.PageEntry{{Kind: backend.EntryProduct, ID: "1", Title: "搜索到的手机", Hot: "1.7万", Discussions: "2400", Score: "8.6"}}}, nil
+	case backend.SearchQuestions:
+		question := backend.Feed{ID: "301", Kind: backend.PostQuestion, Title: "相机该怎么选"}
+		answer := backend.Feed{ID: "302", Kind: backend.PostAnswer, Title: "相机该怎么选", Content: "先看拍摄需求"}
+		entries := []backend.PageEntry{}
+		if q.FeedType != "answer" {
+			entries = append(entries, backend.PageEntry{Kind: backend.EntryFeed, ID: question.ID, Feed: &question})
+		}
+		if q.FeedType != "question" {
+			entries = append(entries, backend.PageEntry{Kind: backend.EntryFeed, ID: answer.ID, Feed: &answer})
+		}
+		return backend.SearchPage{Entries: entries}, nil
+	}
+	return backend.SearchPage{}, nil
 }
 func (b *fakeBackend) SearchSuggestions(context.Context, string) ([]string, error) { return nil, nil }
 func (b *fakeBackend) User(_ context.Context, uid string) (backend.UserProfile, error) {
@@ -233,6 +253,40 @@ func TestSearchShowsResults(t *testing.T) {
 	settle(app)
 	if !shows(app, "text:第一条") {
 		t.Fatalf("the results are not shown:\n%s", app.Dump())
+	}
+	if !shows(app, "text:1.7万热度  2400讨论") || !shows(app, "text:8.6") {
+		t.Fatalf("combined search preview metrics are missing:\n%s", app.Dump())
+	}
+	app.Press("role:button 更多相关数码")
+	settle(app)
+	if !shows(app, "text:搜索到的手机") {
+		t.Fatalf("the product group did not switch to its tab:\n%s", app.Dump())
+	}
+	if !shows(app, "text:1.7万热度  2400讨论") || !shows(app, "text:8.6") {
+		t.Fatalf("product search metrics are missing:\n%s", app.Dump())
+	}
+}
+
+func TestSearchQuestionFiltersIncludeAnswers(t *testing.T) {
+	app := start(t, newFakeBackend())
+	app.Press("role:button 搜索")
+	app.Type("label:搜索", "相机")
+	app.Submit("label:搜索")
+	settle(app)
+	app.Press("role:tab 问答 >> nth=1")
+	settle(app)
+	if !shows(app, "text:先看拍摄需求") {
+		t.Fatalf("all Q&A did not show an answer:\n%s", app.Dump())
+	}
+	app.Press("role:button 只看提问")
+	settle(app)
+	if shows(app, "text:先看拍摄需求") {
+		t.Fatal("question-only results still show an answer")
+	}
+	app.Press("role:button 只看回答")
+	settle(app)
+	if !shows(app, "text:先看拍摄需求") {
+		t.Fatalf("answer-only results did not show an answer:\n%s", app.Dump())
 	}
 }
 

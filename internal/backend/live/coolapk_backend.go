@@ -26,7 +26,7 @@ type coolapkBackend struct {
 	productTags map[string]string // product id -> the tag its feed is listed under
 	// configs are the versions of the products shown, by product id: the
 	// product's page tells them, and the card of its list shows them.
-	configs     map[string][]map[string]any
+	configs map[string][]map[string]any
 	// flexURLs are the content-list urls of the pages whose configCard
 	// names one, by the page's url.
 	flexURLs    map[string]string
@@ -384,6 +384,10 @@ func feedFromObject(object map[string]any) backend.Feed {
 	switch feed.Kind {
 	case backend.PostArticle, backend.PostTrade:
 		feed.Blocks = blocksFromObject(object)
+		if feed.Kind == backend.PostTrade && !slices.ContainsFunc(feed.Blocks, func(b backend.Block) bool { return b.Kind == backend.BlockImage }) {
+			feed.Images = imagesFromObject(object)
+			break
+		}
 		if covers := imagesFromURLs(firstAPIString(object, "message_cover"), firstAPIString(object, "pic")); len(covers) > 0 {
 			// pic only repeats the body's first picture for some articles,
 			// whose detail draws it again right below the cover.
@@ -411,7 +415,12 @@ func feedFromObject(object map[string]any) backend.Feed {
 		feed.Title, feed.Rating = "", ratingFromObject(object)
 	}
 	if trade := apiObject(object, "ershou_info"); trade != nil {
-		feed.Price = price(trade, "product_price")
+		value := firstAPIString(trade, "product_price")
+		if amount, err := strconv.ParseFloat(value, 64); err == nil && amount > 0 {
+			feed.Price = "¥" + value
+		} else if value == "价格面议" {
+			feed.Price = value
+		}
 	}
 	if link := firstAPIString(object, "extra_url"); link != "" {
 		feed.Link = &backend.Link{
@@ -499,7 +508,7 @@ func postKindFromAPI(feedType string) backend.PostKind {
 		return backend.PostAnswer
 	case "vote":
 		return backend.PostVote
-	case "trade":
+	case "trade", "ershou":
 		return backend.PostTrade
 	case "rating":
 		return backend.PostRating

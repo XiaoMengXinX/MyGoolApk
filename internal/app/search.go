@@ -12,17 +12,28 @@ import (
 
 const suggestDelay = 250 * time.Millisecond
 
-// searchPageState is one search page: the query, hot searches, suggestions
-// and two result tabs.
+var searchTabs = [...]pageTab{
+	backend.SearchAll:       {Title: "综合", Kind: tabPage},
+	backend.SearchProducts:  {Title: "数码", Kind: tabPage, URL: "tab://product"},
+	backend.SearchFeeds:     {Title: "动态", Kind: tabPage, URL: "tab://feed"},
+	backend.SearchTopics:    {Title: "话题", Kind: tabPage, URL: "tab://feedTopic"},
+	backend.SearchUsers:     {Title: "用户", Kind: tabPage, URL: "tab://user"},
+	backend.SearchTrades:    {Title: "二手", Kind: tabPage, URL: "tab://ershou"},
+	backend.SearchQuestions: {Title: "问答", Kind: tabPage},
+	backend.SearchChannels:  {Title: "看看号", Kind: tabPage, URL: "tab://dyh"},
+}
+
+type searchSubmission struct {
+	keyword string
+	kind    backend.SearchKind
+}
+
 type searchPageState struct {
-	a       *App
-	cx      *core.Scope
-	input   *core.Signal[string]
-	keyword *core.Signal[string]
-	tab     *core.Signal[int]
-	at      *core.Signal[float32] // where between the tabs' pages the scroll is
-	feeds   *pager[backend.Feed]
-	users   *pager[backend.Author]
+	a         *App
+	cx        *core.Scope
+	field     core.Ref
+	input     *core.Signal[string]
+	submitted *core.Signal[searchSubmission]
 
 	hot         *core.Signal[[]string]
 	hotLoading  *core.Signal[bool]
@@ -38,39 +49,28 @@ func (a *App) searchPage(cx *core.Scope, keyword string) core.Node {
 	s := &searchPageState{
 		a: a, cx: cx,
 		input:       core.NewSignal(cx, ""),
-		keyword:     core.NewSignal(cx, ""),
-		tab:         core.NewSignal(cx, 0),
-		at:          core.NewSignal(cx, float32(0)),
+		submitted:   core.NewSignalFunc(cx, searchSubmission{}, nil),
 		hot:         core.NewSignalFunc(cx, []string(nil), nil),
 		hotLoading:  core.NewSignal(cx, false),
 		hotErr:      core.NewSignal(cx, ""),
 		suggestions: core.NewSignalFunc(cx, []string(nil), nil),
 	}
-	s.feeds = newPager(cx, func(ctx context.Context, page int) ([]backend.Feed, bool, error) {
-		r, err := a.backend.Search(ctx, backend.SearchQuery{Keyword: s.keyword.GetUntracked(), Kind: backend.SearchFeeds, Page: page})
-		return r.Feeds, r.HasMore, err
-	}, func(f backend.Feed) string { return f.ID })
-	s.users = newPager(cx, func(ctx context.Context, page int) ([]backend.Author, bool, error) {
-		r, err := a.backend.Search(ctx, backend.SearchQuery{Keyword: s.keyword.GetUntracked(), Kind: backend.SearchUsers, Page: page})
-		return r.Users, r.HasMore, err
-	}, func(u backend.Author) string { return u.ID })
-	s.loadHot()
 	if keyword != "" {
 		s.submit(keyword)
 	}
+	s.loadHot()
 
-	var field core.Ref
 	input := core.Input{
-		Ref:   &field,
-		Value: s.input.Get, Placeholder: "搜索动态和用户", Label: "搜索", AutoFocus: keyword == "",
+		Ref:   &s.field,
+		Value: s.input.Get, Placeholder: "搜索酷安", Label: "搜索", AutoFocus: keyword == "",
 		ReturnKeyType: core.ReturnKeySearch,
-		OnChange:      s.typed, OnSubmit: func(q string) { s.submit(q) },
+		OnChange:      s.typed, OnSubmit: s.submit,
 		Class: "text-on-surface",
 		Style: func() core.Style { st := textStyle(textBody, 400); st.FlexGrow, st.MinWidth = 1, core.Pt(0); return st }(),
 	}
 	bar := a.topBar(
 		iconAction(&symbols.Back, "返回", func() {
-			field.Blur()
+			s.cx.DismissKeyboard()
 			a.nav.Pop()
 		}),
 		row(fill.Merge(core.Style{Height: core.Pt(48), Padding: core.Edges{Right: 4, Left: 20}, Margin: core.Edges{Right: 12}, CornerRadius: 24, AlignItems: core.AlignCenter}), "bg-surface-container-high",
@@ -82,24 +82,58 @@ func (a *App) searchPage(cx *core.Scope, keyword string) core.Node {
 				return iconAction(&symbols.Close, "清除", s.clear)
 			})),
 	)
-	body := core.Dynamic(func(cx *core.Scope) core.Node {
+	showSuggestions := core.NewMemo(cx, func() bool {
 		query := strings.TrimSpace(s.input.Get())
-		switch {
-		case query != "" && query != s.keyword.Get() && len(s.suggestions.Get()) > 0:
-			return s.suggestionList(cx)
-		case s.keyword.Get() == "":
-			return s.discovery(cx)
+		return query != "" && query != s.submitted.Get().keyword && len(s.suggestions.Get()) > 0
+	})
+	body := core.Dynamic(func(cx *core.Scope) core.Node {
+		search := s.submitted.Get()
+		if search.keyword != "" {
+			return s.searchResults(cx, search, showSuggestions.Get)
 		}
-		return column(fill, "", simpleTabs(s.tab, s.at, "动态", "用户"), tabPages(cx, s.tab, s.at, 2, func(cx *core.Scope, i int) core.Node {
-			if i == 0 {
-				return pagerList(cx, s.feeds, listSpec{pushed: true, empty: "没有找到相关动态", emptyHint: "换个关键词试试。", bottom: 24, skeleton: skeletonCard},
-					func(cx *core.Scope, get func() backend.Feed, r core.ListRow) core.Node { return a.feedCard(cx, get) })
-			}
-			return pagerList(cx, s.users, listSpec{pushed: true, empty: "没有找到相关用户", emptyHint: "换个关键词试试。"},
-				func(cx *core.Scope, get func() backend.Author, r core.ListRow) core.Node { return a.personRow(cx, get) })
-		}))
+		return core.Show{When: showSuggestions.Get, Then: s.suggestionList, Else: s.discovery}
 	})
 	return column(fill, "bg-background", bar, body)
+}
+
+func (s *searchPageState) searchResults(cx *core.Scope, search searchSubmission, suggesting func() bool) core.Node {
+	a := s.a
+	selected := int(search.kind)
+	var tabs [len(searchTabs)]searchResultTab
+	for i := range tabs {
+		query := core.NewSignal(cx, backend.SearchQuery{Keyword: search.keyword, Kind: backend.SearchKind(i)})
+		l := &pageList{
+			p: newQueryPager(cx, query.GetUntracked, func(ctx context.Context, q backend.SearchQuery, page int) ([]backend.PageEntry, bool, error) {
+				q.Page = page
+				r, err := a.backend.Search(ctx, q)
+				return r.Entries, r.HasMore, err
+			}, entryKey),
+		}
+		tabs[i] = searchResultTab{query: query, list: l}
+		a.trackPageList(cx, l)
+	}
+	return core.Show{When: suggesting, Then: s.suggestionList, Else: func(cx *core.Scope) core.Node {
+		g := a.newTabGroup(cx, searchTabs[:], selected)
+		g.pushed = true
+		cx.Effect(func() { selected = g.selected.Get() })
+		g.newList = func(i int) *pageList {
+			l := tabs[i].list
+			l.openCardTitle = func(item backend.CardItem) {
+				for i, tab := range searchTabs {
+					if tab.URL != "" && tab.URL == item.URL {
+						g.selectTab(i)
+						return
+					}
+				}
+				a.openCardItem(item)
+			}
+			return l
+		}
+		g.listView = func(cx *core.Scope, i int, spec listSpec) core.Node {
+			return a.searchResultView(cx, tabs[i], spec)
+		}
+		return g.view(cx, nil)
+	}}
 }
 
 func (s *searchPageState) loadHot() {
@@ -121,28 +155,27 @@ func (s *searchPageState) loadHot() {
 // typed asks for suggestions once typing pauses.
 func (s *searchPageState) typed(text string) {
 	s.input.Set(text)
-	if s.stopTimer != nil {
-		s.stopTimer()
-	}
 	query := strings.TrimSpace(text)
-	if query == "" {
-		s.suggestions.Set(nil)
-		s.suggestFor = ""
+	if query == s.suggestFor {
 		return
 	}
+	s.clearSuggestions()
+	if query == "" || query == s.submitted.GetUntracked().keyword {
+		return
+	}
+	s.suggestFor = query
+	gen := s.suggestGen
 	s.stopTimer = s.cx.AfterFunc(suggestDelay, func() {
-		if query == s.keyword.GetUntracked() || query == s.suggestFor {
-			return
-		}
-		s.suggestGen++
-		gen := s.suggestGen
 		background(s.a, func(ctx context.Context) ([]string, error) { return s.a.backend.SearchSuggestions(ctx, query) },
 			func(items []string, err error) {
-				if gen != s.suggestGen || err != nil {
+				if gen != s.suggestGen {
+					return
+				}
+				if err != nil {
+					s.suggestFor = ""
 					return
 				}
 				s.suggestions.Set(items)
-				s.suggestFor = query
 			})
 	})
 }
@@ -150,20 +183,31 @@ func (s *searchPageState) typed(text string) {
 // clear empties the field and shows the hot searches again.
 func (s *searchPageState) clear() {
 	s.input.Set("")
-	s.keyword.Set("")
+	s.submitted.Set(searchSubmission{})
+	s.clearSuggestions()
+}
+
+func (s *searchPageState) clearSuggestions() {
 	s.suggestions.Set(nil)
 	s.suggestFor = ""
 	s.suggestGen++ // drops suggestions still on the way
 	if s.stopTimer != nil {
 		s.stopTimer()
+		s.stopTimer = nil
 	}
 }
 
 func (s *searchPageState) submit(raw string) {
+	s.search(raw, backend.SearchAll)
+}
+
+func (s *searchPageState) search(raw string, kind backend.SearchKind) {
 	q := strings.TrimSpace(raw)
 	if q == "" {
 		return
 	}
+	s.cx.DismissKeyboard()
+	s.clearSuggestions()
 	// A pasted link of the site opens the page it names.
 	if strings.HasPrefix(q, "http://") || strings.HasPrefix(q, "https://") {
 		if t := backend.ResolveLink(q); t.Kind != backend.LinkSearch && s.a.openInApp(t) {
@@ -171,25 +215,25 @@ func (s *searchPageState) submit(raw string) {
 		}
 	}
 	s.input.Set(q)
-	s.keyword.Set(q)
-	s.tab.Set(0)
-	s.suggestions.Set(nil)
-	s.suggestFor = ""
-	s.suggestGen++
+	s.submitted.Set(searchSubmission{keyword: q, kind: kind})
 	s.a.keepSearches(prependUnique(s.a.searchHistory.GetUntracked(), q, 10))
-	s.feeds.reset()
-	s.users.reset()
 }
 
 func (s *searchPageState) suggestionList(cx *core.Scope) core.Node {
-	var rows []core.Node
-	for _, item := range s.suggestions.Get() {
-		item := item
-		rows = append(rows, tap(item, func() { s.submit(item) }, core.Style{Direction: core.Row, Height: core.Pt(56), Padding: core.Symmetric(0, 16), Gap: 16, AlignItems: core.AlignCenter}, "",
-			icon(&symbols.Search, 24, "text-on-surface-variant"),
-			core.Text{Content: item, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 400)}))
-	}
-	return core.Scroll{Style: fill, Behavior: core.ScrollBehavior{KeyboardShouldPersistTaps: core.KeyboardTapsHandled}, Children: []core.Node{column(core.Style{}, "", rows...)}}
+	return core.Scroll{Style: fill, Behavior: core.ScrollBehavior{KeyboardShouldPersistTaps: core.KeyboardTapsHandled}, Children: []core.Node{core.Dynamic(func(cx *core.Scope) core.Node {
+		var rows []core.Node
+		for _, item := range s.suggestions.Get() {
+			keyword, user := strings.CutPrefix(item, "搜索用户：")
+			kind := backend.SearchAll
+			if user {
+				kind = backend.SearchUsers
+			}
+			rows = append(rows, tap(item, func() { s.search(keyword, kind) }, core.Style{Direction: core.Row, Height: core.Pt(56), Padding: core.Symmetric(0, 16), Gap: 16, AlignItems: core.AlignCenter}, "",
+				icon(&symbols.Search, 24, "text-on-surface-variant"),
+				core.Text{Content: item, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 400)}))
+		}
+		return column(core.Style{}, "", rows...)
+	})}}
 }
 
 func (s *searchPageState) discovery(cx *core.Scope) core.Node {

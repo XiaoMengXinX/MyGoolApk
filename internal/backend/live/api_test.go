@@ -51,14 +51,15 @@ func TestFeedKinds(t *testing.T) {
 		{"entityType":"feed","id":3,"feedType":"question","message_title":"问题","question_answer_num":4,"question_follow_num":2},
 		{"entityType":"feed","id":4,"feedType":"answer","message_title":"问题","message":"回答"},
 		{"entityType":"feed","id":5,"feedType":"picture","pic":"http://image.coolapk.com/picture/b@800x1200.jpg","picArr":["http://image.coolapk.com/picture/b@800x1200.jpg"]},
-		{"entityType":"feed","id":6,"feedType":"feed","message":"文字","picArr":["http://image.coolapk.com/feed/c@100x100.jpg"]}
+		{"entityType":"feed","id":6,"feedType":"feed","message":"文字","picArr":["http://image.coolapk.com/feed/c@100x100.jpg"]},
+		{"entityType":"feed","id":7,"feedType":"ershou","title":"二手手机","ershou_info":{"product_price":"价格面议"},"picArr":["http://image.coolapk.com/feed/a.jpg","http://image.coolapk.com/feed/b.jpg"]}
 	]`)
 	objects, err := decodeAPIObjects(data)
 	if err != nil {
 		t.Fatal(err)
 	}
 	feeds := feedsFromObjects(objects)
-	if len(feeds) != 6 {
+	if len(feeds) != 7 {
 		t.Fatalf("got %d feeds", len(feeds))
 	}
 	if f := feeds[0]; f.Kind != backend.PostArticle || f.Cover == nil || f.Cover.Width != 1600 || len(f.Images) != 0 {
@@ -78,6 +79,35 @@ func TestFeedKinds(t *testing.T) {
 	}
 	if f := feeds[5]; f.Kind != backend.PostText || len(f.Images) != 1 {
 		t.Errorf("text = %+v", f)
+	}
+	if f := feeds[6]; f.Kind != backend.PostTrade || f.Price != "价格面议" || len(f.Images) != 2 {
+		t.Errorf("trade = %+v", f)
+	}
+}
+
+func TestSearchKeepsCommunityResults(t *testing.T) {
+	objects, err := decodeAPIObjects(json.RawMessage(`[
+		{"entityType":"card","entityTemplate":"listCard","entityId":"card-app","title":"应用","url":"tab://app","entities":[{"entityType":"apk","id":10,"title":"An app"}]},
+		{"entityType":"card","entityTemplate":"listCard","entityId":"card-product","title":"数码","url":"tab://product","description":"更多相关数码","entities":[{"entityType":"product","id":21,"title":"手机","hot_num_txt":"1.7万","feed_comment_num_txt":"2.4万","owner_star_average_score":"8.6","star_average_score":"7.6"},{"entityType":"apk","id":11,"title":"Another app"}]},
+		{"entityType":"card","entityTemplate":"listCard","entityId":"card-topic","title":"话题","url":"tab://feedTopic","description":"更多相关话题","entities":[{"entityType":"topic","title":"iOS16","hot_num_txt":"7295","commentnum_txt":"10.8万","star_average_score":"6.6"}]},
+		{"entityType":"dyh","entityId":"31","title":"看看号"},
+		{"entityType":"goods","entityId":"41","title":"商品"}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := entriesFromObjects(searchObjects(objects))
+	if len(entries) != 3 {
+		t.Fatalf("got %d community results, want 3", len(entries))
+	}
+	if c := entries[0].Card; c == nil || c.URL != "tab://product" || c.More != "更多相关数码" || len(c.Results) != 1 || c.Results[0].ID != "21" || c.Results[0].Hot != "1.7万" || c.Results[0].Discussions != "2.4万" || c.Results[0].Score != "8.6" {
+		t.Errorf("product preview = %+v", c)
+	}
+	if c := entries[1].Card; c == nil || len(c.Results) != 1 || c.Results[0].URL != "/t/iOS16" || c.Results[0].Hot != "7295" || c.Results[0].Discussions != "10.8万" || c.Results[0].Score != "6.6" {
+		t.Errorf("topic preview = %+v", c)
+	}
+	if c := entries[2]; c.Title != "看看号" || c.URL != backend.ChannelURLPrefix+"31" {
+		t.Errorf("channel = %+v", c)
 	}
 }
 

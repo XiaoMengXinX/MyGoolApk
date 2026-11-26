@@ -121,6 +121,10 @@ func ResolveLink(raw string) LinkTarget {
 		if id := trimPathID(path, "/product/"); id != "" {
 			return LinkTarget{Kind: LinkProduct, Param: id}
 		}
+	case strings.HasPrefix(path, "/dyh/"):
+		if id := trimPathID(path, "/dyh/"); id != "" {
+			return LinkTarget{Kind: LinkPage, Param: ChannelURLPrefix + id, Title: "看看号"}
+		}
 	case path == "/page":
 		if u, err := url.Parse(s); err == nil && u.Query().Get("url") != "" {
 			return LinkTarget{Kind: LinkPage, Param: s, Title: u.Query().Get("title")}

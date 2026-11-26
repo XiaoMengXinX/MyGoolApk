@@ -157,9 +157,7 @@ func (a *App) tileRow(cx *core.Scope, get func() []tradeTile) core.Node {
 	return row(core.Style{Gap: 8, Padding: core.Edges{Top: 4, Right: 8, Bottom: 4, Left: 8}, AlignItems: core.AlignStretch}, "", cells...)
 }
 
-// tradeCityPage lists the second-hand posts of one city: the one the
-// account last asked for, else the city of its profile.
-func (a *App) tradeCityPage(cx *core.Scope, title string) core.Node {
+func (a *App) tradeCity() string {
 	city := a.local.TradeCity
 	if city == "" {
 		// A profile's region is its province and city.
@@ -167,6 +165,13 @@ func (a *App) tradeCityPage(cx *core.Scope, title string) core.Node {
 			city = parts[len(parts)-1]
 		}
 	}
+	return city
+}
+
+// tradeCityPage lists the second-hand posts of one city: the one the
+// account last asked for, else the city of its profile.
+func (a *App) tradeCityPage(cx *core.Scope, title string) core.Node {
+	city := a.tradeCity()
 	shown := core.NewSignal(cx, city)
 	typed := core.NewSignal(cx, city)
 	var field core.Ref

@@ -206,6 +206,8 @@ type Card struct {
 	URL   string
 	More  string
 	Items []CardItem
+	// Results holds the typed rows of a combined search preview.
+	Results []PageEntry
 	// Note is the text of a CardNote.
 	Note []RichSpan
 	// Ratio is the width over the height the server asks a banner to show
@@ -245,7 +247,9 @@ type PageEntry struct {
 	Round bool
 	// Hot is how much a product is talked of, as the server words it
 	// ("201.1万").
-	Hot string
+	Hot         string
+	Discussions string
+	Score       string
 	// URL is the page url of the list a category opens, or where a link
 	// leads.
 	URL  string
@@ -409,22 +413,32 @@ type Reply struct {
 type SearchKind int
 
 const (
-	SearchFeeds SearchKind = iota
+	SearchAll SearchKind = iota
+	SearchProducts
+	SearchFeeds
+	SearchTopics
 	SearchUsers
+	SearchTrades
+	SearchQuestions
+	SearchChannels
 )
 
 // SearchQuery selects one page of global search results.
 type SearchQuery struct {
-	Keyword string
-	Kind    SearchKind
-	Page    int
+	Keyword  string
+	Kind     SearchKind
+	Page     int
+	Sort     string
+	FeedType string
+	City     string
 }
+
+const SearchTradeNegotiable = "negotiable"
 
 // SearchPage contains heterogeneous global search results. HotSearches is
 // populated for an empty keyword.
 type SearchPage struct {
-	Feeds       []Feed
-	Users       []Author
+	Entries     []PageEntry
 	HasMore     bool
 	HotSearches []string
 }

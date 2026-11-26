@@ -176,6 +176,7 @@ const (
 	MyProductsURL = "#/product/followProductList"
 	// CollectionURLPrefix leads the url of what a collection holds, before its id.
 	CollectionURLPrefix = "collection:"
+	ChannelURLPrefix    = "channel:"
 )
 
 // PageQuery names a page of a server list: the url the clients ask

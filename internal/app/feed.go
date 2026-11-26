@@ -109,11 +109,18 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 		),
 		core.View{Style: core.Style{FlexGrow: 1}, PointerEvents: core.PointerEventsNone},
 		// A rating heads its text with its own tags.
-		dynamicShape(cx, func() bool { k := get().Kind; return k != backend.PostText && k != backend.PostRating }, func(cx *core.Scope, badge bool) core.Node {
-			if badge {
-				return tonalPill(func() string { return get().Kind.Label() })
+		dynamicShape(cx, func() backend.PostKind { return get().Kind }, func(cx *core.Scope, kind backend.PostKind) core.Node {
+			if kind == backend.PostText || kind == backend.PostRating {
+				return core.Group{}
 			}
-			return core.Group{}
+			badge := tonalPill(kind.Label)
+			switch kind {
+			case backend.PostQuestion:
+				badge.Class = "bg-primary-container text-on-primary-container"
+			case backend.PostAnswer:
+				badge.Class = "bg-tertiary-container text-on-tertiary-container"
+			}
+			return badge
 		}),
 	))
 }
@@ -138,7 +145,7 @@ func authorName(cx *core.Scope, get func() backend.Author, size core.Points) cor
 }
 
 // tonalPill is a small secondary-container label such as a level badge.
-func tonalPill(text func() string) core.Node {
+func tonalPill(text func() string) core.Text {
 	return core.Text{ContentFunc: text, MaxLines: 1, Class: "bg-secondary-container text-on-secondary-container",
 		Style: func() core.Style {
 			s := textStyle(textCaption, 500)
@@ -161,7 +168,7 @@ func (a *App) feedBody(cx *core.Scope, get func() backend.Feed, s feedShape) cor
 		return core.Text{ContentFunc: func() string { return get().Title }, MaxLines: 2, Class: "text-on-surface", Style: textStyle(textBody, 600)}
 	}
 	switch s.kind {
-	case backend.PostArticle, backend.PostTrade:
+	case backend.PostArticle:
 		return through(column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), a.coverImage(cx, get, s)))
 	case backend.PostQuestion:
 		return through(column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), core.Text{
@@ -189,7 +196,11 @@ func (a *App) feedBody(cx *core.Scope, get func() backend.Feed, s feedShape) cor
 		}
 		return labelFunc(func() string { return get().Price }, textBody, 600, "text-error")
 	})
-	return through(column(core.Style{Gap: 12}, "", title(), price, a.feedContent(cx, get, s, 6), a.feedMedia(cx, get, s, false, nil)))
+	media := a.feedMedia(cx, get, s, false, nil)
+	if s.cover {
+		media = a.coverImage(cx, get, s)
+	}
+	return through(column(core.Style{Gap: 12}, "", title(), price, a.feedContent(cx, get, s, 6), media))
 }
 
 func countLabel(n int, unit string) string {
