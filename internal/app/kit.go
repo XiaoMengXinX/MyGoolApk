@@ -19,6 +19,21 @@ func tap(label string, fn func(), s core.Style, class string, children ...core.N
 	})
 }
 
+// link is a press area that shows no state layer, only the pointing hand
+// where a pointer hovers and the ripple on Android: an author's avatar and
+// name, which read as part of what they head.
+func link(label string, fn func(), s core.Style, children ...core.Node) core.View {
+	if s.Overflow == 0 {
+		s.Overflow = core.Hidden
+	}
+	return pointing(core.View{
+		Style: s, Role: core.RoleButton, Label: label,
+		OnPress:  func(core.PressEvent) { fn() },
+		Android:  core.AndroidViewProps{Ripple: &core.Ripple{}},
+		Children: children,
+	})
+}
+
 // hoverable says the app runs where a pointer hovers: a desktop's, set once
 // as the app starts.
 var hoverable bool

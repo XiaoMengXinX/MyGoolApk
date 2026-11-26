@@ -106,16 +106,12 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 	return through(row(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
 		// The avatar and the name open the author as one; the room beside them
 		// is the card's.
-		pointing(core.View{Role: core.RoleButton, Label: "作者主页", OnPress: func(core.PressEvent) { a.openUser(author()) },
-			Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
-			Style:   core.Style{Direction: core.Row, Gap: 12, AlignItems: core.AlignCenter, FlexShrink: 1, MinWidth: core.Pt(0), Overflow: core.Hidden},
-			Children: []core.Node{
-				a.avatar(cx, author, size),
-				column(core.Style{Gap: 2, FlexShrink: 1, MinWidth: core.Pt(0)}, "",
-					authorName(cx, author, textBody),
-					core.Text{ContentFunc: meta, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
-				),
-			}}),
+		link("作者主页", func() { a.openUser(author()) }, core.Style{Direction: core.Row, Gap: 12, AlignItems: core.AlignCenter, FlexShrink: 1, MinWidth: core.Pt(0)},
+			a.avatar(cx, author, size),
+			column(core.Style{Gap: 2, FlexShrink: 1, MinWidth: core.Pt(0)}, "",
+				authorName(cx, author, textBody),
+				core.Text{ContentFunc: meta, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
+			)),
 		core.View{Style: core.Style{FlexGrow: 1}, PointerEvents: core.PointerEventsNone},
 		// A rating heads its text with its own tags.
 		dynamicShape(cx, func() backend.PostKind { return get().Kind }, func(cx *core.Scope, kind backend.PostKind) core.Node {

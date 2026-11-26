@@ -20,11 +20,13 @@ func (d *detail) replyRow(cx *core.Scope, get func() backend.Reply) core.Node {
 	a := d.a
 	author := func() backend.Author { return get().Author }
 	v := row(core.Style{Padding: core.Edges{Top: 12, Right: 16, Bottom: 8, Left: 16}, Gap: 12}, "bg-background",
-		tap("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 0, CornerRadius: 18, Overflow: core.Hidden, AlignSelf: core.AlignStart}, "",
+		link("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 0, CornerRadius: 18, AlignSelf: core.AlignStart},
 			a.avatar(cx, author, 36)),
 		column(fill.Merge(core.Style{Gap: 6}), "",
 			row(core.Style{Gap: 8, AlignItems: core.AlignCenter}, "",
-				authorName(cx, author, textSecondary),
+				// The name opens the author, as the avatar does.
+				link("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 1, MinWidth: core.Pt(0)},
+					authorName(cx, author, textSecondary)),
 				dynamicShape(cx, func() bool { return get().IsAuthor }, func(cx *core.Scope, owner bool) core.Node {
 					if !owner {
 						return core.Group{}
