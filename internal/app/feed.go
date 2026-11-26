@@ -41,10 +41,12 @@ func (a *App) feedCard(cx *core.Scope, get func() backend.Feed) core.Node {
 	// The pressable parts are siblings: Android gives a press to the outermost
 	// view that takes one, so a card that is itself pressable would open its
 	// post whatever was pressed in it.
-	return column(core.Style{}, "bg-background",
+	card := column(core.Style{}, "bg-background",
 		// The press area under the card: its parts let a press on empty space
-		// through to it.
-		tap("查看帖子", open, fillAbs, ""),
+		// through to it. Its hover follows the whole card, which the parts over
+		// it would otherwise turn off and on as the pointer crosses them.
+		pointing(core.View{Role: core.RoleButton, Label: "查看帖子", OnPress: func(core.PressEvent) { open() },
+			Android: core.AndroidViewProps{Ripple: &core.Ripple{}}, Style: fillAbs.Merge(core.Style{Overflow: core.Hidden})}),
 		through(column(core.Style{Padding: core.Edges{Top: 16, Right: 16, Bottom: 8, Left: 16}, Gap: 12}, "",
 			a.feedHeader(cx, get, 40),
 			dynamicOnShape(cx, func() feedShape { return shapeOfFeed(get(), 6) },
@@ -60,7 +62,9 @@ func (a *App) feedCard(cx *core.Scope, get func() backend.Feed) core.Node {
 			tap("查看帖子", open, fill.Merge(core.Style{Direction: core.Row, JustifyContent: core.JustifyEnd, Height: core.Pt(32), AlignItems: core.AlignCenter}), "",
 				feedStats(get)),
 		)),
-		core.View{Style: core.Style{Height: core.Pt(8)}, Class: "bg-surface-container-low"})
+		core.View{Style: core.Style{Height: core.Pt(8)}, Class: "bg-surface-container-low"}).(core.View)
+	// The layer leaves the band between cards.
+	return hoverGroup(card, "card", fillAbs.Merge(core.Style{Bottom: core.Pt(8)}))
 }
 
 // targetChip is an assist chip with the logo of the topic or product a post
@@ -100,12 +104,16 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 		return joinNonEmpty([]string{formatTime(time.Now(), f.PublishedAt), f.Device, f.Location}, "  ")
 	}
 	return through(row(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
-		tap("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 0, CornerRadius: size / 2, Overflow: core.Hidden}, "",
-			a.avatar(cx, author, size)),
-		// The name opens the author; the room beside it is the card's.
-		tap("作者主页", func() { a.openUser(author()) }, core.Style{Gap: 2, FlexShrink: 1, MinWidth: core.Pt(0)}, "",
-			authorName(cx, author, textBody),
-			core.Text{ContentFunc: meta, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
+		// The avatar and the name open the author as one; the room beside them
+		// is the card's.
+		tap("作者主页", func() { a.openUser(author()) }, core.Style{Direction: core.Row, Gap: 12, AlignItems: core.AlignCenter, FlexShrink: 1, MinWidth: core.Pt(0),
+			// The press area reaches 4dp past the avatar, its feedback clear of it.
+			Padding: core.Edges{Top: 4, Right: 8, Bottom: 4, Left: 4}, Margin: core.Edges{Top: -4, Bottom: -4, Left: -4}, CornerRadius: size/2 + 4}, "",
+			a.avatar(cx, author, size),
+			column(core.Style{Gap: 2, FlexShrink: 1, MinWidth: core.Pt(0)}, "",
+				authorName(cx, author, textBody),
+				core.Text{ContentFunc: meta, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
+			),
 		),
 		core.View{Style: core.Style{FlexGrow: 1}, PointerEvents: core.PointerEventsNone},
 		// A rating heads its text with its own tags.

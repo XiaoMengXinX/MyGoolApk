@@ -46,9 +46,19 @@ func hoverFeedback(v core.View) core.View {
 		return v
 	}
 	v = pointing(v)
-	v.Style.Group = "press"
+	return hoverGroup(v, "press", fillAbs)
+}
+
+// hoverGroup makes v the group named group, and lays over it at place a
+// state layer shown while the pointer is over v or anything in it: a press
+// area under others that take presses shows its feedback through them.
+func hoverGroup(v core.View, group string, place core.Style) core.View {
+	if !hoverable {
+		return v
+	}
+	v.Style.Group = group
 	layer := core.View{Class: "bg-on-surface", PointerEvents: core.PointerEventsNone,
-		Style: fillAbs.Merge(core.Style{Opacity: core.Alpha(0), GroupStyle: &core.GroupStyle{Name: "press", Hover: &core.Style{Opacity: core.Alpha(0.08)}}})}
+		Style: place.Merge(core.Style{Opacity: core.Alpha(0), GroupStyle: &core.GroupStyle{Name: group, Hover: &core.Style{Opacity: core.Alpha(0.08)}}})}
 	v.Children = append(v.Children[:len(v.Children):len(v.Children)], layer)
 	return v
 }
