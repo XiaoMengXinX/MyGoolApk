@@ -142,7 +142,7 @@ func (a *App) topicHead(cx *core.Scope, get func() backend.TopicDetail, follow f
 	return column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 12, Left: 16}, Gap: 12}, "bg-background",
 		row(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
 			a.pic(cx, func() string { return get().LogoURL }, core.Cover, "bg-surface-container-highest",
-				core.Style{Width: core.Pt(56), Height: core.Pt(56), CornerRadius: 14, Overflow: core.Hidden, FlexShrink: 0}),
+				core.Style{Width: core.Pt(56), Height: core.Pt(56), CornerRadius: 16, Overflow: core.Hidden, FlexShrink: 0}),
 			column(fill.Merge(core.Style{Gap: 4}), "",
 				core.Text{ContentFunc: func() string { return get().Title }, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 600)},
 				core.Text{ContentFunc: counts, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)}),

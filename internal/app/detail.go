@@ -411,15 +411,12 @@ func (d *detail) commentsHeader() core.Node {
 				if of == backend.RepliesOfVote {
 					return core.Group{}
 				}
-				chips := []core.Node{
-					filterChip("默认", func() bool { return d.sort.Get() == 0 }, func() { d.setSort(0) }),
-					filterChip("最新", func() bool { return d.sort.Get() == 1 }, func() { d.setSort(1) }),
-					filterChip("热门", func() bool { return d.sort.Get() == 2 }, func() { d.setSort(2) }),
-				}
+				// The labels follow backend.ReplySort; only a post's replies can be its author's.
+				labels := []string{"默认", "最新", "热门"}
 				if of == backend.RepliesOfPost {
-					chips = append(chips, filterChip("楼主", func() bool { return d.sort.Get() == 3 }, func() { d.setSort(3) }))
+					labels = append(labels, "楼主")
 				}
-				return row(core.Style{Gap: 8}, "", chips...)
+				return optionMenu("评论排序", labels, d.sort.Get, d.setSort)
 			}),
 		),
 	)

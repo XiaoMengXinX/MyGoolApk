@@ -367,7 +367,7 @@ func (d *detail) threadSheet(cx *core.Scope) core.Node {
 					d.nested.list.ScrollTo(core.Point{Y: y}, false)
 				}
 			},
-			Children: []core.Node{pagerList(cx, d.nested, listSpec{empty: "暂无回复", bottom: 8,
+			Children: []core.Node{pagerList(cx, d.nested, listSpec{empty: "暂无回复", bottom: 8, inSheet: true,
 				onScroll: func(e core.ScrollEvent) {
 					if !e.Stale {
 						d.threadY = e.Offset.Y

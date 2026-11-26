@@ -91,6 +91,7 @@ func (a *App) view(cx *core.Scope) core.Node {
 
 // page builds the page of a route pushed over the tabs.
 func (a *App) page(cx *core.Scope, r route) core.Node {
+	scrolledUnder.Provide(cx, core.NewSignal(cx, false))
 	switch r.kind {
 	case routeFeed:
 		return a.detailPage(cx, r.id)

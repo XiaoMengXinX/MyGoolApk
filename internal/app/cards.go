@@ -391,7 +391,7 @@ func (a *App) rankingCard(cx *core.Scope, c *backend.Card) core.Node {
 				core.View{Style: core.Style{Width: core.Pt(size), Height: core.Pt(size)}, Children: []core.Node{
 					a.clippedPic(cx, it.Pic, size, size, 12),
 					core.Text{Content: strconv.Itoa(n + 1), Class: place, Style: textStyle(textCaption, 600).Merge(core.Style{
-						Position: core.Absolute, Top: core.Pt(-4), Left: core.Pt(-8), MinWidth: core.Pt(18), Padding: core.Symmetric(0, 4), CornerRadius: 6, TextAlign: core.TextAlignCenter})},
+						Position: core.Absolute, Top: core.Pt(-4), Left: core.Pt(-8), MinWidth: core.Pt(18), Padding: core.Symmetric(0, 4), CornerRadius: 8, TextAlign: core.TextAlignCenter})},
 				}},
 				core.Text{Content: it.Title, MaxLines: 2, Class: "text-on-surface", Style: textStyle(textCaption, 400).Merge(core.Style{TextAlign: core.TextAlignCenter})})
 		}
@@ -424,7 +424,7 @@ func (a *App) logosCard(cx *core.Scope, c *backend.Card) core.Node {
 	const w, h = 64, 32
 	cell := func(it backend.CardItem) core.Node {
 		return tap(it.Title, func() { a.openCardItem(it) }, core.Style{Width: core.Pt(w + 8), Gap: 4, Padding: core.Symmetric(4, 0), AlignItems: core.AlignCenter, CornerRadius: 8}, "",
-			core.View{Class: "bg-white", Style: core.Style{Width: core.Pt(w), Height: core.Pt(h), CornerRadius: 6, Overflow: core.Hidden},
+			core.View{Class: "bg-white", Style: core.Style{Width: core.Pt(w), Height: core.Pt(h), CornerRadius: 8, Overflow: core.Hidden},
 				Children: []core.Node{a.picOf(cx, it.Pic, core.Contain, "", fillAbs)}},
 			core.Text{Content: it.Title, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400).Merge(core.Style{TextAlign: core.TextAlignCenter})})
 	}
@@ -597,7 +597,7 @@ func tabsCard(c *backend.Card, l *pageList) core.Node {
 	return column(core.Style{}, "bg-background",
 		core.Scroll{Horizontal: true, HideIndicator: true, Style: core.Style{Height: core.Pt(48), FlexGrow: 0},
 			Children: []core.Node{row(core.Style{Height: core.Pct(100), Padding: core.Symmetric(0, 8)}, "", tabs...)}},
-		core.View{Style: core.Style{Height: core.Pt(1)}, Class: "bg-surface-container-highest"},
+		core.View{Style: core.Style{Height: core.Pt(1)}, Class: "bg-outline-variant"},
 	)
 }
 

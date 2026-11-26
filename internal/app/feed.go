@@ -591,9 +591,10 @@ func versusOptions(v *backend.Vote, pct func(backend.VoteOption) int, pick func(
 			core.Text{Content: text, MaxLines: 1, Style: textStyle(textSecondary, 500).Merge(core.Style{Color: core.RGB(0xFFFFFF)})})
 	}
 	return row(core.Style{Gap: 4, AlignItems: core.AlignCenter}, "",
-		side(0, 0xF44336),
+		// The red and blue keep white labels at a 4.5:1 contrast.
+		side(0, 0xD32F2F),
 		label("VS", textSecondary, 600, "text-on-surface-variant"),
-		side(1, 0x2196F3))
+		side(1, 0x1976D2))
 }
 
 // voteOption is one option of a vote: an outlined row, filled to its share
