@@ -29,7 +29,7 @@ type localState struct {
 	Searches       []string       `json:"searches,omitempty"`
 	TradeCity      string         `json:"tradeCity,omitempty"` // the city of the second-hand posts nearby
 	// Window is where a desktop's window was, to open there again.
-	Window core.WindowFrame `json:"window"`
+	Window core.WindowFrame `json:"window,omitzero"`
 }
 
 func loadLocalState(dir string) localState {

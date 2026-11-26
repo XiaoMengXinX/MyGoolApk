@@ -39,10 +39,11 @@ func link(label string, fn func(), s core.Style, children ...core.Node) core.Vie
 var hoverable bool
 
 // pressable gives a view that takes presses the feedback of Material 3:
-// Android's ripple, and hoverFeedback.
+// Android's ripple, and where a pointer hovers, the pointing hand and an
+// on-surface state layer at 8% over the view while hovered.
 func pressable(v core.View) core.View {
 	v.Android.Ripple = &core.Ripple{}
-	return hoverFeedback(v)
+	return hoverGroup(pointing(v), "press", fillAbs)
 }
 
 // pointing gives a view that takes presses the pointing hand, where a
@@ -52,16 +53,6 @@ func pointing(v core.View) core.View {
 		v.Style.Cursor = core.CursorPointer
 	}
 	return v
-}
-
-// hoverFeedback is pointing with an on-surface state layer at 8% over the
-// view while hovered.
-func hoverFeedback(v core.View) core.View {
-	if !hoverable {
-		return v
-	}
-	v = pointing(v)
-	return hoverGroup(v, "press", fillAbs)
 }
 
 // hoverGroup makes v the group named group, and lays over it at place a

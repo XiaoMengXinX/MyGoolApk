@@ -255,6 +255,11 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 						OnLongPress: holdToSave(i),
 						// A desktop's secondary click offers to save as its own menu.
 						OnContextMenu: func(e core.ContextMenuEvent) {
+							if !hoverable {
+								held.Set(i)
+								saving.Set(true)
+								return
+							}
 							desktop.PopupMenu(cx, []desktop.MenuItem{{Label: "保存图片", OnSelect: func() { a.saveImage(v.images[i]) }}}, e.PagePosition, nil)
 						},
 						Children: []core.Node{

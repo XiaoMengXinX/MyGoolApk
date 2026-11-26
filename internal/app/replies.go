@@ -146,8 +146,12 @@ func (d *detail) replyActions(r backend.Reply) []replyAction {
 }
 
 // popupReplyMenu shows comment r's actions as the desktop's own menu at
-// at, as a secondary click asks.
+// at, as a secondary click asks; elsewhere, as the ⋮'s sheet.
 func (d *detail) popupReplyMenu(r backend.Reply, at core.Point) {
+	if !hoverable {
+		d.menu.Set(&r)
+		return
+	}
 	actions := d.replyActions(r)
 	items := make([]desktop.MenuItem, len(actions))
 	for i, act := range actions {
