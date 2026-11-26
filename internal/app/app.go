@@ -93,7 +93,9 @@ func (a *App) view(cx *core.Scope) core.Node {
 	// A window wider than a phone's has the destinations on a rail at its left.
 	body := row(fill, "bg-background",
 		core.Show{When: a.wide, Then: func(cx *core.Scope) core.Node { return a.rail(dests) }},
-		core.View{Style: fill, Children: []core.Node{stack}})
+		// The stack keeps to its room: a layer shifting under a page goes off
+		// its left edge, which in a medium window is the rail's.
+		core.View{Style: fill.Merge(core.Style{Overflow: core.Hidden}), Children: []core.Node{stack}})
 	return core.Group{body, a.viewerLayer(), ui.Toasts{Toaster: a.toasts, Placement: ui.ToastBottom, Inset: 72}}
 }
 
