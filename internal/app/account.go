@@ -173,16 +173,10 @@ func (a *App) mePage(cx *core.Scope) core.Node {
 		)
 		return column(core.Style{CornerRadius: 28, Overflow: core.Hidden}, "bg-surface-container-low", items...)
 	})
-	logout := core.Dynamic(func(cx *core.Scope) core.Node {
-		if !signedIn() {
-			return core.Group{}
-		}
-		return row(core.Style{}, "", textButton("退出登录", a.logout))
-	})
 	return column(fill, "bg-background",
 		a.topBar(label("我的", textTitle, 400, "text-on-surface")),
 		core.Scroll{Style: fill, Children: []core.Node{
-			column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Left: 16}, Gap: 16}, "", head, shortcuts, group, logout, bottomSpace(24, false)),
+			column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Left: 16}, Gap: 16}, "", head, shortcuts, group, bottomSpace(24, false)),
 		}},
 	)
 }

@@ -113,6 +113,12 @@ func (a *App) settingsPage(cx *core.Scope) core.Node {
 			listGroup(column(core.Style{Padding: core.Symmetric(12, 16), Gap: 2}, "",
 				label("MyGoolApk", textBody, 400, "text-on-surface"),
 				label(buildLabel(), textSecondary, 400, "text-on-surface-variant"))),
+			core.Show{
+				When: func() bool { return a.account.uid.Get() != "" },
+				Then: func(*core.Scope) core.Node {
+					return listGroup(listItem(&symbols.Logout, "退出登录", nil, a.logout))
+				},
+			},
 			bottomSpace(24, true),
 		)}})
 }
