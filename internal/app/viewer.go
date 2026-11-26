@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 
 	"app/internal/backend"
 )
@@ -124,6 +125,16 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 			current.Set(page)
 		}
 	}
+	// A hold offers to save the picture, on a touch screen.
+	holdToSave := func(i int) func(core.PressEvent) {
+		if hoverable {
+			return nil
+		}
+		return func(core.PressEvent) {
+			held.Set(i)
+			saving.Set(true)
+		}
+	}
 	// The keyboard's arrows go between the pictures, as a desktop's viewers do.
 	turn := func(d int) {
 		if i := min(max(current.GetUntracked()+d, 0), len(v.images)-1); i != current.GetUntracked() {
@@ -239,15 +250,12 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 					},
 					StyleFunc: func() core.Style { return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get())} },
 					Children: []core.Node{core.View{
-						StyleFunc: func() core.Style { return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get())} },
-						OnPress:   press,
-						OnLongPress: func(core.PressEvent) {
-							held.Set(i)
-							saving.Set(true)
-						},
-						OnContextMenu: func(core.ContextMenuEvent) {
-							held.Set(i)
-							saving.Set(true)
+						StyleFunc:   func() core.Style { return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get())} },
+						OnPress:     press,
+						OnLongPress: holdToSave(i),
+						// A desktop's secondary click offers to save as its own menu.
+						OnContextMenu: func(e core.ContextMenuEvent) {
+							desktop.PopupMenu(cx, []desktop.MenuItem{{Label: "保存图片", OnSelect: func() { a.saveImage(v.images[i]) }}}, e.PagePosition, nil)
 						},
 						Children: []core.Node{
 							a.pic(cx, func() string {
@@ -400,7 +408,7 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 		switch e.Phase {
 		case core.GestureBegan:
 			if zoomed.GetUntracked() {
-				if zp := zooms[current.GetUntracked()]; android && zp != nil {
+				if zp := zooms[current.GetUntracked()]; (android || hoverable) && zp != nil {
 					panning, panFrom = zp, zp.off
 				}
 				return
@@ -431,10 +439,16 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 			}
 			return s
 		}}
+	// A desktop's scroll views move by the wheel alone, so a mouse's drag
+	// that goes any way moves a zoomed picture.
+	panActivation := core.PanActivation{ActiveOffsetY: 10, FailOffsetX: 10}
+	if hoverable {
+		panActivation = core.PanActivation{}
+	}
 	content := core.View{
 		// A zoomed picture's own scroll view takes a drag first, and only
 		// what goes on past its edge moves the pictures away.
-		Style: fill, OnPan: onPan, PanActivation: core.PanActivation{ActiveOffsetY: 10, FailOffsetX: 10}, PanScrollHandoff: true,
+		Style: fill, OnPan: onPan, PanActivation: panActivation, PanScrollHandoff: true,
 		StyleFunc: func() core.Style {
 			s := core.Style{Transform: core.Transform{TranslateY: dragY.Get()}}
 			if !dragging.Get() {

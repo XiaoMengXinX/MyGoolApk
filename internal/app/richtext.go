@@ -38,8 +38,9 @@ func (a *App) richTextNode(cx *core.Scope, get func() ([]backend.RichSpan, strin
 	emoji := map[string][]*core.Image{}
 	// Only a text with something to do on a long press hears one: a text
 	// that listens takes the drags over it from the pages that swipe.
+	// A hold is a touch's way to a menu; a desktop's is a secondary click.
 	var hold func(core.PressEvent)
-	if o.hold != nil {
+	if o.hold != nil && !hoverable {
 		hold = func(core.PressEvent) { o.hold() }
 	}
 	return core.Text{

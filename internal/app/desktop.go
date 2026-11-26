@@ -46,17 +46,9 @@ func (a *App) placeWindow(cx *core.Scope) {
 	})
 }
 
-// setMenu sets the application menu, whose shortcuts are the keyboard's way
-// around the app: macOS's menu bar, and on Windows a menu bar that Alt shows.
+// setMenu sets the application menu, macOS's menu bar, whose shortcuts are
+// the keyboard's way around the app.
 func (a *App) setMenu(cx *core.Scope) {
-	env := cx.Env()
-	// Back is Command-[ on macOS, as in Safari, and Alt-Left elsewhere.
-	back := "alt+left"
-	if env.OS() == core.OSMacOS {
-		back = "mod+["
-	} else {
-		desktop.SetMenuBar(cx, desktop.MenuBarAutoHide)
-	}
 	// What the keyboard opens takes the place of the pages shown, as what is
 	// pressed in the list does.
 	open := func(fn func()) func() {
@@ -97,7 +89,8 @@ func (a *App) setMenu(cx *core.Scope) {
 			{Separator: true},
 			{Label: "搜索", Shortcut: "mod+f", OnSelect: open(a.openSearch)},
 			{Label: "刷新", Shortcut: "mod+r", When: core.MenuNotEditing, OnSelect: a.refreshDestination},
-			{Label: "返回", Shortcut: back, When: core.MenuNotEditing, OnSelect: func() { a.nav.Pop() }},
+			// Command-[ goes back, as in Safari and Finder.
+			{Label: "返回", Shortcut: "mod+[", When: core.MenuNotEditing, OnSelect: func() { a.nav.Pop() }},
 			{Separator: true},
 			{Role: desktop.MenuToggleFullScreen},
 		}},

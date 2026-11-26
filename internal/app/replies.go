@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 
 	"app/internal/backend"
 )
@@ -96,8 +97,8 @@ func (d *detail) replyRow(cx *core.Scope, get func() backend.Reply) core.Node {
 			),
 		),
 	).(core.View)
-	// A secondary click opens the menu the ⋮ does.
-	v.OnContextMenu = func(core.ContextMenuEvent) { d.menu.Set(new(get())) }
+	// A secondary click opens the actions of the ⋮ as the desktop's menu.
+	v.OnContextMenu = func(e core.ContextMenuEvent) { d.popupReplyMenu(get(), e.PagePosition) }
 	return v
 }
 
@@ -113,39 +114,67 @@ func replyLead(r backend.Reply) []backend.RichSpan {
 	return []backend.RichSpan{{Kind: backend.SpanText, Text: "回复 "}, to, {Kind: backend.SpanText, Text: "："}}
 }
 
-// replyMenu is the sheet of what else to do with the comment d.menu holds:
-// copy its text, see the replies under it, delete it when it is the
-// account's, and else report it on the site's page.
-func (d *detail) replyMenu() core.Node {
+// replyAction is something to do with a comment, from its menu.
+type replyAction struct {
+	glyph *symbol
+	name  string
+	run   func(backend.Reply)
+}
+
+// replyActions are what else there is to do with comment r: copy its text,
+// see the replies under it, delete it when it is the account's, and else
+// report it on the site's page.
+func (d *detail) replyActions(r backend.Reply) []replyAction {
 	a := d.a
+	actions := []replyAction{{&symbols.Copy, "复制", func(r backend.Reply) {
+		a.cx.SetClipboard(replyText(r))
+		a.notice("已复制")
+	}}}
+	if r.ChildrenTotal > 0 && d.thread.GetUntracked() == nil {
+		actions = append(actions, replyAction{&symbols.Comment, "查看回复", d.openThread})
+	}
+	if r.Author.ID != "" && r.Author.ID == a.backend.SessionUID() {
+		actions = append(actions, replyAction{&symbols.Delete, "删除", d.deleteReply})
+	} else {
+		actions = append(actions, replyAction{&symbols.Flag, "举报", func(r backend.Reply) {
+			a.openWeb("https://m.coolapk.com/mp/do?c=feed&m=report&type=feed_reply&id=" + r.ID)
+		}})
+	}
+	return actions
+}
+
+// popupReplyMenu shows comment r's actions as the desktop's own menu at
+// at, as a secondary click asks.
+func (d *detail) popupReplyMenu(r backend.Reply, at core.Point) {
+	actions := d.replyActions(r)
+	items := make([]desktop.MenuItem, len(actions))
+	for i, act := range actions {
+		items[i] = desktop.MenuItem{Label: act.name, OnSelect: func() { act.run(r) }}
+	}
+	desktop.PopupMenu(d.cx, items, at, nil)
+}
+
+// replyMenu is the sheet of the actions of the comment d.menu holds.
+func (d *detail) replyMenu() core.Node {
 	closeMenu := func() { d.menu.Set(nil) }
-	item := func(glyph *symbol, name string, fn func(r backend.Reply)) core.Node {
-		return tap(name, func() {
+	item := func(act replyAction) core.Node {
+		return tap(act.name, func() {
 			r := *d.menu.GetUntracked()
 			closeMenu()
-			fn(r)
+			act.run(r)
 		}, core.Style{Direction: core.Row, Height: core.Pt(56), Gap: 16, AlignItems: core.AlignCenter}, "",
-			icon(glyph, 24, "text-on-surface-variant"), label(name, textBody, 400, "text-on-surface"))
+			icon(act.glyph, 24, "text-on-surface-variant"), label(act.name, textBody, 400, "text-on-surface"))
 	}
-	return a.bottomSheet(func() bool { return d.menu.Get() != nil }, closeMenu,
+	return d.a.bottomSheet(func() bool { return d.menu.Get() != nil }, closeMenu,
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			r := d.menu.Get()
 			if r == nil {
 				return core.Group{}
 			}
-			items := []core.Node{item(&symbols.Copy, "复制", func(r backend.Reply) {
-				a.cx.SetClipboard(replyText(r))
-				a.notice("已复制")
-			})}
-			if r.ChildrenTotal > 0 && d.thread.GetUntracked() == nil {
-				items = append(items, item(&symbols.Comment, "查看回复", d.openThread))
-			}
-			if r.Author.ID != "" && r.Author.ID == a.backend.SessionUID() {
-				items = append(items, item(&symbols.Delete, "删除", d.deleteReply))
-			} else {
-				items = append(items, item(&symbols.Flag, "举报", func(r backend.Reply) {
-					a.openWeb("https://m.coolapk.com/mp/do?c=feed&m=report&type=feed_reply&id=" + r.ID)
-				}))
+			actions := d.replyActions(*r)
+			items := make([]core.Node, len(actions))
+			for i, act := range actions {
+				items[i] = item(act)
 			}
 			return column(core.Style{}, "", items...)
 		}))

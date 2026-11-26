@@ -32,6 +32,8 @@ func (a *App) sheetDialog(open func() bool, onClose func(), class string, side c
 				onClose()
 			}
 		},
+		// A dialog fades in where it is, scrim and all, as Material 3's do.
+		Animation:     core.ModalFade,
 		BackdropStyle: core.Style{Background: core.RGBA(0x000000, 0.32)},
 		PopupClass:    class,
 		PopupStyle: core.Style{Width: core.Pt(dialogWidth), MaxWidth: core.Pct(90), MaxHeight: core.Pct(85), CornerRadius: 28, Overflow: core.Hidden,
