@@ -1,7 +1,7 @@
-From 8c43d5eba4d7bf52add95930e61f0b1204402c46 Mon Sep 17 00:00:00 2001
+From cb6e0ef8e6bf13eba1e89ab526c7c9c840639406 Mon Sep 17 00:00:00 2001
 From: xiaomengxin <xibaole2333@gmail.com>
 Date: Thu, 26 Nov 2026 03:10:55 +0800
-Subject: [PATCH 3/3] fix(core): keep the layout of a screen another covers
+Subject: [PATCH] fix(core): keep the layout of a screen another covers
 
 ---
  core/layout.go            |  7 ++++--
@@ -11,7 +11,7 @@ Subject: [PATCH 3/3] fix(core): keep the layout of a screen another covers
  4 files changed, 71 insertions(+), 17 deletions(-)
 
 diff --git a/core/layout.go b/core/layout.go
-index 1679f43f..600d26b5 100644
+index 1679f43fb..600d26b5b 100644
 --- a/core/layout.go
 +++ b/core/layout.go
 @@ -251,7 +251,10 @@ func (n *node) layoutStyle() layout.Style {
@@ -36,7 +36,7 @@ index 1679f43f..600d26b5 100644
  		if shown {
  			c.hidden = hidden
 diff --git a/core/nav_test.go b/core/nav_test.go
-index cfea7695..dae4043c 100644
+index cfea76956..dae4043cc 100644
 --- a/core/nav_test.go
 +++ b/core/nav_test.go
 @@ -374,8 +374,9 @@ func TestBackPreviewNamesTheScreenBackPops(t *testing.T) {
@@ -99,7 +99,7 @@ index cfea7695..dae4043c 100644
 +	}
 +}
 diff --git a/core/tree.go b/core/tree.go
-index 8d5ad000..bb5cc81f 100644
+index 8d5ad000a..bb5cc81f5 100644
 --- a/core/tree.go
 +++ b/core/tree.go
 @@ -326,17 +326,22 @@ type node struct {
@@ -152,7 +152,7 @@ index 8d5ad000..bb5cc81f 100644
  	if n.style.Display != display && len(t.keys) > 0 {
  		// The bindings of what it hides leave the keymap, and come back as it shows (keyActive).
 diff --git a/docs/architecture/core.md b/docs/architecture/core.md
-index 00e3c2d8..3e292014 100644
+index 00e3c2d80..3e292014d 100644
 --- a/docs/architecture/core.md
 +++ b/docs/architecture/core.md
 @@ -71,7 +71,7 @@ A component is any type whose `Render(cx) Node` returns its nodes, like `http.Ha

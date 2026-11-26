@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/XiaoMengXinX/CoolapkApi-Go v0.0.0
-	github.com/nsgo-dev/nsgo v0.3.3
+	github.com/nsgo-dev/nsgo v0.3.4
 	golang.org/x/net v0.62.0
 )
 

@@ -75,20 +75,26 @@ runs:
           fi
           echo "patched=true" >> "$GITHUB_OUTPUT"
           echo "dir=$nsgo_dir" >> "$GITHUB_OUTPUT"
+          if git -C "$nsgo_dir" diff --name-only "$nsgo_ver"..HEAD | grep -q '^internal/platform/android/java/'; then
+            echo "android-java-changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "android-java-changed=false" >> "$GITHUB_OUTPUT"
+          fi
         else
           echo "NSGo is not locally replaced in go.mod; skipping clone and patch."
           echo "patched=false" >> "$GITHUB_OUTPUT"
+          echo "android-java-changed=false" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Set up JDK 21 for Android runtime rebuild
-      if: inputs.rebuild-android-runtime == 'true' && steps.nsgo.outputs.patched == 'true'
+      if: inputs.rebuild-android-runtime == 'true' && steps.nsgo.outputs.android-java-changed == 'true'
       uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
       with:
         distribution: temurin
         java-version: "21"
 
     - name: Rebuild patched NSGo Android runtime
-      if: inputs.rebuild-android-runtime == 'true' && steps.nsgo.outputs.patched == 'true'
+      if: inputs.rebuild-android-runtime == 'true' && steps.nsgo.outputs.android-java-changed == 'true'
       shell: bash
       env:
         NSGO_DIR: ${{ steps.nsgo.outputs.dir }}

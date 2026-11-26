@@ -27,7 +27,6 @@ GitHub Actions 会在每次 CI 与标签发布（`v*`）时自动构建以下安
 ### 环境要求
 
 - Go（版本见 [`go.mod`](go.mod)）
-- Android 运行时重编（仅在存在 [`patches/nsgo`](patches/nsgo/README.md) 补丁时需要）：JDK 17+、Android SDK（Platform 36 与 `d8`）、Python 3
 - iOS / macOS 构建：macOS 与 Xcode
 
 ### 准备依赖目录
@@ -42,10 +41,8 @@ mkdir -p coolapk-mygo && cd coolapk-mygo
 git clone https://github.com/XiaoMengXinX/MyGoolApk.git app-nsgo
 
 # 拉取对应版本的 NSGo 并打上补丁（详见 app-nsgo/patches/nsgo/README.md）
-git clone --depth 1 --branch v0.3.3 https://github.com/nsgo-dev/nsgo.git nsgo
+git clone --depth 1 --branch v0.3.4 https://github.com/nsgo-dev/nsgo.git nsgo
 git -C nsgo am "$PWD"/app-nsgo/patches/nsgo/*.patch
-# 如需构建 Android，还需重编 NSGo 的 Java 运行时
-ANDROID_HOME=/path/to/android-sdk sh nsgo/internal/platform/android/runtime/build.sh
 ```
 
 ### 运行测试与构建
