@@ -1,6 +1,10 @@
 package app
 
-import "github.com/nsgo-dev/nsgo/core"
+import (
+	"time"
+
+	"github.com/nsgo-dev/nsgo/core"
+)
 
 // swipePager moves a paged horizontal Scroll by a pan on its content: on iOS
 // a paged scroll view with scroll views inside its pages never gets a
@@ -78,13 +82,18 @@ type headed struct {
 	// glide stops the glide a throw of it set off.
 	from  core.Points
 	glide func()
+	// reach is how far each list scrolls; wheelY is where the head's wheel
+	// sends the shown list, wheeled when it last did.
+	reach   map[int]core.Points
+	wheelY  core.Points
+	wheeled time.Time
 }
 
 // newHeaded is a head over count lists that list returns the refs of, nil for
 // one not made yet, of which shown is in sight.
 func newHeaded(cx *core.Scope, shown *core.Signal[int], count int, list func(i int) *core.Ref) *headed {
 	h := &headed{cx: cx, shown: shown, count: count, list: list, head: core.NewSignal(cx, core.Points(0)), top: core.NewSignal(cx, core.Points(0)),
-		shift: core.NewSignal(cx, core.Points(0)), offsets: map[int]core.Points{}, held: map[int]bool{}}
+		shift: core.NewSignal(cx, core.Points(0)), offsets: map[int]core.Points{}, held: map[int]bool{}, reach: map[int]core.Points{}}
 	h.rests, h.ends = make([]*core.Signal[core.Points], count), make([][2]core.Ref, count)
 	for i := range h.rests {
 		h.rests[i] = core.NewSignal(cx, core.Points(0))
@@ -194,6 +203,7 @@ func (h *headed) scrolled(i int) func(core.ScrollEvent) {
 			return
 		}
 		h.offsets[i] = max(0, e.Offset.Y)
+		h.reach[i] = max(0, e.ContentSize.Height-e.Size.Height)
 		if i == h.shown.GetUntracked() && !h.held[i] {
 			h.shift.Set(min(h.offsets[i], h.head.GetUntracked()))
 			h.follow(i - 1)
@@ -230,6 +240,35 @@ func (h *headed) drag(e core.PanEvent) {
 	}
 }
 
+// wheel scrolls the shown list by a desktop's wheel or touchpad over the head
+// or the bar, which go to the scroll views under the pointer, and the lists
+// are not under it there. A touchpad's scroll and its glide follow as they
+// come; a wheel's notch scrolls on with an animation.
+func (h *headed) wheel(e core.WheelEvent) {
+	i := h.shown.GetUntracked()
+	ref := h.list(i)
+	if ref == nil || e.Delta.Y == 0 {
+		return
+	}
+	// A scroll that comes on soon after the last goes on from where that one
+	// sent the list, which may not have told where it got yet.
+	if time.Since(h.wheeled) > 200*time.Millisecond {
+		h.wheelY = h.offsets[i]
+	}
+	h.wheeled = time.Now()
+	// AppKit's deltas move the content; offsets move the other way.
+	h.wheelY = max(0, min(h.wheelY-e.Delta.Y, h.reach[i]))
+	ref.ScrollTo(core.Point{Y: h.wheelY}, !e.Touchpad)
+}
+
+// wheelOn is wheel where a pointer hovers, nil elsewhere.
+func (h *headed) wheelOn() func(core.WheelEvent) {
+	if !hoverable {
+		return nil
+	}
+	return h.wheel
+}
+
 // view lays head and bar over pages.
 func (h *headed) view(head, bar, pages core.Node) core.Node {
 	return core.View{Style: fill.Merge(core.Style{Overflow: core.Hidden}), Children: []core.Node{
@@ -240,6 +279,7 @@ func (h *headed) view(head, bar, pages core.Node) core.Node {
 			StyleFunc:     func() core.Style { return core.Style{Transform: core.Transform{TranslateY: -h.shift.Get()}} },
 			OnLayout:      func(b core.Bounds) { h.top.Set(b.Size.Height) },
 			OnPan:         h.drag,
+			OnWheel:       h.wheelOn(),
 			PanActivation: core.PanActivation{ActiveOffsetY: 10, FailOffsetX: 10},
 			Children: []core.Node{
 				core.View{OnLayout: func(b core.Bounds) { h.head.Set(b.Size.Height) }, Children: []core.Node{head}},
