@@ -19,9 +19,9 @@ func tap(label string, fn func(), s core.Style, class string, children ...core.N
 	})
 }
 
-// link is a press area that shows no state layer, only the pointing hand
-// where a pointer hovers and the ripple on Android: an author's avatar and
-// name, which read as part of what they head.
+// link is a press area that shows no feedback but the pointing hand where a
+// pointer hovers, neither a state layer nor a ripple: an author's avatar and
+// name, or a card's counts, which read as part of what holds them.
 func link(label string, fn func(), s core.Style, children ...core.Node) core.View {
 	if s.Overflow == 0 {
 		s.Overflow = core.Hidden
@@ -29,7 +29,6 @@ func link(label string, fn func(), s core.Style, children ...core.Node) core.Vie
 	return pointing(core.View{
 		Style: s, Role: core.RoleButton, Label: label,
 		OnPress:  func(core.PressEvent) { fn() },
-		Android:  core.AndroidViewProps{Ripple: &core.Ripple{}},
 		Children: children,
 	})
 }
