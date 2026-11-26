@@ -110,17 +110,16 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 		core.View{Style: core.Style{FlexGrow: 1}, PointerEvents: core.PointerEventsNone},
 		// A rating heads its text with its own tags.
 		dynamicShape(cx, func() backend.PostKind { return get().Kind }, func(cx *core.Scope, kind backend.PostKind) core.Node {
-			if kind == backend.PostText || kind == backend.PostRating {
-				return core.Group{}
-			}
-			badge := tonalPill(kind.Label)
 			switch kind {
+			case backend.PostText, backend.PostRating:
+				return core.Group{}
 			case backend.PostQuestion:
-				badge.Class = "bg-primary-container text-on-primary-container"
+				return qaBadge(kind.Label(), "bg-primary-container", "text-on-primary-container")
 			case backend.PostAnswer:
-				badge.Class = "bg-tertiary-container text-on-tertiary-container"
+				return qaBadge(kind.Label(), "bg-tertiary-container", "text-on-tertiary-container")
+			default:
+				return tonalPill(kind.Label)
 			}
-			return badge
 		}),
 	))
 }
@@ -144,8 +143,17 @@ func authorName(cx *core.Scope, get func() backend.Author, size core.Points) cor
 	)
 }
 
+func qaBadge(text, background, foreground string) core.Node {
+	// The Chinese glyphs sit slightly above the center of their line box.
+	return core.View{Class: background, PointerEvents: core.PointerEventsNone,
+		Style: core.Style{MinHeight: core.Pt(22), Padding: core.Edges{Top: 4, Right: 8, Bottom: 2, Left: 8}, CornerRadius: 8, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, FlexShrink: 0},
+		Children: []core.Node{core.Text{Content: text, MaxLines: 1, Class: foreground,
+			Style: core.Style{FontSize: textCaption, FontWeight: 500}}},
+	}
+}
+
 // tonalPill is a small secondary-container label such as a level badge.
-func tonalPill(text func() string) core.Text {
+func tonalPill(text func() string) core.Node {
 	return core.Text{ContentFunc: text, MaxLines: 1, Class: "bg-secondary-container text-on-secondary-container",
 		Style: func() core.Style {
 			s := textStyle(textCaption, 500)

@@ -36,7 +36,7 @@ var feedSearchOrders = []searchOption{
 }
 
 var feedSearchTypes = []searchOption{
-	{"全部", ""}, {"动态", "feed"}, {"图文", "feedArticle"}, {"点评", "rating"},
+	{"全部类型", ""}, {"动态", "feed"}, {"图文", "feedArticle"}, {"点评", "rating"},
 	{"好物推荐", "goods"}, {"酷图", "picture"}, {"提问", "question"}, {"回答", "answer"}, {"评论", "comment"},
 	{"视频", "video"}, {"二手", "ershou"}, {"投票", "vote"},
 }
@@ -59,15 +59,15 @@ func (a *App) searchResultView(cx *core.Scope, tab searchResultTab, spec listSpe
 			return a.searchMatchRow(cx, kind == backend.SearchProducts, get)
 		})
 	case backend.SearchFeeds:
-		sort := searchFilterChips(feedSearchOrders, func() string { return tab.query.Get().Sort }, func(value string) {
+		sort := searchFilterChips(feedSearchOrders, 8, func() string { return tab.query.Get().Sort }, func(value string) {
 			tab.apply(func(q *backend.SearchQuery) { q.Sort = value })
 		})
-		types := searchFilterMenu("动态类型", feedSearchTypes, func() string { return tab.query.Get().FeedType }, func(value string) {
+		types := searchFilterMenu(cx, "动态类型", core.AlignEnd, feedSearchTypes, func() string { return tab.query.Get().FeedType }, func(value string) {
 			tab.apply(func(q *backend.SearchQuery) { q.FeedType = value })
 		})
 		return column(fill, "bg-background", searchFilterBar(sort, types), a.entryList(cx, tab.list, spec))
 	case backend.SearchQuestions:
-		filters := searchFilterChips(questionSearchTypes, func() string { return tab.query.Get().FeedType }, func(value string) {
+		filters := searchFilterChips(questionSearchTypes, 12, func() string { return tab.query.Get().FeedType }, func(value string) {
 			tab.apply(func(q *backend.SearchQuery) { q.FeedType = value })
 		})
 		return column(fill, "bg-background", searchFilterBar(filters), a.entryList(cx, tab.list, spec))
@@ -78,58 +78,61 @@ func (a *App) searchResultView(cx *core.Scope, tab searchResultTab, spec listSpe
 }
 
 func searchFilterBar(children ...core.Node) core.Node {
-	return row(core.Style{Height: core.Pt(52), FlexShrink: 0, Padding: core.Symmetric(0, 12), Gap: 8, AlignItems: core.AlignCenter}, "bg-background", children...)
+	return row(core.Style{Height: core.Pt(56), FlexShrink: 0, Padding: core.Symmetric(0, 16), Gap: 8, AlignItems: core.AlignCenter}, "bg-background", children...)
 }
 
-func searchFilterChips(options []searchOption, selected func() string, apply func(string)) core.Node {
-	choices := make([]core.Node, len(options))
+func searchFilterChips(options []searchOption, inset core.Points, selected func() string, apply func(string)) core.Node {
+	chips := make([]core.Node, len(options))
 	for i, opt := range options {
-		active := func() bool { return selected() == opt.value }
-		choice := tap(opt.label, func() { apply(opt.value) },
-			core.Style{Height: core.Pt(40), Padding: core.Symmetric(0, 9), CornerRadius: 20, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, "",
-			core.Text{Content: opt.label, MaxLines: 1, Style: textStyle(textSecondary, 500), ClassFunc: func() string {
-				return filterTone(active(), "text-on-secondary-container", "text-on-surface-variant")
-			}})
-		choice.Selected = active
-		choice.ClassFunc = func() string { return filterTone(active(), "bg-secondary-container", "") }
-		choices[i] = choice
+		chip := filterChip(opt.label, func() bool { return selected() == opt.value }, func() { apply(opt.value) })
+		chip.Style.Padding = core.Symmetric(0, inset)
+		chip.Style.MinWidth = core.Pt(48)
+		chip.HitSlop = core.Symmetric(8, 0)
+		chips[i] = chip
 	}
-	return core.Scroll{Horizontal: true, HideIndicator: true, Style: fill.Merge(core.Style{Height: core.Pt(44), MinWidth: core.Pt(0)}),
-		Children: []core.Node{row(core.Style{Height: core.Pct(100), Gap: 2, AlignItems: core.AlignCenter}, "", choices...)}}
+	return core.Scroll{Horizontal: true, HideIndicator: true, Style: fill.Merge(core.Style{Height: core.Pt(48)}),
+		Children: []core.Node{row(core.Style{Height: core.Pct(100), Gap: 8, AlignItems: core.AlignCenter}, "", chips...)}}
 }
 
-func filterTone(active bool, selected, idle string) string {
-	if active {
-		return selected
-	}
-	return idle
-}
-
-func searchFilterMenu(name string, options []searchOption, selected func() string, apply func(string)) core.Node {
+func searchFilterMenu(cx *core.Scope, name string, align core.Align, options []searchOption, selected func() string, apply func(string)) core.Node {
 	items := make([]core.Node, len(options))
 	for i, opt := range options {
-		items[i] = base.MenuItem{Label: opt.label, Role: core.RoleMenuItemRadio,
-			OnSelect: func() { apply(opt.value) }, Checked: func() bool { return selected() == opt.value },
-			Style: core.Style{Height: core.Pt(48), Padding: core.Symmetric(0, 16), Direction: core.Row, Gap: 12, AlignItems: core.AlignCenter, MinWidth: core.Pt(156)},
+		active := func() bool { return selected() == opt.value }
+		items[i] = base.MenuItem{Label: opt.label, Role: core.RoleMenuItemRadio, Checked: active,
+			OnSelect: func() { apply(opt.value) },
+			Style:    core.Style{Height: core.Pt(48), Padding: core.Symmetric(0, 12), Direction: core.Row, Gap: 12, AlignItems: core.AlignCenter, MinWidth: core.Pt(168)},
 			Children: []core.Node{
-				core.View{Style: core.Style{Width: core.Pt(18), Height: core.Pt(18)}, Children: []core.Node{
-					core.Show{When: func() bool { return selected() == opt.value }, Then: func(*core.Scope) core.Node { return icon(&symbols.Check, 18, "text-primary") }},
+				core.View{Style: core.Style{Width: core.Pt(20), Height: core.Pt(20)}, Children: []core.Node{
+					core.Show{When: active, Then: func(*core.Scope) core.Node { return icon(&symbols.Check, 20, "text-primary") }},
 				}},
-				label(opt.label, textSecondary, 500, "text-on-surface"),
+				label(opt.label, textBody, 400, "text-on-surface"),
 			}}
 	}
-	rest := core.Style{Opacity: core.Alpha(0), Transform: core.Transform{TranslateY: -6}}
-	return base.Menu{Align: core.AlignEnd, Offset: 4, Margin: 8,
-		LabelFunc: func() string { return name + "，" + searchOptionLabel(options, selected()) },
-		Style:     core.Style{FlexShrink: 0, Height: core.Pt(40), Padding: core.Symmetric(0, 10), CornerRadius: 20, JustifyContent: core.JustifyCenter},
-		Class:     "bg-surface-container", PopupClass: "bg-surface-container-high",
-		PopupStyle: core.Style{CornerRadius: 16, Padding: core.Symmetric(6, 0),
-			Transition: core.Transition{Duration: 180 * time.Millisecond, Easing: emphasized, Properties: core.TransitionOpacity | core.TransitionTransform}},
+	value := func() string { return searchOptionLabel(options, selected()) }
+	popup := core.Style{CornerRadius: 8, Padding: core.Symmetric(8, 0),
+		Transition: core.Transition{Duration: 200 * time.Millisecond, Easing: emphasized, Properties: core.TransitionOpacity | core.TransitionTransform}}
+	if cx.Env().OS() == core.OSAndroid {
+		// Android maps ShadowRadius to native elevation and composites it with the popup.
+		popup.ShadowRadius, popup.ShadowColor = 3, core.RGB(0)
+	} else {
+		popup.Shadows = []core.BoxShadow{
+			{Offset: core.Point{Y: 1}, Blur: 2, Color: core.RGBA(0, 0.30)},
+			{Offset: core.Point{Y: 2}, Blur: 6, Spread: 2, Color: core.RGBA(0, 0.15)},
+		}
+	}
+	rest := core.Style{Opacity: core.Alpha(0), Transform: core.Transform{TranslateY: -4}}
+	return base.Menu{Placement: core.PlaceBottom, Align: align, Offset: 8, Margin: 8,
+		LabelFunc:     func() string { return name + "，" + value() },
+		Style:         core.Style{FlexShrink: 0, Height: core.Pt(48)},
+		PopupClass:    "bg-surface-container",
+		PopupStyle:    popup,
 		StartingStyle: rest, EndingStyle: rest,
-		Trigger: row(core.Style{Gap: 4, AlignItems: core.AlignCenter}, "",
-			core.Text{ContentFunc: func() string { return searchOptionLabel(options, selected()) }, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textSecondary, 500)},
-			core.View{Style: core.Style{Width: core.Pt(16), Height: core.Pt(16), Transform: core.Transform{Rotate: 90}},
-				Children: []core.Node{icon(&symbols.ChevronRight, 16, "text-on-surface-variant")}}),
+		// Menu uses the bounds of its trigger content. Give the content the full touch height.
+		Trigger: core.View{Style: core.Style{Height: core.Pt(48), JustifyContent: core.JustifyCenter},
+			Children: []core.Node{row(core.Style{Height: core.Pt(32), Padding: core.Symmetric(0, 8), Gap: 4, AlignItems: core.AlignCenter, BorderWidth: 1, CornerRadius: 8}, "border-outline-variant",
+				core.Text{ContentFunc: value, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textSecondary, 500)},
+				core.View{Style: core.Style{Width: core.Pt(18), Height: core.Pt(18), Transform: core.Transform{Rotate: 90}},
+					Children: []core.Node{icon(&symbols.ChevronRight, 18, "text-on-surface-variant")}})}},
 		Children: items}
 }
 
@@ -143,7 +146,7 @@ func searchOptionLabel(options []searchOption, value string) string {
 }
 
 func (a *App) tradeSearchFilters(cx *core.Scope, tab searchResultTab) core.Node {
-	order := searchFilterMenu("二手排序", tradeSearchOrders, func() string { return tab.query.Get().Sort }, func(value string) {
+	order := searchFilterMenu(cx, "二手排序", core.AlignStart, tradeSearchOrders, func() string { return tab.query.Get().Sort }, func(value string) {
 		tab.apply(func(q *backend.SearchQuery) { q.Sort = value })
 	})
 	cityOpen := core.NewSignal(cx, false)
@@ -154,7 +157,7 @@ func (a *App) tradeSearchFilters(cx *core.Scope, tab searchResultTab) core.Node 
 		}
 		return ""
 	}
-	area := searchFilterMenu("二手地区", []searchOption{{"全部", ""}, {"只看同城", "city"}}, currentArea, func(value string) {
+	area := searchFilterMenu(cx, "二手地区", core.AlignStart, []searchOption{{"全部地区", ""}, {"只看同城", "city"}}, currentArea, func(value string) {
 		if value == "" {
 			tab.apply(func(q *backend.SearchQuery) { q.City = "" })
 			return

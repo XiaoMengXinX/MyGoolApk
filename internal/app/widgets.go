@@ -133,9 +133,9 @@ func simpleTabs(selected *core.Signal[int], at *core.Signal[float32], titles ...
 }
 
 // filterChip is a Material 3 filter chip.
-func filterChip(name string, on func() bool, fn func()) core.Node {
+func filterChip(name string, on func() bool, fn func()) core.View {
 	return core.View{
-		Role: core.RoleButton, Label: name, OnPress: func(core.PressEvent) { fn() },
+		Role: core.RoleButton, Label: name, Selected: on, OnPress: func(core.PressEvent) { fn() },
 		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 		ClassFunc: func() string {
 			if on() {
