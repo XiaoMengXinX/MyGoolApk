@@ -33,6 +33,7 @@ type pageLayer struct {
 	id             int
 	route          route
 	shown, leaving *core.Signal[bool]
+	view, scrim    core.Ref // the layer, which a back gesture moves, and the scrim over it
 }
 
 type pageStack struct {
@@ -45,10 +46,17 @@ type pageStack struct {
 	// fromList is set while a press in an expanded window began on the
 	// destinations: a page it opens takes the place of those shown.
 	fromList bool
+	// shell and shellScrim are the shell's layer and its scrim, which a back
+	// gesture uncovers under the first page.
+	shell, shellScrim core.Ref
+	// settling is set as a back gesture has moved the layers where they go:
+	// they take their places without their transitions.
+	settling *core.Signal[bool]
 }
 
 func (a *App) newPageStack(cx *core.Scope) *pageStack {
-	return &pageStack{a: a, cx: cx, nav: base.NewNav(cx, route{}), layers: core.NewSignalFunc(cx, []*pageLayer(nil), nil)}
+	return &pageStack{a: a, cx: cx, nav: base.NewNav(cx, route{}), layers: core.NewSignalFunc(cx, []*pageLayer(nil), nil),
+		settling: core.NewSignal(cx, false)}
 }
 
 // native reports whether the pages are the platform's own stack.
@@ -121,6 +129,53 @@ func (s *pageStack) Pop() bool {
 	return true
 }
 
+// preview names what a predictive back gesture moves on the app's own stack:
+// the top page, and the page or the shell it uncovers with the scrim over it.
+// An expanded window leaves the empty pane under its first page, with nothing
+// to slide back.
+func (s *pageStack) preview() (moving, uncovered, scrim *core.Ref) {
+	if s.native() {
+		return nil, nil, nil
+	}
+	leaving := func(l *pageLayer) bool { return l.leaving.GetUntracked() }
+	layers := s.layers.GetUntracked()
+	i, top := s.top(layers, leaving)
+	if top == nil {
+		return nil, nil, nil
+	}
+	if _, below := s.top(layers[:i], leaving); below != nil {
+		return &top.view, &below.view, &below.scrim
+	}
+	if s.a.size.GetUntracked() == expanded {
+		return nil, nil, nil
+	}
+	return &top.view, &s.shell, &s.shellScrim
+}
+
+// dropTop takes the top page away at once: a back gesture has moved it off
+// the screen and the layer below into its place, which it keeps there
+// rather than slide it in again.
+func (s *pageStack) dropTop() {
+	_, l := s.top(s.layers.GetUntracked(), func(l *pageLayer) bool { return l.leaving.GetUntracked() })
+	if l == nil {
+		return
+	}
+	s.settling.Set(true)
+	s.layers.Set(slices.DeleteFunc(slices.Clone(s.layers.GetUntracked()), func(x *pageLayer) bool { return x == l }))
+	s.cx.Run(func() {
+		s.cx.AfterFunc(pageMotion, func() { s.settling.Set(false) })
+	})
+}
+
+// motion is how a layer moves to where it goes: pageTransition, or at once
+// while settling.
+func (s *pageStack) motion() core.Transition {
+	if s.settling.Get() {
+		return core.Transition{}
+	}
+	return pageTransition
+}
+
 // Clear takes every page away.
 func (s *pageStack) Clear() {
 	if s.native() {
@@ -170,12 +225,12 @@ func (s *pageStack) view(cx *core.Scope, shell func(cx *core.Scope) core.Node, p
 			},
 			OnMouseDown:    func(core.MouseButtonEvent) { s.fromList = true },
 			OnTouchCapture: func(core.TouchEvent) { s.fromList = true },
-			Children:       []core.Node{s.under(func() bool { return s.covers(-1) }, shell(cx), nil)},
+			Children:       []core.Node{s.under(&s.shell, &s.shellScrim, func() bool { return s.covers(-1) }, shell(cx), nil)},
 		}
 		layers := core.Each(s.layers.Get, func(l *pageLayer) int { return l.id }, func(cx *core.Scope, item func() *pageLayer, _ func() int) core.Node {
 			l := core.Untracked(cx, item)
 			index := func() int { return slices.Index(s.layers.Get(), l) }
-			return s.under(func() bool { return s.covers(index()) }, page(cx, l.route), func() core.Style {
+			return s.under(&l.view, &l.scrim, func() bool { return s.covers(index()) }, page(cx, l.route), func() core.Style {
 				if !l.shown.Get() || l.leaving.Get() {
 					return core.Style{Transform: core.Transform{TranslateXPercent: 100}}
 				}
@@ -223,28 +278,32 @@ func emptyPane() core.Node {
 }
 
 // under is a layer of the app's own stack: the shell or a page, which
-// shifts and dims while covered and takes no touches then. place, when not
-// nil, is where the layer is while not covered. A page keeps to
-// pageMaxWidth in the middle of a wide pane.
-func (s *pageStack) under(covered func() bool, content core.Node, place func() core.Style) core.Node {
+// shifts and dims while covered and takes no touches then; ref and scrim name
+// it and its dimming for a back gesture to move. place, when not nil, is
+// where the layer is while not covered. A page keeps to pageMaxWidth in the
+// middle of a wide pane.
+func (s *pageStack) under(ref, scrim *core.Ref, covered func() bool, content core.Node, place func() core.Style) core.Node {
 	return core.View{
+		Ref:   ref,
 		Class: "bg-background",
-		Style: fillAbs.Merge(core.Style{Overflow: core.Hidden, Transition: pageTransition, AlignItems: core.AlignCenter}),
+		Style: fillAbs.Merge(core.Style{Overflow: core.Hidden, AlignItems: core.AlignCenter}),
 		StyleFunc: func() core.Style {
+			var st core.Style
 			if covered() {
-				return core.Style{Transform: core.Transform{TranslateXPercent: shellShift}, PointerEvents: core.PointerEventsNone}
+				st = core.Style{Transform: core.Transform{TranslateXPercent: shellShift}, PointerEvents: core.PointerEventsNone}
+			} else if place != nil {
+				st = place()
 			}
-			if place != nil {
-				return place()
-			}
-			return core.Style{}
+			st.Transition = s.motion()
+			return st
 		},
 		Children: []core.Node{
 			core.View{Style: fill.Merge(core.Style{Width: core.Pct(100), MaxWidth: core.Pt(pageMaxWidth)}), Children: []core.Node{content}},
 			core.View{
+				Ref:       scrim,
 				Class:     "bg-black/10",
-				Style:     fillAbs.Merge(core.Style{Transition: pageTransition, PointerEvents: core.PointerEventsNone}),
-				StyleFunc: func() core.Style { return core.Style{Opacity: core.Alpha(shown(covered()))} },
+				Style:     fillAbs.Merge(core.Style{PointerEvents: core.PointerEventsNone}),
+				StyleFunc: func() core.Style { return core.Style{Opacity: core.Alpha(shown(covered())), Transition: s.motion()} },
 			},
 		},
 	}

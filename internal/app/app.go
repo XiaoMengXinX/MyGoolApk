@@ -147,10 +147,18 @@ func (a *App) rootBack() core.Node {
 	return core.Show{
 		When: func() bool { return !a.nav.native() || a.nav.Depth() == 0 },
 		Then: func(cx *core.Scope) core.Node {
-			cx.OnBackPress(a.backFromRoot)
+			// A predictive back gesture moves the page back pops; from the
+			// headline tab back leaves the app, which Android previews.
+			cx.OnBackPressWith(a.backFromRoot, core.BackOptions{Preview: a.nav.preview, Previewed: a.nav.dropTop, Takes: a.takesBack})
 			return core.Group{}
 		},
 	}
+}
+
+// takesBack reports whether backFromRoot takes back now: a page to pop, or
+// another tab or destination to go to.
+func (a *App) takesBack() bool {
+	return a.nav.Depth() > 0 || a.tab.Get() != 0 || a.home.selected.Get() != headlineTab
 }
 
 // headlineTab is the home tab the app opens on, and back leads to.
