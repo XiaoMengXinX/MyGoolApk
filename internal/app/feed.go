@@ -150,9 +150,9 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 			case backend.PostText, backend.PostRating:
 				return core.Group{}
 			case backend.PostQuestion:
-				return qaBadge(kind.Label(), "bg-primary-container", "text-on-primary-container")
+				return pill(kind.Label, "bg-primary-container text-on-primary-container")
 			case backend.PostAnswer:
-				return qaBadge(kind.Label(), "bg-tertiary-container", "text-on-tertiary-container")
+				return pill(kind.Label, "bg-tertiary-container text-on-tertiary-container")
 			default:
 				return tonalPill(kind.Label)
 			}
@@ -179,18 +179,15 @@ func authorName(cx *core.Scope, get func() backend.Author, size core.Points) cor
 	)
 }
 
-func qaBadge(text, background, foreground string) core.Node {
-	// The Chinese glyphs sit slightly above the center of their line box.
-	return core.View{Class: background, PointerEvents: core.PointerEventsNone,
-		Style: core.Style{MinHeight: core.Pt(22), Padding: core.Edges{Top: 4, Right: 8, Bottom: 2, Left: 8}, CornerRadius: 8, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, FlexShrink: 0},
-		Children: []core.Node{core.Text{Content: text, MaxLines: 1, Class: foreground,
-			Style: core.Style{FontSize: textCaption, FontWeight: 500}}},
-	}
-}
-
 // tonalPill is a small secondary-container label such as a level badge.
 func tonalPill(text func() string) core.Node {
-	return core.Text{ContentFunc: text, MaxLines: 1, Class: "bg-secondary-container text-on-secondary-container",
+	return pill(text, "bg-secondary-container text-on-secondary-container")
+}
+
+// pill is a small label on a container of class's colors, its text centered
+// by its line height as on every platform's font.
+func pill(text func() string, class string) core.Node {
+	return core.Text{ContentFunc: text, MaxLines: 1, Class: class,
 		Style: func() core.Style {
 			s := textStyle(textCaption, 500)
 			s.Padding = core.Symmetric(2, 8)
