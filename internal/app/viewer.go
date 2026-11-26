@@ -124,6 +124,16 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 			current.Set(page)
 		}
 	}
+	// The keyboard's arrows go between the pictures, as a desktop's viewers do.
+	turn := func(d int) {
+		if i := min(max(current.GetUntracked()+d, 0), len(v.images)-1); i != current.GetUntracked() {
+			page = i
+			current.Set(i)
+			pager.ScrollTo(core.Point{X: core.Points(i) * width.GetUntracked()}, true)
+		}
+	}
+	cx.OnKey("left", func() { turn(-1) })
+	cx.OnKey("right", func() { turn(1) })
 	// zooms are the pictures built, by page, for a drag on a zoomed one.
 	zooms := map[int]*zoomPage{}
 	// pinched is when a picture's zoom last changed: a pinch, whose fingers
@@ -232,6 +242,10 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 						StyleFunc: func() core.Style { return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get())} },
 						OnPress:   press,
 						OnLongPress: func(core.PressEvent) {
+							held.Set(i)
+							saving.Set(true)
+						},
+						OnContextMenu: func(core.ContextMenuEvent) {
 							held.Set(i)
 							saving.Set(true)
 						},

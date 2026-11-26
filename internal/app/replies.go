@@ -18,7 +18,7 @@ type replyShape struct {
 func (d *detail) replyRow(cx *core.Scope, get func() backend.Reply) core.Node {
 	a := d.a
 	author := func() backend.Author { return get().Author }
-	return row(core.Style{Padding: core.Edges{Top: 12, Right: 16, Bottom: 8, Left: 16}, Gap: 12}, "bg-background",
+	v := row(core.Style{Padding: core.Edges{Top: 12, Right: 16, Bottom: 8, Left: 16}, Gap: 12}, "bg-background",
 		tap("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 0, CornerRadius: 18, Overflow: core.Hidden, AlignSelf: core.AlignStart}, "",
 			a.avatar(cx, author, 36)),
 		column(fill.Merge(core.Style{Gap: 6}), "",
@@ -95,7 +95,10 @@ func (d *detail) replyRow(cx *core.Scope, get func() backend.Reply) core.Node {
 				}),
 			),
 		),
-	)
+	).(core.View)
+	// A secondary click opens the menu the ⋮ does.
+	v.OnContextMenu = func(core.ContextMenuEvent) { d.menu.Set(new(get())) }
+	return v
 }
 
 // replyLead names whom a nested reply answers, before its text.
