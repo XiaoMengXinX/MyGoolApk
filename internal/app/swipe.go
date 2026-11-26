@@ -56,6 +56,7 @@ func (p *swipePager) pan(e core.PanEvent) {
 // scrolls away with the shown list while the bar stays at the top. Each list
 // leaves room for both above its rows and tells its scrolling (under).
 type headed struct {
+	cx    *core.Scope
 	shown *core.Signal[int]
 	count int
 	list  func(i int) *core.Ref
@@ -73,12 +74,16 @@ type headed struct {
 	ends [][2]core.Ref
 	// held are the lists whose rows changed and are not laid out yet.
 	held map[int]bool
+	// from is where the shown list was as a drag on the head began, and
+	// glide stops the glide a throw of it set off.
+	from  core.Points
+	glide func()
 }
 
 // newHeaded is a head over count lists that list returns the refs of, nil for
 // one not made yet, of which shown is in sight.
 func newHeaded(cx *core.Scope, shown *core.Signal[int], count int, list func(i int) *core.Ref) *headed {
-	h := &headed{shown: shown, count: count, list: list, head: core.NewSignal(cx, core.Points(0)), top: core.NewSignal(cx, core.Points(0)),
+	h := &headed{cx: cx, shown: shown, count: count, list: list, head: core.NewSignal(cx, core.Points(0)), top: core.NewSignal(cx, core.Points(0)),
 		shift: core.NewSignal(cx, core.Points(0)), offsets: map[int]core.Points{}, held: map[int]bool{}}
 	h.rests, h.ends = make([]*core.Signal[core.Points], count), make([][2]core.Ref, count)
 	for i := range h.rests {
@@ -197,6 +202,34 @@ func (h *headed) scrolled(i int) func(core.ScrollEvent) {
 	}
 }
 
+// drag scrolls the shown list by a vertical drag that began on the head or
+// the bar, which lie over the lists rather than in them, and glides it on as
+// the finger lets go. A sideways drag stays the head's own rows'.
+func (h *headed) drag(e core.PanEvent) {
+	i := h.shown.GetUntracked()
+	ref := h.list(i)
+	if ref == nil {
+		return
+	}
+	switch e.Phase {
+	case core.GestureBegan:
+		if h.glide != nil {
+			h.glide()
+		}
+		h.from = h.offsets[i]
+	case core.GestureChanged:
+		ref.ScrollTo(core.Point{Y: max(h.from-e.Translation.Y, 0)}, false)
+	case core.GestureEnded:
+		// An ease-out cubic starts at three times its mean speed, so this
+		// glide leaves at the finger's.
+		y := max(h.from-e.Translation.Y, 0)
+		distance := -e.Velocity.Y * core.Points(glideTime.Seconds()/3)
+		h.glide = h.cx.Animate(glideTime, easeOutCubic, func(k float64) {
+			ref.ScrollTo(core.Point{Y: max(y+distance*core.Points(k), 0)}, false)
+		})
+	}
+}
+
 // view lays head and bar over pages.
 func (h *headed) view(head, bar, pages core.Node) core.Node {
 	return core.View{Style: fill.Merge(core.Style{Overflow: core.Hidden}), Children: []core.Node{
@@ -206,6 +239,8 @@ func (h *headed) view(head, bar, pages core.Node) core.Node {
 			PointerEvents: core.PointerEventsBoxNone,
 			StyleFunc:     func() core.Style { return core.Style{Transform: core.Transform{TranslateY: -h.shift.Get()}} },
 			OnLayout:      func(b core.Bounds) { h.top.Set(b.Size.Height) },
+			OnPan:         h.drag,
+			PanActivation: core.PanActivation{ActiveOffsetY: 10, FailOffsetX: 10},
 			Children: []core.Node{
 				core.View{OnLayout: func(b core.Bounds) { h.head.Set(b.Size.Height) }, Children: []core.Node{head}},
 				bar,
