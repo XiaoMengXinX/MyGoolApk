@@ -202,3 +202,47 @@ func TestSummaryStreamsInTheSameCard(t *testing.T) {
 		t.Error("streaming replaced the summary card's views")
 	}
 }
+
+type collectionBackend struct {
+	*fakeBackend
+	removed bool
+}
+
+func (b *collectionBackend) Collections(_ context.Context, _ string, page int) (backend.CollectionPage, error) {
+	return backend.CollectionPage{Items: []backend.Collection{
+		{ID: "folder", Name: "收藏夹示例", Count: 3, Contains: true},
+	}, HasMore: page == 1}, nil
+}
+
+func (b *collectionBackend) SetCollection(_ context.Context, _, _ string, add bool) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.removed = !add
+	return nil
+}
+
+func (b *collectionBackend) FeedDetail(ctx context.Context, id string) (backend.Feed, error) {
+	f, err := b.fakeBackend.FeedDetail(ctx, id)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	f.Favorited = true
+	f.Stats.Favorites = 23
+	if b.removed {
+		f.Stats.Favorites = 21
+	}
+	return f, err
+}
+
+func TestPostUsesServerFavoriteCountAfterRemovingFromFolder(t *testing.T) {
+	b := &collectionBackend{fakeBackend: newFakeBackend()}
+	b.uid = "42"
+	app := start(t, b)
+	openCard(app)
+	app.WaitFor("role:button 收藏 >> text:23", time.Second)
+	app.Press("role:button 收藏")
+	app.WaitFor("text:收藏夹示例", time.Second)
+	app.Press("role:button 收藏夹 >> text:收藏夹示例")
+	app.WaitFor("text:2 个内容", time.Second)
+	app.Back()
+	app.WaitFor("role:button 收藏 >> text:21", time.Second)
+}

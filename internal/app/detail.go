@@ -21,8 +21,9 @@ type detail struct {
 	loading        bool
 	refreshReplies bool
 
-	sort    *core.Signal[int] // a backend.ReplySort
-	replies *pager[backend.Reply]
+	sort     *core.Signal[int] // a backend.ReplySort
+	replies  *pager[backend.Reply]
+	comments core.Ref
 
 	// summary is the AI summary coolapk1s.com writes of the post, as far as
 	// it has streamed in; summaryError drops the card when there is none.
@@ -381,7 +382,7 @@ func (a *App) articleImage(cx *core.Scope, im backend.Image, open func()) core.N
 }
 
 func (d *detail) commentsHeader() core.Node {
-	return column(core.Style{}, "bg-background",
+	return core.View{Ref: &d.comments, Class: "bg-background", Children: []core.Node{
 		core.View{Class: "bg-surface-container-low", Style: core.Style{Height: core.Pt(8)}},
 		row(core.Style{Height: core.Pt(56), Padding: core.Symmetric(0, 16), Gap: 8, AlignItems: core.AlignCenter}, "",
 			core.Text{ContentFunc: func() string {
@@ -422,11 +423,11 @@ func (d *detail) commentsHeader() core.Node {
 				return row(core.Style{Gap: 8}, "", chips...)
 			}),
 		),
-	)
+	}}
 }
 
 // actionBar is the bottom bar of a post: a comment field that opens the
-// composer, and like, favorite and share actions.
+// composer beside the like, comment, favorite and share actions.
 func (d *detail) actionBar(cx *core.Scope) core.Node {
 	a := d.a
 	feed := func() backend.Feed { return d.feed.Get() }
@@ -438,30 +439,34 @@ func (d *detail) actionBar(cx *core.Scope) core.Node {
 		core.Style{Height: core.Pt(64), Padding: core.Edges{Right: 4, Left: 16}, Gap: 4, AlignItems: core.AlignCenter}, "",
 		tap("写评论", func() { d.openComposer("", "") }, fill.Merge(core.Style{Direction: core.Row, Height: core.Pt(48), CornerRadius: 24,
 			Padding: core.Symmetric(0, 16), AlignItems: core.AlignCenter, Overflow: core.Hidden}), "bg-surface-container-highest",
-			label("说点什么…", textSecondary, 400, "text-on-surface-variant")),
+			label("写评论", textSecondary, 400, "text-on-surface-variant")),
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			if likes.Get() {
-				return barAction(&symbols.Favorite, "text-primary", func() string { return formatCount(feed().Stats.Likes) }, "取消点赞", d.toggleLike)
+				return barAction(&symbols.Favorite, "text-primary", func() int { return feed().Stats.Likes }, "取消点赞", d.toggleLike)
 			}
-			return barAction(&symbols.FavoriteOutline, "text-on-surface-variant", func() string { return formatCount(feed().Stats.Likes) }, "点赞", d.toggleLike)
+			return barAction(&symbols.FavoriteOutline, "text-on-surface-variant", func() int { return feed().Stats.Likes }, "点赞", d.toggleLike)
 		}),
+		barAction(&symbols.Comment, "text-on-surface-variant", func() int {
+			f := feed()
+			if f.Kind == backend.PostQuestion {
+				return f.Answers
+			}
+			return f.Stats.Comments
+		}, "跳到评论区", func() { d.comments.Reveal(core.RevealOptions{Animated: true}) }),
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			if marked.Get() {
-				return barAction(&symbols.Bookmark, "text-primary", nil, "收藏", d.favorites.open)
+				return barAction(&symbols.Bookmark, "text-primary", func() int { return feed().Stats.Favorites }, "收藏", d.favorites.open)
 			}
-			return barAction(&symbols.BookmarkOutline, "text-on-surface-variant", nil, "收藏", d.favorites.open)
+			return barAction(&symbols.BookmarkOutline, "text-on-surface-variant", func() int { return feed().Stats.Favorites }, "收藏", d.favorites.open)
 		}),
-		barAction(&symbols.Share, "text-on-surface-variant", nil, "分享", func() { a.shareFeed(feed()) }),
+		barAction(&symbols.Share, "text-on-surface-variant", func() int { return feed().Stats.Forwards }, "转发", func() { a.shareFeed(feed()) }),
 	))
 }
 
-func barAction(glyph *symbol, class string, count func() string, name string, fn func()) core.Node {
-	kids := []core.Node{icon(glyph, 24, class)}
-	if count != nil {
-		kids = append(kids, core.Text{ContentFunc: count, Style: textStyle(textCaption, 400)})
-	}
-	return tap(name, fn, core.Style{Direction: core.Row, Height: core.Pt(48), MinWidth: core.Pt(48), Padding: core.Symmetric(0, 12), Gap: 4,
-		AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, CornerRadius: 24, Overflow: core.Hidden, FlexShrink: 0}, class, kids...)
+func barAction(glyph *symbol, class string, count func() int, name string, fn func()) core.Node {
+	return tap(name, fn, core.Style{Height: core.Pt(52), MinWidth: core.Pt(44), Padding: core.Symmetric(0, 4), Gap: 2,
+		AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, CornerRadius: 12, FlexShrink: 0}, class,
+		icon(glyph, 22, class), labelFunc(func() string { return formatCount(count()) }, textCaption, 400, class))
 }
 
 func (d *detail) toggleLike() {

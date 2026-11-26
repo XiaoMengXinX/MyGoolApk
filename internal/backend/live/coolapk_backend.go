@@ -370,9 +370,10 @@ func feedFromObject(object map[string]any) backend.Feed {
 		PublishedAt: apiTime(object, "dateline"),
 		Author:      authorFromObject(object),
 		Stats: backend.Stats{
-			Likes:    apiInt(object, "likenum"),
-			Comments: apiInt(object, "commentnum", "replynum"),
-			Forwards: apiInt(object, "forwardnum"),
+			Likes:     apiInt(object, "likenum"),
+			Comments:  apiInt(object, "commentnum", "replynum"),
+			Forwards:  apiInt(object, "forwardnum"),
+			Favorites: apiInt(object, "favnum"),
 		},
 		Liked:     apiInt(action, "like") != 0,
 		Favorited: apiInt(action, "collect") == 1 || apiInt(action, "favorite") == 1,

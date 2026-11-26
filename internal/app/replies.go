@@ -490,11 +490,11 @@ type favorites struct {
 	d       *detail
 	isOpen  *core.Signal[bool]
 	folders *pager[backend.Collection]
-	busy    map[string]bool
+	busy    bool
 }
 
 func (a *App) newFavorites(cx *core.Scope, d *detail) *favorites {
-	f := &favorites{d: d, isOpen: core.NewSignal(cx, false), busy: make(map[string]bool)}
+	f := &favorites{d: d, isOpen: core.NewSignal(cx, false)}
 	f.folders = newPager(cx, func(ctx context.Context, page int) ([]backend.Collection, bool, error) {
 		r, err := a.backend.Collections(ctx, d.id, page)
 		return r.Items, r.HasMore, err
@@ -506,9 +506,8 @@ func (f *favorites) open() {
 	if !f.d.a.requireLogin() {
 		return
 	}
-	f.busy = make(map[string]bool)
 	f.isOpen.Set(true)
-	if f.folders.started {
+	if f.folders.started && !f.busy {
 		f.folders.reset()
 	}
 }
@@ -526,7 +525,7 @@ func (f *favorites) sheet() core.Node {
 func (f *favorites) folderRow(get func() backend.Collection) core.Node {
 	return tap("收藏夹", func() {
 		col := get()
-		if !f.busy[col.ID] {
+		if !f.busy {
 			f.toggle(col.ID, !col.Contains)
 		}
 	}, core.Style{Direction: core.Row, Height: core.Pt(64), Padding: core.Symmetric(0, 8), Gap: 16, AlignItems: core.AlignCenter}, "",
@@ -544,34 +543,39 @@ func (f *favorites) folderRow(get func() backend.Collection) core.Node {
 }
 
 func (f *favorites) toggle(folderID string, add bool) {
-	f.busy[folderID] = true
+	f.busy = true
 	d := f.d
-	backgroundErr(d.a, func(ctx context.Context) error { return d.a.backend.SetCollection(ctx, folderID, d.id, add) },
-		func(err error) {
-			delete(f.busy, folderID)
-			if err != nil {
-				d.a.notice("收藏失败：" + err.Error())
-				return
-			}
-			f.folders.update(folderID, func(col backend.Collection) backend.Collection {
-				if col.Contains != add {
-					col.Contains = add
-					if add {
-						col.Count++
-					} else {
-						col.Count--
-					}
+	backgroundErr(d.a, func(ctx context.Context) error { return d.a.backend.SetCollection(ctx, folderID, d.id, add) }, func(err error) {
+		if err != nil {
+			f.busy = false
+			d.a.notice("收藏失败：" + err.Error())
+			return
+		}
+		f.folders.update(folderID, func(col backend.Collection) backend.Collection {
+			if col.Contains != add {
+				col.Contains = add
+				if add {
+					col.Count++
+				} else {
+					col.Count--
 				}
-				return col
-			})
-			any := false
-			for _, col := range f.folders.items.GetUntracked() {
-				any = any || col.Contains
 			}
-			feed := d.feed.GetUntracked()
-			feed.Favorited = any
-			d.feed.Set(feed)
+			return col
 		})
+		// The post carries the total across collections, including pages the sheet hasn't loaded.
+		background(d.a, func(ctx context.Context) (backend.Feed, error) { return d.a.backend.FeedDetail(ctx, d.id) },
+			func(latest backend.Feed, err error) {
+				f.busy = false
+				if err != nil {
+					d.a.notice("收藏数量刷新失败：" + err.Error())
+					return
+				}
+				feed := d.feed.GetUntracked()
+				feed.Favorited = latest.Favorited
+				feed.Stats.Favorites = latest.Stats.Favorites
+				d.feed.Set(feed)
+			})
+	})
 }
 
 // withoutPicturePlaceholder drops the "[图片]" a nested reply's text holds

@@ -11,7 +11,7 @@ import (
 func TestMixedCardsAndFeedFields(t *testing.T) {
 	data := json.RawMessage(`[
 		{"entityType":"card","entities":[{"entityType":"feed","id":"41","feedType":"feedArticle","message_title":"Nested article","pic":"http://image.coolapk.com/feed/a@1200x600.jpg"}]},
-		{"entityType":"feed","id":42,"username":"Coolapk user","userAvatar":"http://avatar.coolapk.com/a.jpg","message":"Hello <a href=\"/t/mygo\">#MyGo#</a><br>native UI","dateline":1700000000,"likenum":"12","commentnum":7,"picArr":["http://image.coolapk.com/feed/b@800x800.jpg"]}
+		{"entityType":"feed","id":42,"username":"Coolapk user","userAvatar":"http://avatar.coolapk.com/a.jpg","message":"Hello <a href=\"/t/mygo\">#MyGo#</a><br>native UI","dateline":1700000000,"likenum":"12","commentnum":7,"favnum":3,"picArr":["http://image.coolapk.com/feed/b@800x800.jpg"]}
 	]`)
 	objects, err := decodeAPIObjects(data)
 	if err != nil {
@@ -30,7 +30,7 @@ func TestMixedCardsAndFeedFields(t *testing.T) {
 	if got := feeds[1].Images[0]; got.URL != "https://image.coolapk.com/feed/b@800x800.jpg" || got.Width != 800 || got.Height != 800 {
 		t.Errorf("image = %+v", got)
 	}
-	if feeds[1].Stats.Likes != 12 || feeds[1].Stats.Comments != 7 {
+	if feeds[1].Stats.Likes != 12 || feeds[1].Stats.Comments != 7 || feeds[1].Stats.Favorites != 3 {
 		t.Errorf("stats = %+v", feeds[1].Stats)
 	}
 }

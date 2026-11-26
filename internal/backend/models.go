@@ -116,9 +116,10 @@ type Forward struct {
 
 // Stats are the interaction counts of a feed.
 type Stats struct {
-	Likes    int
-	Comments int
-	Forwards int
+	Likes     int
+	Comments  int
+	Forwards  int
+	Favorites int
 }
 
 // Target is the topic or product a post is filed under, shown as the chip
