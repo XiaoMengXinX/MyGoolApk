@@ -105,16 +105,18 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 	}
 	return through(row(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
 		// The avatar and the name open the author as one; the room beside them
-		// is the card's.
-		tap("作者主页", func() { a.openUser(author()) }, core.Style{Direction: core.Row, Gap: 12, AlignItems: core.AlignCenter, FlexShrink: 1, MinWidth: core.Pt(0),
-			// The press area reaches 4dp past the avatar, its feedback clear of it.
-			Padding: core.Edges{Top: 4, Right: 8, Bottom: 4, Left: 4}, Margin: core.Edges{Top: -4, Bottom: -4, Left: -4}, CornerRadius: size/2 + 4}, "",
-			a.avatar(cx, author, size),
-			column(core.Style{Gap: 2, FlexShrink: 1, MinWidth: core.Pt(0)}, "",
-				authorName(cx, author, textBody),
-				core.Text{ContentFunc: meta, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
-			),
-		),
+		// is the card's. Hovered, the avatar dims and the name is underlined,
+		// as links to a person are on the web.
+		pointing(core.View{Role: core.RoleButton, Label: "作者主页", OnPress: func(core.PressEvent) { a.openUser(author()) },
+			Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
+			Style:   core.Style{Direction: core.Row, Gap: 12, AlignItems: core.AlignCenter, FlexShrink: 1, MinWidth: core.Pt(0), Overflow: core.Hidden, Group: "author"},
+			Children: []core.Node{
+				a.hoverAvatar(cx, author, size),
+				column(core.Style{Gap: 2, FlexShrink: 1, MinWidth: core.Pt(0)}, "",
+					authorName(cx, author, textBody),
+					core.Text{ContentFunc: meta, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
+				),
+			}}),
 		core.View{Style: core.Style{FlexGrow: 1}, PointerEvents: core.PointerEventsNone},
 		// A rating heads its text with its own tags.
 		dynamicShape(cx, func() backend.PostKind { return get().Kind }, func(cx *core.Scope, kind backend.PostKind) core.Node {
@@ -139,10 +141,30 @@ func (a *App) avatar(cx *core.Scope, get func() backend.Author, size core.Points
 		Children: []core.Node{a.pic(cx, func() string { return get().AvatarURL }, core.Cover, "", fillAbs)}}
 }
 
+// hoverAvatar is an avatar that dims while the press area of group
+// "author" around it is hovered.
+func (a *App) hoverAvatar(cx *core.Scope, get func() backend.Author, size core.Points) core.Node {
+	if !hoverable {
+		return a.avatar(cx, get, size)
+	}
+	return core.View{Style: core.Style{FlexShrink: 0}, Children: []core.Node{
+		a.avatar(cx, get, size),
+		core.View{Class: "bg-black", PointerEvents: core.PointerEventsNone,
+			Style: fillAbs.Merge(core.Style{CornerRadius: size / 2, Opacity: core.Alpha(0),
+				GroupStyle: &core.GroupStyle{Name: "author", Hover: &core.Style{Opacity: core.Alpha(0.12)}}})},
+	}}
+}
+
 func authorName(cx *core.Scope, get func() backend.Author, size core.Points) core.Node {
 	return row(core.Style{Gap: 4, AlignItems: core.AlignCenter}, "",
 		core.Text{ContentFunc: func() string { return displayName(get().Name) }, MaxLines: 1, Class: "text-on-surface",
-			Style: func() core.Style { s := textStyle(size, 500); s.FlexShrink = 1; return s }()},
+			Style: func() core.Style {
+				s := textStyle(size, 500)
+				s.FlexShrink = 1
+				// Underlined while the author's press area around it is hovered.
+				s.GroupStyle = &core.GroupStyle{Name: "author", Hover: &core.Style{TextDecoration: core.TextDecorationUnderline}}
+				return s
+			}()},
 		dynamicShape(cx, func() bool { return get().Verified }, func(cx *core.Scope, verified bool) core.Node {
 			if verified {
 				return icon(&symbols.Verified, size, "text-primary")
