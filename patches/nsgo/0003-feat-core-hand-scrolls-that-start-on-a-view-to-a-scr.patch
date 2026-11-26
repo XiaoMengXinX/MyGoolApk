@@ -1,0 +1,339 @@
+From 1eb3cd047077d1af83fc559e4af7f8ee0bc8649f Mon Sep 17 00:00:00 2001
+From: xiaomengxin <xibaole2333@gmail.com>
+Date: Fri, 27 Nov 2026 07:17:37 +0800
+Subject: [PATCH] feat(core): hand scrolls that start on a view to a scroll
+ target
+
+---
+ core/commit.go                                | 19 +++++
+ core/element.go                               | 10 +++
+ core/nav_test.go                              | 27 +++++++
+ core/tree.go                                  | 17 ++++-
+ docs/roadmap.md                               |  1 +
+ internal/driver/mount.go                      |  3 +
+ .../android/java/dev/oneo/nsgo/NsgoView.java  | 72 +++++++++++++++++++
+ internal/platform/android/protocol.go         |  1 +
+ internal/platform/macos/wheel.go              | 14 +++-
+ 9 files changed, 161 insertions(+), 3 deletions(-)
+
+diff --git a/core/commit.go b/core/commit.go
+index c74ccb0f..50f97998 100644
+--- a/core/commit.go
++++ b/core/commit.go
+@@ -305,6 +305,7 @@ func (t *Tree) commitRound() {
+ 	t.emitHeaderViews()
+ 	t.checkPointerLock()
+ 	t.makeCommanded()
++	t.resolveScrollTargets()
+ 	t.emit(t.view)
+ 	t.syncPaced()
+ 	for _, n := range t.transits {
+@@ -1416,3 +1417,21 @@ func increasingRun(seq []int) []bool {
+ 	}
+ 	return stay
+ }
++
++// resolveScrollTargets reads each View.ScrollTarget, which may name another
++// scroll view as the one shown changes, and sends a view whose target
++// changed again.
++func (t *Tree) resolveScrollTargets() {
++	for n := range t.scrollTargets {
++		var id NodeID
++		var ref *Ref
++		t.within(n.owner, func() { ref = Untracked(n.owner, n.scrollTarget) })
++		if ref.placed() && ref.n.kind == driver.KindScroll {
++			id = ref.n.id
++		}
++		if id != n.props.ScrollTarget {
++			n.props.ScrollTarget = id
++			t.touch(n)
++		}
++	}
++}
+diff --git a/core/element.go b/core/element.go
+index a8a43df3..5203b2a1 100644
+--- a/core/element.go
++++ b/core/element.go
+@@ -113,6 +113,16 @@ type View struct {
+ 	HitSlop Edges
+ 	// HitSlopFunc is HitSlop following what it reads.
+ 	HitSlopFunc func() Edges
++	// ScrollTarget, when set, names the scroll view that scrolls do over
++	// this view: what lies over a scroll view rather than in it, as a head
++	// over lists, scrolls it as if it were under the pointer or the finger.
++	// A desktop's wheel and touchpad over the view go to it, and a drag on a
++	// touch screen that starts on the view and goes along the scroll view's
++	// axis drags it, with the platform's own feel and glide; views inside
++	// that take the drag, as a scroll view across it, keep it. It is read
++	// at each commit, so it may name the scroll view shown now; nil, or one
++	// not shown, leaves scrolls to the views under them.
++	ScrollTarget func() *Ref
+ 	// DelayLongPress is how long a press is held to be a long press; 0
+ 	// is 500 ms.
+ 	DelayLongPress time.Duration
+diff --git a/core/nav_test.go b/core/nav_test.go
+index 9b55f85b..7783b5b0 100644
+--- a/core/nav_test.go
++++ b/core/nav_test.go
+@@ -922,3 +922,30 @@ func TestCoveredScreenKeepsItsLayout(t *testing.T) {
+ 			home.frame, frame, h.find("text").text.box, box, len(h.find("list").children), rows)
+ 	}
+ }
++
++func TestScrollTargetNamesTheScrollViewShown(t *testing.T) {
++	var a, b Ref
++	var shown *Signal[int]
++	h := newPhone(t, phone, func(cx *Scope) Node {
++		shown = NewSignal(cx, 0)
++		return View{Style: Style{FlexGrow: 1}, Children: []Node{
++			Scroll{Ref: &a, TestID: "a", Style: Style{Height: Pt(100)}},
++			Scroll{Ref: &b, TestID: "b", Style: Style{Height: Pt(100)}},
++			View{TestID: "head", ScrollTarget: func() *Ref {
++				if shown.Get() == 0 {
++					return &a
++				}
++				return &b
++			}},
++		}}
++	})
++	h.commit()
++	if got := h.find("head").props.ScrollTarget; got != h.find("a").id {
++		t.Errorf("head's scroll target = %v, want a's %v", got, h.find("a").id)
++	}
++	shown.Set(1)
++	h.commit()
++	if got := h.find("head").props.ScrollTarget; got != h.find("b").id {
++		t.Errorf("head's scroll target = %v after b is shown, want b's %v", got, h.find("b").id)
++	}
++}
+diff --git a/core/tree.go b/core/tree.go
+index acd77f94..4fd0b173 100644
+--- a/core/tree.go
++++ b/core/tree.go
+@@ -123,6 +123,8 @@ type Tree struct {
+ 	backs         []*backHandler
+ 	// regions are the live regions, which the views do not number: an owner may have no view but a region, as a Holder's content may (keyPlaces).
+ 	regions map[*node]struct{}
++	// scrollTargets are the views with a View.ScrollTarget.
++	scrollTargets map[*node]struct{}
+ 	// peeking is the screen a back gesture may uncover (Tree.peek).
+ 	peeking *node
+ 	// previewing is the back handler whose BackOptions.Preview a back
+@@ -279,8 +281,11 @@ type node struct {
+ 	contentBox *Signal[Bounds]
+ 
+ 	responder *Responder // a view's part in the touch responder
+-	follow    *following // what its frame follows (View.Follow)
+-	match     string     // View.MatchID
++	// scrollTarget is View.ScrollTarget, which Tree.resolveScrollTargets
++	// reads at each commit.
++	scrollTarget func() *Ref
++	follow       *following // what its frame follows (View.Follow)
++	match        string     // View.MatchID
+ 	// tip is the tooltip's: what shows it as the pointer comes onto the
+ 	// view or the keyboard's focus into it, and hides it.
+ 	tip *tooltipHooks
+@@ -1199,6 +1204,7 @@ func (t *Tree) discard(n *node) {
+ 	if n.kind == 0 {
+ 		delete(t.regions, n)
+ 	}
++	delete(t.scrollTargets, n)
+ 	if n.kind == driver.KindModal {
+ 		// What it covered comes back to the keymap (keyActive).
+ 		t.keysChanged = true
+@@ -1882,6 +1888,13 @@ func (t *Tree) mountView(cx *Scope, parent *node, v View) {
+ 	t.bindBool(cx, n, v.Pressed, &n.props.Pressed)
+ 	t.bindBool(cx, n, v.Busy, &n.props.Busy)
+ 	t.bindBool(cx, n, v.Invalid, &n.props.Invalid)
++	if v.ScrollTarget != nil {
++		n.scrollTarget = v.ScrollTarget
++		if t.scrollTargets == nil {
++			t.scrollTargets = map[*node]struct{}{}
++		}
++		t.scrollTargets[n] = struct{}{}
++	}
+ 	if v.HitSlopFunc != nil {
+ 		cx.renderEffect(func() {
+ 			if e := v.HitSlopFunc(); e != n.props.HitSlop {
+diff --git a/docs/roadmap.md b/docs/roadmap.md
+index 277a8574..c6d95e8f 100644
+--- a/docs/roadmap.md
++++ b/docs/roadmap.md
+@@ -30,6 +30,7 @@ What NSH added between 0.4.0 and 0.5.0 that NSGo has not, in the order to build
+ | Rich text by touch | `rich-editor.md`, #1368, [#1338](https://github.com/nsgo-dev/nsgo/issues/1338) | A `RichEditor` selects by touch with handles and the system edit menu on iOS and Android. Headless tests cover gestures and edit actions; an iOS 27 simulator checks native long-press selection, handle dragging, visible menu actions changing with editability and Copy through the input responder. Android’s wire protocol and Java runtime compile against API 36. Physical iOS and Android acceptance remains open (2026-11-22). |
+ | Nearest-neighbor sampling | [#1209](https://github.com/nsgo-dev/nsgo/issues/1209) | Verify each host's pixels, HarmonyOS's and mini programs' included |
+ | Pixel buffers everywhere | [Pixel buffers](architecture/images.md#pixel-buffers), [#107](https://github.com/nsgo-dev/nsgo/issues/107), [#1101](https://github.com/nsgo-dev/nsgo/issues/1101) | Measure frame continuity and cost at 960×540 and 1920×1080 at 60 fps on macOS, Windows and Linux, and at 1920×1080 on Android. Skip copies for hidden and minimized windows. Give QQ, Douyin and Alipay a canvas binding for image views. Verify that a `Shader` shows each version of a 960×540 texture rewritten at 60 fps without blank frames on macOS, iOS, Windows, Linux, Android and the web. Android and the web have 960×540 frame captures and timing measurements. Headless checks cover Apple image views, Metal texture uploads and Linux drawing. WeChat Developer Tools verified pixel images and draws of offscreen buffers. A HarmonyOS device showed each version of a buffer rewritten each frame in an image view and a canvas, and its per-frame cost is recorded. Shader frames at 960×540 were checked on macOS, an iOS simulator, Android, Chrome, Linux's llvmpipe and Windows CI (#1115), and the Pixel 3 XL's pipe cost for them is recorded. [Performance](architecture/performance.md#keeping-frames-cheap) |
++| Scroll targets everywhere | — | `View.ScrollTarget` hands scrolls that start on a view to the scroll view it names on macOS (the wheel and touchpad) and Android (a drag along the scroll view's axis); iOS, Windows, Linux and the web hand nothing yet, where a view over a list scrolls it only through its own pan |
+ | Terminal content and services | [Terminal backend](architecture/terminal.md#backend), [#1345](https://github.com/nsgo-dev/nsgo/issues/1345) | Extend cell views/text/editing with canvas and image rendering, hosted content alternatives, system menus and alerts, animations, scroll snapping/inertia, modal focus trapping, zoom, bidirectional shaping, head/middle ellipsis and a system clipboard bridge; verify mouse input and resizes in a Windows console |
+ | Store uploads | `tooling.md` (Releases), #1052, #1054, [#1202](https://github.com/nsgo-dev/nsgo/issues/1202) | `nsgo publish` uploads the AAB `build -channel store` makes to Play's tracks (#1230); uploads to TestFlight (#1229) and itch.io (#1561) and text-based store listings for App Store Connect and Google Play (#1564) are implemented |
+ | Google Play upload verification | [#1230](https://github.com/nsgo-dev/nsgo/issues/1230), [Google Play publishing](architecture/tool.md#google-play-publishing) | A signed App Bundle uploads to a real app's internal track and the committed release appears in Play Console |
+diff --git a/internal/driver/mount.go b/internal/driver/mount.go
+index d6490c2e..41eb2fab 100644
+--- a/internal/driver/mount.go
++++ b/internal/driver/mount.go
+@@ -1149,6 +1149,9 @@ type ViewProps struct {
+ 	PointerEvents  PointerEvents
+ 	HitSlop        Edges
+ 	DelayLongPress time.Duration
++	// ScrollTarget is the scroll view scrolls over the view go to
++	// (core.View.ScrollTarget), or 0.
++	ScrollTarget NodeID
+ 	// Ripple is Android's press ripple, nil for none. It is shared and
+ 	// never changed, as Actions is.
+ 	Ripple *Ripple
+diff --git a/internal/platform/android/java/dev/oneo/nsgo/NsgoView.java b/internal/platform/android/java/dev/oneo/nsgo/NsgoView.java
+index c62d7aa8..17a9a3c6 100644
+--- a/internal/platform/android/java/dev/oneo/nsgo/NsgoView.java
++++ b/internal/platform/android/java/dev/oneo/nsgo/NsgoView.java
+@@ -6870,6 +6870,7 @@ public class NsgoView extends FrameLayout implements NsgoEngine.Listener {
+         n.labelledBy = new int[in.readInt()];
+         for (int i = 0; i < n.labelledBy.length; i++) n.labelledBy[i] = in.readInt();
+         n.level = in.readInt();
++        n.scrollTarget = in.readInt();
+         if (n.view instanceof TextNode) ((TextNode) n.view).selectable(selectable, Text.argb(selectionColor));
+         View view = n.accessible();
+         // A text field's ItemInput enables it.
+@@ -7101,6 +7102,16 @@ public class NsgoView extends FrameLayout implements NsgoEngine.Listener {
+         }
+         /** The child a touch outside every child went to by its hit slop or area, until it lifts. */
+         private View routed;
++        /**
++         * A drag that went down on a view with a scroll target
++         * (core.View.ScrollTarget): where it went down on the screen, the
++         * scroll view it is handed to once it goes along its axis, and
++         * whether a view inside took it first.
++         */
++        private float handDownX, handDownY;
++        private long handDownTime;
++        private FrameLayout handedTo;
++        private boolean handKept;
+         /** Whether the touch reached the group outside its bounds and slop: only children may take it. */
+         boolean childrenOnly;
+ 
+@@ -7139,6 +7150,7 @@ public class NsgoView extends FrameLayout implements NsgoEngine.Listener {
+         public boolean dispatchTouchEvent(MotionEvent e) {
+             int action = e.getActionMasked();
+             if (node != null && node.pointerEvents == Protocol.POINTER_EVENTS_NONE) return false;
++            if (node != null && node.scrollTarget != 0 && handScroll(e)) return true;
+             if (action == MotionEvent.ACTION_DOWN) routed = route(e);
+             if (routed != null) {
+                 if (action != MotionEvent.ACTION_DOWN) deliver(routed, e);
+@@ -7219,8 +7231,66 @@ public class NsgoView extends FrameLayout implements NsgoEngine.Listener {
+             return taken;
+         }
+ 
++        /**
++         * Hands a vertical drag that went down on this view to its scroll
++         * target, which drags and glides as if the finger had gone down on
++         * it: the views inside get a cancel, and the scroll view the touch
++         * from where it went down on, in its own coordinates. A view inside
++         * that took the drag, as a scroll view across it does, keeps it.
++         * Reports whether it took e.
++         */
++        private boolean handScroll(MotionEvent e) {
++            int action = e.getActionMasked();
++            if (action == MotionEvent.ACTION_DOWN) {
++                handDownX = e.getRawX();
++                handDownY = e.getRawY();
++                handDownTime = e.getDownTime();
++                handedTo = null;
++                handKept = false;
++                return false;
++            }
++            if (handedTo != null) {
++                handTo(handedTo, action, e.getRawX(), e.getRawY(), e.getEventTime());
++                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) handedTo = null;
++                return true;
++            }
++            if (action != MotionEvent.ACTION_MOVE || handKept || e.getPointerCount() > 1) return false;
++            float dx = e.getRawX() - handDownX, dy = e.getRawY() - handDownY;
++            if (Math.abs(dy) <= ViewConfiguration.get(getContext()).getScaledTouchSlop() || Math.abs(dy) <= Math.abs(dx)) return false;
++            Node target = nodes.get(node.scrollTarget);
++            if (target == null || !(target.scroller instanceof Scrolling.VScroll) || !target.scroller.isAttachedToWindow()) return false;
++            // The views inside lose the touch, as when a scroll view around them takes it.
++            MotionEvent cancel = MotionEvent.obtain(e);
++            cancel.setAction(MotionEvent.ACTION_CANCEL);
++            super.dispatchTouchEvent(cancel);
++            cancel.recycle();
++            routed = null;
++            childrenOnly = false;
++            handedTo = target.scroller;
++            handTo(handedTo, MotionEvent.ACTION_DOWN, handDownX, handDownY, handDownTime);
++            handTo(handedTo, MotionEvent.ACTION_MOVE, e.getRawX(), e.getRawY(), e.getEventTime());
++            return true;
++        }
++
++        /** A view with a scroll target holds back its children's pressed look, as a scroll view does, until the touch is no drag. */
++        @Override
++        public boolean shouldDelayChildPressedState() {
++            return node != null && node.scrollTarget != 0;
++        }
++
++        /** Sends `to` a one-finger event at a point on the screen, in its coordinates. */
++        private void handTo(FrameLayout to, int action, float rawX, float rawY, long time) {
++            int[] at = new int[2];
++            to.getLocationOnScreen(at);
++            MotionEvent ev = MotionEvent.obtain(handDownTime, time, action, rawX - at[0], rawY - at[1], 0);
++            to.dispatchTouchEvent(ev);
++            ev.recycle();
++        }
++
+         @Override
+         public void requestDisallowInterceptTouchEvent(boolean disallow) {
++            // A view inside took the drag: a scroll target leaves it there.
++            if (disallow) handKept = true;
+             // A descendant, such as a scroll view, took the touch first.
+             if (disallow && !gestures.claiming) touchesTaken();
+             if (disallow && node != null && !gestures.claiming) gestures.lost(node, false);
+@@ -7887,6 +7957,8 @@ public class NsgoView extends FrameLayout implements NsgoEngine.Listener {
+         boolean invalid, labelPress;
+         int labelFor;
+         int[] labelledBy = new int[0];
++        /** The scroll view a drag starting on the view goes to (core.View.ScrollTarget), 0 for none. */
++        int scrollTarget;
+         String label = "", text = "", testID = "";
+         /** Accessibility beyond the role, label and states, as core.ViewProps has it. */
+         String hint = "", valueText = "";
+diff --git a/internal/platform/android/protocol.go b/internal/platform/android/protocol.go
+index a138a9f0..fbfca9c0 100644
+--- a/internal/platform/android/protocol.go
++++ b/internal/platform/android/protocol.go
+@@ -413,6 +413,7 @@ func writeViewProps(w *writer, p *driver.ViewProps) {
+ 		w.u32(uint32(id))
+ 	}
+ 	w.u32(uint32(max(p.Level, 0)))
++	w.u32(uint32(p.ScrollTarget))
+ }
+ 
+ // forcedLanguage returns the BCP 47 tag to apply as Android 13's per-app
+diff --git a/internal/platform/macos/wheel.go b/internal/platform/macos/wheel.go
+index 1b3856e7..00425eca 100644
+--- a/internal/platform/macos/wheel.go
++++ b/internal/platform/macos/wheel.go
+@@ -577,10 +577,22 @@ func (s *surface) scrollsAt(event objc.ID) []*view {
+ 	hit := s.native.Send(sel("hitTest:"), p)
+ 	rawHit = false
+ 	var out []*view
++	jumped := false
+ 	for n := hit; n != 0 && n != up; n = n.Send(selSuperview) {
+-		if v := views[n]; v != nil && v.native == n && s.alive(v) {
++		v := views[n]
++		if v == nil || v.native != n || int(v.id) >= len(s.views) || s.views[v.id] != v {
++			continue
++		}
++		if v.sc != nil {
+ 			out = append(out, v)
+ 		}
++		// A view over a scroll view rather than in it hands its scrolls to
++		// it (View.ScrollTarget): the chain goes on from there.
++		if t := v.props.ScrollTarget; t != 0 && !jumped && int(t) < len(s.views) && s.alive(s.views[t]) {
++			jumped = true
++			n = s.views[t].native
++			out = append(out, s.views[t])
++		}
+ 	}
+ 	return out
+ }
+-- 
+2.54.0 (Apple Git-157)
+
