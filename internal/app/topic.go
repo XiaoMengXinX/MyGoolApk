@@ -136,7 +136,7 @@ func (a *App) topicHead(cx *core.Scope, get func() backend.TopicDetail, follow f
 				Style:    core.Style{Height: core.Pt(32), Padding: core.Symmetric(0, 12), CornerRadius: 8, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter},
 				Children: []core.Node{core.Text{Content: t, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textSecondary, 500)}}}
 		}
-		more = append(more, core.Scroll{Horizontal: true, HideIndicator: true, Style: core.Style{Margin: core.Symmetric(0, -16)},
+		more = append(more, sideScroll{Style: core.Style{Margin: core.Symmetric(0, -16)},
 			Children: []core.Node{row(core.Style{Gap: 8, Padding: core.Symmetric(0, 16)}, "", chips...)}})
 	}
 	return column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 12, Left: 16}, Gap: 12}, "bg-background",
@@ -314,9 +314,8 @@ func (t *topicHome) view(cx *core.Scope) core.Node {
 		for i, cat := range t.cats.Get() {
 			i := i
 			on := func() bool { return t.selected.Get() == i }
-			rail = append(rail, core.View{
+			rail = append(rail, pressable(core.View{
 				Role: core.RoleTab, Label: cat.Title, OnPress: func(core.PressEvent) { t.selected.Set(i) },
-				Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 				ClassFunc: func() string {
 					if on() {
 						return "bg-secondary-container"
@@ -330,7 +329,7 @@ func (t *topicHome) view(cx *core.Scope) core.Node {
 					}
 					return "text-on-surface-variant"
 				}}},
-			})
+			}))
 		}
 		return row(fill, "",
 			core.Scroll{HideIndicator: true, Style: core.Style{Width: core.Pt(88), FlexShrink: 0}, Class: "bg-surface-container-low",

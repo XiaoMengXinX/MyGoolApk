@@ -327,11 +327,10 @@ func (a *App) singleImage(cx *core.Scope, get func() backend.Image, detail bool,
 // the server cuts at that ratio, and is marked 长图.
 func (a *App) pictureButton(cx *core.Scope, get func() backend.Image, size string, open func()) core.Node {
 	long := func() bool { return mediaRatio(get(), 4.0/3, 0, 1e6) < longImageRatio }
-	return core.View{
+	return pressable(core.View{
 		Role: core.RoleButton, Label: "查看图片", OnPress: func(core.PressEvent) { open() },
-		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
-		Class:   "bg-surface-container-highest",
-		Style:   fillAbs.Merge(core.Style{CornerRadius: 12, Overflow: core.Hidden}),
+		Class: "bg-surface-container-highest",
+		Style: fillAbs.Merge(core.Style{CornerRadius: 12, Overflow: core.Hidden}),
 		Children: []core.Node{
 			a.pic(cx, func() string {
 				if long() {
@@ -351,7 +350,7 @@ func (a *App) pictureButton(cx *core.Scope, get func() backend.Image, size strin
 				}()}
 			}),
 		},
-	}
+	})
 }
 
 // videoCover shows a video's cover with a play mark and its length. The
@@ -613,10 +612,9 @@ func voteOption(o backend.VoteOption, counted bool, pct int, picked func() bool,
 		line = append(line, label(fmt.Sprintf("%d%%", pct), textSecondary, 500, "text-on-surface-variant"))
 	}
 	kids = append(kids, row(core.Style{Gap: 8, AlignItems: core.AlignCenter, MinHeight: core.Pt(44), Padding: core.Symmetric(8, 16)}, "", line...))
-	return core.View{
+	return pressable(core.View{
 		Role: core.RoleButton, Label: o.Text, OnPress: func(core.PressEvent) { pick() },
-		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
-		Style:   core.Style{CornerRadius: 12, Overflow: core.Hidden, BorderWidth: 1},
+		Style: core.Style{CornerRadius: 12, Overflow: core.Hidden, BorderWidth: 1},
 		ClassFunc: func() string {
 			if picked() || o.Chosen {
 				return "border-primary"
@@ -624,7 +622,7 @@ func voteOption(o backend.VoteOption, counted bool, pct int, picked func() bool,
 			return "border-outline-variant"
 		},
 		Children: kids,
-	}
+	})
 }
 
 func (a *App) forwardCard(cx *core.Scope, get func() *backend.Forward, open func()) core.Node {

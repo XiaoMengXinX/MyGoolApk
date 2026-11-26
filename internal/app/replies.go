@@ -356,10 +356,15 @@ func (d *detail) threadSheet(cx *core.Scope) core.Node {
 		core.Text{ContentFunc: title, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 500).Merge(core.Style{Padding: core.Symmetric(0, 16)})},
 		core.View{
 			// The sheet is as wide as what it holds, which a list is not: it
-			// gets the window's width, and its rows wrap in it.
+			// gets the window's width, or the dialog's in a wide window, and its
+			// rows wrap in it.
 			StyleFunc: func() core.Style {
 				w := a.cx.Env().Window()
-				return core.Style{Width: core.Pt(w.Width), Height: core.Pt(w.Height * 0.7)}
+				width := w.Width
+				if a.wide() {
+					width = min(dialogWidth, w.Width*0.9)
+				}
+				return core.Style{Width: core.Pt(width), Height: core.Pt(w.Height * 0.7)}
 			},
 			// Shown again, the list goes back to where it was.
 			OnLayout: func(core.Bounds) {

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/nsgo-dev/nsgo/core"
+
 	"app/internal/backend"
 )
 
@@ -18,7 +20,7 @@ type historyEntry struct {
 }
 
 // localState is what the app keeps on the device: the browsing history, the
-// recent searches and the appearance.
+// recent searches, the appearance and the window.
 type localState struct {
 	History        []historyEntry `json:"history,omitempty"`
 	HistoryEnabled bool           `json:"historyEnabled"`
@@ -26,6 +28,8 @@ type localState struct {
 	FollowGroup    int            `json:"followGroup,omitempty"`
 	Searches       []string       `json:"searches,omitempty"`
 	TradeCity      string         `json:"tradeCity,omitempty"` // the city of the second-hand posts nearby
+	// Window is where a desktop's window was, to open there again.
+	Window core.WindowFrame `json:"window"`
 }
 
 func loadLocalState(dir string) localState {

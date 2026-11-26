@@ -107,6 +107,18 @@ func (g *tabGroup) scrollToTop() {
 	}
 }
 
+// refresh loads the selected tab again, as a pull on its list does.
+func (g *tabGroup) refresh() {
+	i := g.selected.GetUntracked()
+	if g.tabs[i].Kind == tabTopics {
+		return
+	}
+	if l := g.lists[i]; l != nil {
+		l.p.refreshing.Set(true)
+		l.p.reload()
+	}
+}
+
 // select shows tab i.
 func (g *tabGroup) selectTab(i int) {
 	if g.selected.GetUntracked() != i && g.jump != nil {
@@ -321,7 +333,7 @@ func (g *tabGroup) strip(cx *core.Scope) core.Node {
 	tabs := make([]core.Node, len(g.tabs), len(g.tabs)+1)
 	for i, tab := range g.tabs {
 		i := i
-		tabs[i] = core.View{
+		tabs[i] = pressable(core.View{
 			Ref: g.tabRefs[i], Role: core.RoleTab, Label: tab.Title,
 			Style: core.Style{Height: core.Pct(100), Padding: core.Symmetric(0, 16), JustifyContent: core.JustifyCenter, AlignItems: core.AlignCenter, Overflow: core.Hidden},
 			OnLayout: func(b core.Bounds) {
@@ -337,7 +349,6 @@ func (g *tabGroup) strip(cx *core.Scope) core.Node {
 				}
 				g.selectTab(i)
 			},
-			Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 			Children: []core.Node{
 				core.Text{Content: tab.Title, MaxLines: 1, Style: textStyle(textSecondary, 500), Class: "text-on-surface-variant",
 					ClassFunc: func() string {
@@ -347,7 +358,7 @@ func (g *tabGroup) strip(cx *core.Scope) core.Node {
 						return "text-on-surface-variant"
 					}},
 			},
-		}
+		})
 	}
 	const bar = 32
 	tabs = append(tabs, core.View{
@@ -365,7 +376,7 @@ func (g *tabGroup) strip(cx *core.Scope) core.Node {
 		},
 	})
 	return column(core.Style{FlexShrink: 0}, "bg-background",
-		core.Scroll{Horizontal: true, HideIndicator: true, Style: core.Style{Height: core.Pt(48), FlexGrow: 0},
+		sideScroll{Style: core.Style{Height: core.Pt(48), FlexGrow: 0},
 			Children: []core.Node{row(core.Style{Height: core.Pct(100), Padding: core.Symmetric(0, 8)}, "", tabs...)}},
 		core.View{Style: core.Style{Height: core.Pt(1)}, Class: "bg-outline-variant"},
 	)

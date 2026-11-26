@@ -75,20 +75,43 @@ func (a *App) shell(cx *core.Scope, dests []destination) core.Node {
 	}
 	items := make([]core.Node, len(dests))
 	for i, d := range dests {
-		items[i] = a.navItem(i, d)
+		items[i] = a.navItem(i, d, false)
 	}
 	barHeight, _, _ := a.navBar()
 	return column(fill, "bg-background",
 		core.View{Style: fill, Children: sections},
-		row(core.Style{Padding: core.Symmetric(0, 8), FlexShrink: 0, PaddingEnv: core.EnvEdges{Bottom: core.EnvSafeArea}}, "bg-surface-container",
-			core.View{Style: core.Style{Direction: core.Row, Height: core.Pt(barHeight), FlexGrow: 1}, Role: core.RoleTabList, Label: "酷安", Children: items}),
+		core.Show{When: func() bool { return !a.wide() }, Then: func(*core.Scope) core.Node {
+			return row(core.Style{Padding: core.Symmetric(0, 8), FlexShrink: 0, PaddingEnv: core.EnvEdges{Bottom: core.EnvSafeArea}}, "bg-surface-container",
+				core.View{Style: core.Style{Direction: core.Row, Height: core.Pt(barHeight), FlexGrow: 1}, Role: core.RoleTabList, Label: "酷安", Children: items})
+		}},
 	)
 }
 
-// navItem is a destination of the bar: its icon in a 56x32 pill that grows
-// from the center when the destination is selected, over its label.
-func (a *App) navItem(i int, d destination) core.Node {
+// rail is Material 3's navigation rail: the destinations of a wide window,
+// stacked at its left.
+func (a *App) rail(dests []destination) core.Node {
+	items := make([]core.Node, len(dests))
+	for i, d := range dests {
+		items[i] = a.navItem(i, d, true)
+	}
+	return core.View{
+		Role: core.RoleTabList, Label: "酷安", Class: "bg-surface-container",
+		Style: core.Style{Width: core.Pt(railWidth), FlexShrink: 0, Padding: core.Edges{Top: 16}, Gap: 12, AlignItems: core.AlignCenter,
+			PaddingEnv: core.EnvEdges{Top: core.EnvSafeArea, Left: core.EnvSafeArea, Bottom: core.EnvSafeArea}},
+		Children: items,
+	}
+}
+
+// navItem is a destination of the bar or the rail: its icon in a 56x32 pill
+// that grows from the center when the destination is selected, over its
+// label.
+func (a *App) navItem(i int, d destination, rail bool) core.Node {
 	_, top, gap := a.navBar()
+	size := core.Style{FlexGrow: 1, FlexBasis: core.Pt(0), Height: core.Pct(100)}
+	if rail {
+		top, gap = 0, 4
+		size = core.Style{Width: core.Pt(railWidth)}
+	}
 	on := func() bool { return a.tab.Get() == i }
 	selected := core.NewMemo(a.cx, on)
 	pill := core.View{
@@ -108,18 +131,10 @@ func (a *App) navItem(i int, d destination) core.Node {
 		}
 		return icon(d.outline, 24, "text-on-surface-variant")
 	})
-	return core.View{
+	return pressable(core.View{
 		Role: core.RoleTab, Label: d.title,
-		OnPress: func(core.PressEvent) {
-			if a.tab.GetUntracked() == i {
-				a.scrollDestinationToTop(i)
-				return
-			}
-			a.tab.Set(i)
-			a.refreshUnread()
-		},
-		Style: core.Style{FlexGrow: 1, FlexBasis: core.Pt(0), Height: core.Pct(100), Padding: core.Edges{Top: top}, Gap: gap,
-			AlignItems: core.AlignCenter, Overflow: core.Hidden},
+		OnPress: func(core.PressEvent) { a.selectDestination(i) },
+		Style:   size.Merge(core.Style{Padding: core.Edges{Top: top}, Gap: gap, AlignItems: core.AlignCenter, Overflow: core.Hidden}),
 		Children: []core.Node{
 			core.View{Style: core.Style{Width: core.Pt(56), Height: core.Pt(32), AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter},
 				Children: []core.Node{pill, glyph,
@@ -137,14 +152,46 @@ func (a *App) navItem(i int, d destination) core.Node {
 				return "text-on-surface-variant"
 			}},
 		},
+	})
+}
+
+// selectDestination shows destination i, or its first row when it is shown.
+// Pages over the destinations of a medium window go, as the rail beside them
+// leads elsewhere.
+func (a *App) selectDestination(i int) {
+	if a.size.GetUntracked() == medium {
+		a.nav.Clear()
 	}
+	if a.tab.GetUntracked() == i {
+		a.scrollDestinationToTop(i)
+		return
+	}
+	a.tab.Set(i)
+	a.refreshUnread()
 }
 
 // scrollDestinationToTop shows the first row of the destination's list: the
 // bar's tap on the destination already shown.
 func (a *App) scrollDestinationToTop(i int) {
+	if g := a.destinationTabs(i); g != nil {
+		g.scrollToTop()
+	}
+}
+
+// refreshDestination loads the shown destination's list again.
+func (a *App) refreshDestination() {
+	if g := a.destinationTabs(a.tab.GetUntracked()); g != nil {
+		g.refresh()
+		return
+	}
+	a.refreshUnread()
+}
+
+// destinationTabs is the tabs of destination i, nil for one without.
+func (a *App) destinationTabs(i int) *tabGroup {
 	g := []*tabGroup{a.home, a.digital, a.discovery}
 	if i < len(g) {
-		g[i].scrollToTop()
+		return g[i]
 	}
+	return nil
 }

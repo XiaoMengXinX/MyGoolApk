@@ -105,18 +105,17 @@ func simpleTabs(selected *core.Signal[int], at *core.Signal[float32], titles ...
 	tabs := make([]core.Node, len(titles))
 	for i, title := range titles {
 		i := i
-		tabs[i] = core.View{
+		tabs[i] = pressable(core.View{
 			Role: core.RoleTab, Label: title,
 			Style:   fill.Merge(core.Style{Height: core.Pct(100), JustifyContent: core.JustifyCenter, AlignItems: core.AlignCenter, Overflow: core.Hidden}),
 			OnPress: func(core.PressEvent) { selected.Set(i) },
-			Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 			Children: []core.Node{core.Text{Content: title, Style: textStyle(textSecondary, 500), Class: "text-on-surface-variant", ClassFunc: func() string {
 				if selected.Get() == i {
 					return "text-primary"
 				}
 				return "text-on-surface-variant"
 			}}},
-		}
+		})
 	}
 	share := 100 / float32(len(titles))
 	indicator := core.View{
@@ -134,9 +133,8 @@ func simpleTabs(selected *core.Signal[int], at *core.Signal[float32], titles ...
 
 // filterChip is a Material 3 filter chip.
 func filterChip(name string, on func() bool, fn func()) core.Node {
-	return core.View{
+	return pressable(core.View{
 		Role: core.RoleButton, Label: name, OnPress: func(core.PressEvent) { fn() },
-		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 		ClassFunc: func() string {
 			if on() {
 				return "bg-secondary-container"
@@ -162,20 +160,19 @@ func filterChip(name string, on func() bool, fn func()) core.Node {
 				}
 				return "text-on-surface-variant"
 			}}},
-	}
+	})
 }
 
 // filledButton is a Material 3 filled button, dimmed while enabled says no.
 func filledButton(text string, enabled func() bool, fn func()) core.Node {
-	return core.View{
+	return pressable(core.View{
 		Role: core.RoleButton, Label: text,
 		OnPress: func(core.PressEvent) {
 			if enabled() {
 				fn()
 			}
 		},
-		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
-		Class:   "bg-primary",
+		Class: "bg-primary",
 		StyleFunc: func() core.Style {
 			if enabled() {
 				return core.Style{}
@@ -184,7 +181,7 @@ func filledButton(text string, enabled func() bool, fn func()) core.Node {
 		},
 		Style:    core.Style{Padding: core.Symmetric(10, 24), CornerRadius: 20, Overflow: core.Hidden, FlexShrink: 0, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter},
 		Children: []core.Node{label(text, textSecondary, 500, "text-on-primary")},
-	}
+	})
 }
 
 // m3Switch is a Material 3 switch: a 52x32 track whose thumb grows from 16 to

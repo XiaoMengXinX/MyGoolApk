@@ -343,7 +343,7 @@ func (a *App) avatarsCard(cx *core.Scope, c *backend.Card) core.Node {
 			core.View{Class: "bg-secondary-container", Style: core.Style{Width: core.Pt(size), Height: core.Pt(size), CornerRadius: size / 2, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter},
 				Children: []core.Node{icon(&symbols.ChevronRight, 24, "text-on-secondary-container")}}))
 	}
-	return column(core.Style{}, "bg-background", core.Scroll{Horizontal: true, HideIndicator: true, Children: []core.Node{
+	return column(core.Style{}, "bg-background", sideScroll{Children: []core.Node{
 		row(core.Style{Padding: core.Edges{Top: 8, Right: 8, Bottom: 4, Left: 8}}, "", cells...)}})
 }
 
@@ -413,7 +413,7 @@ func (a *App) tilesCard(cx *core.Scope, c *backend.Card) core.Node {
 				Children: []core.Node{core.Text{Content: it.Title, MaxLines: 2, Class: "text-white",
 					Style: textStyle(textSecondary, 600).Merge(core.Style{TextAlign: core.TextAlignCenter})}}})
 	}
-	return column(core.Style{}, "bg-background", core.Scroll{Horizontal: true, HideIndicator: true, Children: []core.Node{
+	return column(core.Style{}, "bg-background", sideScroll{Children: []core.Node{
 		row(core.Style{Gap: 8, Padding: core.Symmetric(8, 16)}, "", tiles...)}})
 }
 
@@ -436,7 +436,7 @@ func (a *App) logosCard(cx *core.Scope, c *backend.Card) core.Node {
 		}
 		cols = append(cols, column(core.Style{Gap: 4}, "", kids...))
 	}
-	return core.Scroll{Horizontal: true, HideIndicator: true, Children: []core.Node{
+	return sideScroll{Children: []core.Node{
 		row(core.Style{Gap: 4, Padding: core.Symmetric(4, 12)}, "", cols...)}}
 }
 
@@ -489,7 +489,7 @@ func (a *App) chipsCard(c *backend.Card) core.Node {
 			"bg-surface-container-high",
 			core.Text{Content: it.Title, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textSecondary, 500)})
 	}
-	return core.Scroll{Horizontal: true, HideIndicator: true, Children: []core.Node{
+	return sideScroll{Children: []core.Node{
 		row(core.Style{Gap: 8, Padding: core.Symmetric(12, 16)}, "", chips...)}}
 }
 
@@ -538,7 +538,7 @@ func (a *App) scrollCard(cx *core.Scope, c *backend.Card) core.Node {
 			core.Text{Content: it.Subtitle, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
 		)
 	}
-	return core.Scroll{Horizontal: true, HideIndicator: true, Children: []core.Node{
+	return sideScroll{Children: []core.Node{
 		row(core.Style{Gap: 12, Padding: core.Symmetric(12, 16)}, "", items...)}}
 }
 
@@ -554,7 +554,7 @@ func selectorCard(c *backend.Card, l *pageList) core.Node {
 		})
 	}
 	return column(core.Style{}, "bg-background",
-		core.Scroll{Horizontal: true, HideIndicator: true, Children: []core.Node{
+		sideScroll{Children: []core.Node{
 			row(core.Style{Gap: 8, Padding: core.Edges{Top: 12, Right: 16, Bottom: 8, Left: 16}}, "", chips...)}},
 	)
 }
@@ -565,7 +565,7 @@ func tabsCard(c *backend.Card, l *pageList) core.Node {
 	tabs := make([]core.Node, len(c.Items))
 	for i, it := range c.Items {
 		on := func() bool { return l != nil && l.chosen.Get() == i }
-		tabs[i] = core.View{
+		tabs[i] = pressable(core.View{
 			Role: core.RoleTab, Label: it.Title,
 			Style: core.Style{Height: core.Pct(100), Padding: core.Symmetric(0, 16), JustifyContent: core.JustifyEnd, AlignItems: core.AlignCenter, Overflow: core.Hidden},
 			OnPress: func(core.PressEvent) {
@@ -573,7 +573,6 @@ func tabsCard(c *backend.Card, l *pageList) core.Node {
 					l.choose(c, i)
 				}
 			},
-			Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 			Children: []core.Node{
 				column(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
 					core.Text{Content: it.Title, MaxLines: 1, Style: textStyle(textSecondary, 500),
@@ -592,10 +591,10 @@ func tabsCard(c *backend.Card, l *pageList) core.Node {
 						}},
 				),
 			},
-		}
+		})
 	}
 	return column(core.Style{}, "bg-background",
-		core.Scroll{Horizontal: true, HideIndicator: true, Style: core.Style{Height: core.Pt(48), FlexGrow: 0},
+		sideScroll{Style: core.Style{Height: core.Pt(48), FlexGrow: 0},
 			Children: []core.Node{row(core.Style{Height: core.Pct(100), Padding: core.Symmetric(0, 8)}, "", tabs...)}},
 		core.View{Style: core.Style{Height: core.Pt(1)}, Class: "bg-outline-variant"},
 	)

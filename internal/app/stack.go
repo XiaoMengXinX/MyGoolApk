@@ -8,14 +8,15 @@ import (
 	"github.com/nsgo-dev/nsgo/core"
 )
 
-// Pages pushed over the shell are NSGo's native screen stack on iOS, where
-// UINavigationController slides them and its edge swipe pops them.
+// Pages pushed over the shell are NSGo's native screen stack on an iPhone,
+// where UINavigationController slides them and its edge swipe pops them.
 //
-// Android's native stack shows a pushed screen at once and hides the one it
-// covers, so a page over another had nothing to slide over. There the pages
-// are layers of the app's own over the shell: each slides in from the right
-// and out again, and what it covers, the shell or a page, shifts a little.
-// A covered page stays laid out, which keeps its lists' places.
+// Elsewhere the pages are layers of the app's own. Android's native stack
+// shows a pushed screen at once and hides the one it covers, and a wide
+// window shows the pages beside the destinations rather than over them. Each
+// layer slides in from the right and out again, and what it covers, the shell
+// or a page, shifts a little. A covered page stays laid out, which keeps its
+// lists' places.
 const pageMotion = 300 * time.Millisecond
 
 var pageTransition = core.Transition{Duration: pageMotion, Easing: emphasized, Properties: core.TransitionOpacity | core.TransitionTransform}
@@ -26,8 +27,8 @@ const shellShift = -22
 
 type route struct{ kind, id string }
 
-// pageLayer is a pushed page on Android: it comes in as shown turns true and
-// goes out as leaving does.
+// pageLayer is a pushed page of the app's own stack: it comes in as shown
+// turns true and goes out as leaving does.
 type pageLayer struct {
 	id             int
 	route          route
@@ -37,17 +38,24 @@ type pageLayer struct {
 type pageStack struct {
 	a   *App
 	cx  *core.Scope
-	nav *base.Nav[route] // iOS's
-	// layers are Android's pages, the top one last.
+	nav *base.Nav[route] // an iPhone's
+	// layers are the app's own pages, the top one last.
 	layers *core.Signal[[]*pageLayer]
 	nextID int
+	// fromList is set while a press in an expanded window began on the
+	// destinations: a page it opens takes the place of those shown.
+	fromList bool
 }
 
 func (a *App) newPageStack(cx *core.Scope) *pageStack {
 	return &pageStack{a: a, cx: cx, nav: base.NewNav(cx, route{}), layers: core.NewSignalFunc(cx, []*pageLayer(nil), nil)}
 }
 
-func (s *pageStack) android() bool { return s.cx.Env().OS() == core.OSAndroid }
+// native reports whether the pages are the platform's own stack.
+func (s *pageStack) native() bool {
+	env := s.cx.Env()
+	return env.OS() == core.OSIOS && env.Idiom() == core.IdiomPhone
+}
 
 // top is the topmost layer not on its way out, with its index, or -1.
 func (s *pageStack) top(layers []*pageLayer, leaving func(*pageLayer) bool) (int, *pageLayer) {
@@ -62,7 +70,7 @@ func (s *pageStack) top(layers []*pageLayer, leaving func(*pageLayer) bool) (int
 // Depth is how many pages are over the shell, without those on their way
 // out.
 func (s *pageStack) Depth() int {
-	if !s.android() {
+	if s.native() {
 		return s.nav.Depth()
 	}
 	n := 0
@@ -74,11 +82,15 @@ func (s *pageStack) Depth() int {
 	return n
 }
 
-// Push shows a page over the others.
+// Push shows a page over the others. In an expanded window a page opened
+// from the destinations takes the place of the pages shown beside them.
 func (s *pageStack) Push(r route) {
-	if !s.android() {
+	if s.native() {
 		s.nav.Push(r)
 		return
+	}
+	if s.fromList && s.a.size.GetUntracked() == expanded {
+		s.Clear()
 	}
 	// The stack owns the layer and its timer: a push from a sheet that
 	// closes as it pushes would otherwise take them away with the sheet.
@@ -91,10 +103,10 @@ func (s *pageStack) Push(r route) {
 	})
 }
 
-// Pop takes the top page away. iOS animates a pop itself; on Android the page
-// slides out first.
+// Pop takes the top page away. iOS animates a pop itself; the app's own
+// page slides out first.
 func (s *pageStack) Pop() bool {
-	if !s.android() {
+	if s.native() {
 		if s.nav.Depth() == 0 {
 			return false
 		}
@@ -105,38 +117,87 @@ func (s *pageStack) Pop() bool {
 	if l == nil {
 		return false
 	}
+	s.leave(l)
+	return true
+}
+
+// Clear takes every page away.
+func (s *pageStack) Clear() {
+	if s.native() {
+		s.nav.Pop(s.nav.Depth())
+		return
+	}
+	for _, l := range s.layers.GetUntracked() {
+		if !l.leaving.GetUntracked() {
+			s.leave(l)
+		}
+	}
+}
+
+func (s *pageStack) leave(l *pageLayer) {
 	l.leaving.Set(true)
 	s.cx.Run(func() {
 		s.cx.AfterFunc(pageMotion+30*time.Millisecond, func() {
 			s.layers.Set(slices.DeleteFunc(slices.Clone(s.layers.GetUntracked()), func(x *pageLayer) bool { return x == l }))
 		})
 	})
-	return true
 }
 
 // covers reports whether a page not on its way out is over layer i, or over
-// the shell for i of -1.
+// the shell for i of -1, which an expanded window shows beside the pages.
 func (s *pageStack) covers(i int) bool {
+	if i < 0 && s.a.size.Get() == expanded {
+		return false
+	}
 	top, _ := s.top(s.layers.Get(), func(l *pageLayer) bool { return l.leaving.Get() })
 	return top > i
 }
 
-// view is the stack, the shell at its bottom.
+// view is the stack, the shell at its bottom. The app's own stack keeps one
+// tree whatever the window's size, so a resize keeps every page as it was:
+// the shell's pane and the pages' pane are side by side in an expanded
+// window, and the pages' pane lies over the shell's in a narrower one.
 func (s *pageStack) view(cx *core.Scope, shell func(cx *core.Scope) core.Node, page func(cx *core.Scope, r route) core.Node) core.Node {
-	if s.android() {
-		return core.Group{
-			s.under(func() bool { return s.covers(-1) }, shell(cx), nil),
-			core.Each(s.layers.Get, func(l *pageLayer) int { return l.id }, func(cx *core.Scope, item func() *pageLayer, _ func() int) core.Node {
-				l := core.Untracked(cx, item)
-				index := func() int { return slices.Index(s.layers.Get(), l) }
-				return s.under(func() bool { return s.covers(index()) }, page(cx, l.route), func() core.Style {
-					if !l.shown.Get() || l.leaving.Get() {
-						return core.Style{Transform: core.Transform{TranslateXPercent: 100}}
-					}
-					return core.Style{}
-				})
-			}),
+	if !s.native() {
+		env := cx.Env()
+		size := s.a.size
+		listPane := core.View{
+			StyleFunc: func() core.Style {
+				if size.Get() == expanded {
+					return core.Style{Width: core.Pt(listPaneWidth(env.Window().Width)), FlexShrink: 0}
+				}
+				return fill
+			},
+			OnMouseDown:    func(core.MouseButtonEvent) { s.fromList = true },
+			OnTouchCapture: func(core.TouchEvent) { s.fromList = true },
+			Children:       []core.Node{s.under(func() bool { return s.covers(-1) }, shell(cx), nil)},
 		}
+		layers := core.Each(s.layers.Get, func(l *pageLayer) int { return l.id }, func(cx *core.Scope, item func() *pageLayer, _ func() int) core.Node {
+			l := core.Untracked(cx, item)
+			index := func() int { return slices.Index(s.layers.Get(), l) }
+			return s.under(func() bool { return s.covers(index()) }, page(cx, l.route), func() core.Style {
+				if !l.shown.Get() || l.leaving.Get() {
+					return core.Style{Transform: core.Transform{TranslateXPercent: 100}}
+				}
+				return core.Style{}
+			})
+		})
+		pagePane := core.View{
+			StyleFunc: func() core.Style {
+				if size.Get() == expanded {
+					return fill.Merge(core.Style{Overflow: core.Hidden, Borders: core.Edges{Left: 1}})
+				}
+				return fillAbs.Merge(core.Style{PointerEvents: core.PointerEventsBoxNone})
+			},
+			Class:          "border-outline-variant",
+			OnMouseDown:    func(core.MouseButtonEvent) { s.fromList = false },
+			OnTouchCapture: func(core.TouchEvent) { s.fromList = false },
+			Children: []core.Node{
+				core.Show{When: func() bool { return size.Get() == expanded && s.Depth() == 0 }, Then: func(*core.Scope) core.Node { return emptyPane() }},
+				layers,
+			},
+		}
+		return row(fill, "", listPane, pagePane)
 	}
 	stack := s.nav.Stack(fill.Merge(core.Style{PointerEvents: core.PointerEventsBoxNone}), func(cx *core.Scope, r route, _ func() int) base.NavPage {
 		if r.kind == "" {
@@ -154,13 +215,21 @@ func (s *pageStack) view(cx *core.Scope, shell func(cx *core.Scope) core.Node, p
 	return core.Group{core.View{Class: "bg-background", Style: fillAbs, Children: []core.Node{shell(cx)}}, stack}
 }
 
-// under is a layer of Android's stack: the shell or a page, which shifts and
-// dims while covered and takes no touches then. place, when not nil, is
-// where the layer is while not covered.
+// emptyPane is the pages' pane of an expanded window while no page is open.
+func emptyPane() core.Node {
+	return column(fillAbs.Merge(core.Style{AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Gap: 16}), "bg-background",
+		icon(&symbols.Explore, 48, "text-outline"),
+		label("选择内容后在这里查看", textSecondary, 400, "text-on-surface-variant"))
+}
+
+// under is a layer of the app's own stack: the shell or a page, which
+// shifts and dims while covered and takes no touches then. place, when not
+// nil, is where the layer is while not covered. A page keeps to
+// pageMaxWidth in the middle of a wide pane.
 func (s *pageStack) under(covered func() bool, content core.Node, place func() core.Style) core.Node {
 	return core.View{
 		Class: "bg-background",
-		Style: fillAbs.Merge(core.Style{Overflow: core.Hidden, Transition: pageTransition}),
+		Style: fillAbs.Merge(core.Style{Overflow: core.Hidden, Transition: pageTransition, AlignItems: core.AlignCenter}),
 		StyleFunc: func() core.Style {
 			if covered() {
 				return core.Style{Transform: core.Transform{TranslateXPercent: shellShift}, PointerEvents: core.PointerEventsNone}
@@ -171,7 +240,7 @@ func (s *pageStack) under(covered func() bool, content core.Node, place func() c
 			return core.Style{}
 		},
 		Children: []core.Node{
-			core.View{Style: fill, Children: []core.Node{content}},
+			core.View{Style: fill.Merge(core.Style{Width: core.Pct(100), MaxWidth: core.Pt(pageMaxWidth)}), Children: []core.Node{content}},
 			core.View{
 				Class:     "bg-black/10",
 				Style:     fillAbs.Merge(core.Style{Transition: pageTransition, PointerEvents: core.PointerEventsNone}),

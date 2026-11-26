@@ -215,7 +215,7 @@ func (a *App) serviceNotices(cx *core.Scope) core.Node {
 				}
 			})
 		}
-		return core.Scroll{Horizontal: true, HideIndicator: true, Style: core.Style{FlexGrow: 0}, Children: []core.Node{
+		return sideScroll{Style: core.Style{FlexGrow: 0}, Children: []core.Node{
 			row(core.Style{Padding: core.Symmetric(8, 16), Gap: 8}, "", kids...)}}
 	})
 	return column(fill, "", chips,

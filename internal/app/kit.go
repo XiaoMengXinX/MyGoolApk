@@ -12,12 +12,30 @@ func tap(label string, fn func(), s core.Style, class string, children ...core.N
 	if s.Overflow == 0 {
 		s.Overflow = core.Hidden
 	}
-	return core.View{
+	return pressable(core.View{
 		Class: class, Style: s, Role: core.RoleButton, Label: label,
 		OnPress:  func(core.PressEvent) { fn() },
-		Android:  core.AndroidViewProps{Ripple: &core.Ripple{}},
 		Children: children,
+	})
+}
+
+// hoverable says the app runs where a pointer hovers: a desktop's, set once
+// as the app starts.
+var hoverable bool
+
+// pressable gives a view that takes presses the feedback of Material 3:
+// Android's ripple, and where a pointer hovers, the pointing hand and an
+// on-surface state layer at 8% over the view while hovered.
+func pressable(v core.View) core.View {
+	v.Android.Ripple = &core.Ripple{}
+	if !hoverable {
+		return v
 	}
+	v.Style.Cursor, v.Style.Group = core.CursorPointer, "press"
+	layer := core.View{Class: "bg-on-surface", PointerEvents: core.PointerEventsNone,
+		Style: fillAbs.Merge(core.Style{Opacity: core.Alpha(0), GroupStyle: &core.GroupStyle{Name: "press", Hover: &core.Style{Opacity: core.Alpha(0.08)}}})}
+	v.Children = append(v.Children[:len(v.Children):len(v.Children)], layer)
+	return v
 }
 
 // row and column are flex containers.
