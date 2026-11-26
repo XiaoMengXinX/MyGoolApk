@@ -376,7 +376,7 @@ func (g *tabGroup) strip(cx *core.Scope) core.Node {
 		},
 	})
 	return column(core.Style{FlexShrink: 0}, "bg-background",
-		core.Scroll{Horizontal: true, HideIndicator: true, Style: core.Style{Height: core.Pt(48), FlexGrow: 0},
+		sideScroll{Style: core.Style{Height: core.Pt(48), FlexGrow: 0},
 			Children: []core.Node{row(core.Style{Height: core.Pct(100), Padding: core.Symmetric(0, 8)}, "", tabs...)}},
 		core.View{Style: core.Style{Height: core.Pt(1)}, Class: "bg-outline-variant"},
 	)
