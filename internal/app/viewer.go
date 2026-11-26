@@ -147,6 +147,8 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	cx.OnKey("right", func() { turn(1) })
 	// zooms are the pictures built, by page, for a drag on a zoomed one.
 	zooms := map[int]*zoomPage{}
+	wheel := viewerWheel(&pager, width.GetUntracked, len(v.images), current.GetUntracked, zoomed.GetUntracked,
+		func() *zoomPage { return zooms[current.GetUntracked()] }, turn)
 	// pinched is when a picture's zoom last changed: a pinch, whose fingers
 	// the pans over the pictures must leave alone.
 	var pinched time.Time
@@ -253,6 +255,7 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 						StyleFunc:   func() core.Style { return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get())} },
 						OnPress:     press,
 						OnLongPress: holdToSave(i),
+						OnWheel:     wheel,
 						// A desktop's secondary click offers to save as its own menu.
 						OnContextMenu: func(e core.ContextMenuEvent) {
 							if !hoverable {
@@ -533,5 +536,72 @@ func (z *zoomPage) clamp(p core.Point) core.Point {
 	return core.Point{
 		X: max(0, min(p.X, z.content.Width-z.size.Width)),
 		Y: max(0, min(p.Y, z.content.Height-z.size.Height)),
+	}
+}
+
+// viewerWheel is how the viewer's pictures take a desktop's wheel and
+// touchpad, which go to the picture under the pointer rather than to the
+// pager around it: a zoomed picture moves about, and otherwise a wheel's
+// notch turns to the next picture or the one before, and a touchpad's swipe
+// follows the fingers and settles on the picture beside. Nil where nothing
+// hovers.
+func viewerWheel(pager *core.Ref, width func() core.Points, count int, at func() int, zoomed func() bool,
+	zoom func() *zoomPage, turn func(d int)) func(core.WheelEvent) {
+	if !hoverable {
+		return nil
+	}
+	var from, moved core.Points
+	var swiping bool
+	var notched time.Time
+	return func(e core.WheelEvent) {
+		// AppKit's deltas move the content; offsets move the other way.
+		if zp := zoom(); zoomed() && zp != nil {
+			zp.ref.ScrollTo(zp.clamp(core.Point{X: zp.off.X - e.Delta.X, Y: zp.off.Y - e.Delta.Y}), false)
+			return
+		}
+		if !e.Touchpad {
+			// One notch, one picture: notches that come quicker go on to the
+			// next once it has had a moment to show.
+			d := e.Delta.Y
+			if d == 0 {
+				d = e.Delta.X
+			}
+			if d == 0 || time.Since(notched) < 250*time.Millisecond {
+				return
+			}
+			notched = time.Now()
+			if d < 0 {
+				turn(1)
+			} else {
+				turn(-1)
+			}
+			return
+		}
+		w := width()
+		switch e.Phase {
+		case core.GestureBegan:
+			swiping, from, moved = true, core.Points(at())*w, 0
+		case core.GestureChanged:
+			if swiping {
+				moved += e.Delta.X
+				pager.ScrollTo(core.Point{X: max(0, min(from-moved, core.Points(count-1)*w))}, false)
+			}
+		case core.GestureEnded, core.GestureCancelled:
+			if !swiping {
+				return // the system's glide after the fingers, which the settle replaces
+			}
+			swiping = false
+			d := 0
+			if moved < -w/5 || e.Velocity.X < -300 {
+				d = 1
+			} else if moved > w/5 || e.Velocity.X > 300 {
+				d = -1
+			}
+			if d == 0 || at()+d < 0 || at()+d >= count {
+				pager.ScrollTo(core.Point{X: from}, true)
+				return
+			}
+			turn(d)
+		}
 	}
 }
