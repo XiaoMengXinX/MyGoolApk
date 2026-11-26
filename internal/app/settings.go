@@ -1,11 +1,13 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"runtime/debug"
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/updater"
 
 	"app/internal/backend"
 )
@@ -112,7 +114,8 @@ func (a *App) settingsPage(cx *core.Scope) core.Node {
 			settingsLabel("关于"),
 			listGroup(column(core.Style{Padding: core.Symmetric(12, 16), Gap: 2}, "",
 				label("MyGoolApk", textBody, 400, "text-on-surface"),
-				label(buildLabel(), textSecondary, 400, "text-on-surface-variant"))),
+				label(buildLabel(), textSecondary, 400, "text-on-surface-variant")),
+				a.updateItem(cx)),
 			core.Show{
 				When: func() bool { return a.account.uid.Get() != "" },
 				Then: func(*core.Scope) core.Node {
@@ -138,7 +141,7 @@ func (a *App) applyAppearance() {
 // buildLabel tells the app's version and the commit and time it was built
 // from, so that an installed build can be told from another.
 func buildLabel() string {
-	label := "版本 " + appVersion
+	label := "版本 " + core.App().Version
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return label
@@ -164,5 +167,23 @@ func buildLabel() string {
 	return label + "（" + revision + dirty + "，" + built + "）"
 }
 
-// appVersion is the version of nsgo.yaml.
-const appVersion = "1.0.0"
+// updateItem checks for a newer release on Android and macOS, whose builds
+// update themselves from the release's appcast: the framework's updater
+// asks before it downloads, verifies and installs it. While a download runs
+// the item tells how far it has got. Elsewhere it is empty.
+func (a *App) updateItem(cx *core.Scope) core.Node {
+	if os := cx.Env().OS(); os != core.OSAndroid && os != core.OSMacOS {
+		return core.Group{}
+	}
+	progress := core.Dynamic(func(cx *core.Scope) core.Node {
+		s := updater.Status(cx)
+		switch s.Phase {
+		case updater.PhaseDownloading:
+			return label(fmt.Sprintf("下载中 %d%%", int(s.Fraction()*100)), textSecondary, 400, "text-on-surface-variant")
+		case updater.PhaseInstalling:
+			return label("正在安装", textSecondary, 400, "text-on-surface-variant")
+		}
+		return core.Group{}
+	})
+	return listItem(&symbols.Download, "检查更新", progress, func() { updater.Check(cx) })
+}

@@ -101,6 +101,7 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          NSGO_UPDATES_KEY: ${{ secrets.NSGO_UPDATES_KEY }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           NSGO_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -124,6 +125,7 @@ jobs:
           path: |
             ${{ env.APP_DIR }}/dist/releases/*-android-arm64.apk
             ${{ env.APP_DIR }}/dist/releases/*-android-arm64.apk.sha256
+            ${{ env.APP_DIR }}/dist/releases/appcast-android_arm64.xml
           if-no-files-found: error
           retention-days: 7
 
@@ -155,6 +157,7 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          NSGO_UPDATES_KEY: ${{ secrets.NSGO_UPDATES_KEY }}
         run: go tool nsgo build -target macos_universal -version "$VERSION" .
 
       - name: Upload Apple release files
@@ -166,6 +169,7 @@ jobs:
             ${{ env.APP_DIR }}/dist/releases/*-ios.ipa.sha256
             ${{ env.APP_DIR }}/dist/releases/*-macos-universal.dmg
             ${{ env.APP_DIR }}/dist/releases/*-macos-universal.dmg.sha256
+            ${{ env.APP_DIR }}/dist/releases/appcast-macos_universal.xml
           if-no-files-found: error
           retention-days: 7
 
