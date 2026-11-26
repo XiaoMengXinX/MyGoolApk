@@ -365,8 +365,7 @@ func (a *App) topicGridRow(cx *core.Scope, get func() topicRow) core.Node {
 					a.openTopic(it.Title)
 				}
 			}, cell.Merge(core.Style{Padding: core.Symmetric(8, 4), Gap: 6, AlignItems: core.AlignCenter, CornerRadius: 12, Overflow: core.Hidden}), "",
-				a.pic(cx, func() string { it, _ := item(); return it.LogoURL }, core.Cover, "bg-surface-container-highest",
-					core.Style{Width: core.Pt(56), Height: core.Pt(56), CornerRadius: 14}),
+				a.clippedPicFrom(cx, func() string { it, _ := item(); return it.LogoURL }, 56, 56, 14),
 				core.Text{ContentFunc: func() string { it, _ := item(); return it.Title }, MaxLines: 2, Class: "text-on-surface", Style: func() core.Style {
 					s := textStyle(textSecondary, 500)
 					s.TextAlign = core.TextAlignCenter
