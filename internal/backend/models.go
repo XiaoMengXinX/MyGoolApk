@@ -506,6 +506,7 @@ func (u UnreadCounts) Total() int {
 // TopicDetail is the page of a topic or a product: its head and the lists
 // under it, which PageEntries reads by their urls.
 type TopicDetail struct {
+	LottoLogo string
 	Title     string
 	LogoURL   string
 	Intro     string
@@ -536,7 +537,18 @@ type RatingSide struct {
 	Score float32
 }
 
-// TopicTab is one list of a topic's page.
+type EventDetail struct {
+	Title, CoverURL, ActionURL, WinnersURL string
+	Description, Rules                     []RichSpan
+	Sponsors                               []Author
+	Prizes                                 []CardItem
+	RegistrationStart, RegistrationEnd     time.Time
+	Stage                                  int
+	Joined                                 bool
+	Tabs                                   []TopicTab
+}
+
+// TopicTab is one list or webpage of a topic's page.
 type TopicTab struct {
 	Title string
 	URL   string

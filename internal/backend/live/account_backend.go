@@ -441,6 +441,9 @@ func (b *coolapkBackend) Topic(ctx context.Context, name, productID string) (bac
 		Followers: apiInt(object, "follownum", "follow_num"),
 		Followed:  apiInt(apiObject(object, "userAction"), "follow") != 0,
 	}
+	if firstAPIString(object, "relation_addition_title") == "抽奖" {
+		d.LottoLogo = normalizeCoolapkImage(firstAPIString(object, "relation_addition_logo"))
+	}
 	if productID != "" {
 		if release := firstAPIString(object, "release_time"); release != "" {
 			d.Tags = append(d.Tags, release+"上市")
@@ -458,16 +461,21 @@ func (b *coolapkBackend) Topic(ctx context.Context, name, productID string) (bac
 		b.configs[productID] = apiObjects(object, "configRows")
 		b.mu.Unlock()
 	}
+	d.Tabs, d.Selected = topicTabsFromObject(object)
+	return d, nil
+}
+
+func topicTabsFromObject(object map[string]any) (tabs []backend.TopicTab, at int) {
 	selected := firstAPIString(object, "selectedTab")
 	for _, tab := range apiObjects(object, "tabList") {
 		if link := firstAPIString(tab, "url"); link != "" {
 			if firstAPIString(tab, "page_name") == selected {
-				d.Selected = len(d.Tabs)
+				at = len(tabs)
 			}
-			d.Tabs = append(d.Tabs, backend.TopicTab{Title: firstAPIString(tab, "title"), URL: link})
+			tabs = append(tabs, backend.TopicTab{Title: firstAPIString(tab, "title"), URL: link})
 		}
 	}
-	return d, nil
+	return tabs, at
 }
 
 func (b *coolapkBackend) SetTopicFollow(ctx context.Context, name, productID string, follow bool) error {

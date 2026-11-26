@@ -14,6 +14,7 @@ import (
 // shows.
 const (
 	routeFeed     = "feed"
+	routeEvent    = "event"
 	routeUser     = "user"
 	routeFollows  = "follows" // the accounts a user follows, by uid
 	routeFans     = "fans"
@@ -73,14 +74,30 @@ func (a *App) webPage(cx *core.Scope, param string) core.Node {
 	raw, _ := base64.RawURLEncoding.DecodeString(param)
 	named, src, _ := strings.Cut(string(raw), "\x00")
 	title := core.NewSignal(cx, named)
+	body, back := a.siteContent(cx, src, func(value string) {
+		if named == "" && value != "" {
+			title.Set(value)
+		}
+	}, nil, nil)
+	return a.screenBack(func() {
+		if !back() {
+			a.nav.Pop()
+		}
+	}, title.Get, nil, body)
+}
+
+// siteContent is shared by standalone site pages and web tabs inside a topic.
+func (a *App) siteContent(cx *core.Scope, src string, title func(string), active func() bool,
+	loaded func(*core.Ref)) (core.Node, func() bool) {
 	loading := core.NewSignal(cx, true)
+	failed := core.NewSignal(cx, "")
 	var web core.Ref
 	deep := false // the view has pages to go back to
 	depth := a.nav.Depth()
 	// Back leaves the pages the view went on to before it leaves the view,
 	// unless a page it opened covers it: that page takes back.
 	back := func() bool {
-		if !deep || a.nav.Depth() != depth {
+		if !deep || a.nav.Depth() != depth || active != nil && !active() {
 			return false
 		}
 		web.GoBack()
@@ -91,14 +108,19 @@ func (a *App) webPage(cx *core.Scope, param string) core.Node {
 	// as in the official client, and the view stays on its page.
 	native := func(n core.WebNavigation) (backend.LinkTarget, bool) {
 		t := backend.ResolveLink(n.URL)
-		return t, n.URL != src && t.Kind != backend.LinkExternal
+		return t, n.URL != src && t.Kind != backend.LinkExternal && (t.Kind != backend.LinkDrawing || active != nil)
 	}
 	leave := func(n core.WebNavigation) {
 		deep = n.CanGoBack
+		failed.Set("")
 		t, ok := native(n)
 		loading.Set(!ok)
 		if ok {
 			web.StopLoading()
+			if t.Kind == backend.LinkDrawing {
+				// Android may clear the inline document as the drawing starts to load.
+				web.Load(core.WebSource{Src: src})
+			}
 			a.openInApp(t)
 		}
 	}
@@ -109,17 +131,34 @@ func (a *App) webPage(cx *core.Scope, param string) core.Node {
 		loading.Set(n.Loading)
 		if _, ok := native(n); ok && n.CanGoBack {
 			web.GoBack()
-		} else if named == "" && n.Title != "" {
-			title.Set(n.Title)
+		} else if title != nil {
+			title(n.Title)
 		}
 	}
-	return a.screenBack(func() {
-		if !back() {
-			a.nav.Pop()
-		}
-	}, title.Get, nil, column(fill.Merge(core.Style{PaddingEnv: core.EnvEdges{Bottom: core.EnvSafeArea}}), "",
+	return column(fill.Merge(core.Style{PaddingEnv: core.EnvEdges{Bottom: core.EnvSafeArea}}), "",
 		core.WebView{Ref: &web, Source: core.WebSource{Src: src}, UserAgent: a.backend.UserAgent(), InjectedJavaScript: secureImages, Style: fill,
-			OnLoadStart: leave, OnLoad: settle, OnNavigationStateChange: settle},
+			OnLoadStart: leave, OnLoad: func(n core.WebNavigation) {
+				settle(n)
+				if loaded != nil && n.URL == src {
+					loaded(&web)
+				}
+			}, OnNavigationStateChange: settle,
+			OnOpenWindow: func(req core.WebWindowRequest) { a.openURL(req.URL) },
+			OnError: func(err error) {
+				loading.Set(false)
+				failed.Set(err.Error())
+			}},
+		core.Dynamic(func(cx *core.Scope) core.Node {
+			if failed.Get() == "" {
+				return core.Group{}
+			}
+			return core.View{Class: "bg-background", Style: fillAbs, Children: []core.Node{
+				statusBlock("加载失败", failed.Get(), "重试", func() {
+					failed.Set("")
+					web.Load(core.WebSource{Src: src})
+				}),
+			}}
+		}),
 		// A page still on its way says so over its top edge.
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			if !loading.Get() {
@@ -127,7 +166,7 @@ func (a *App) webPage(cx *core.Scope, param string) core.Node {
 			}
 			return core.View{Style: core.Style{Position: core.Absolute, Top: core.Pt(16), Left: core.Pt(0), Right: core.Pt(0), AlignItems: core.AlignCenter},
 				PointerEvents: core.PointerEventsNone, Children: []core.Node{spinner()}}
-		})))
+		})), back
 }
 
 // secureImages loads over https the pictures a page names by http, which a

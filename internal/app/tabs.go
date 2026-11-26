@@ -16,6 +16,7 @@ const (
 	tabFollow
 	tabHeadline
 	tabPage
+	tabWeb
 )
 
 // pageTab is a tab of the home, digital or discovery page. The lists are
@@ -75,9 +76,10 @@ func entryKey(e backend.PageEntry) string { return strconv.Itoa(int(e.Kind)) + "
 // tabGroup is a row of tabs over pages that swipe, each tab with its own
 // list.
 type tabGroup struct {
-	a     *App
-	tabs  []pageTab
-	lists []*pageList
+	webTab func(*core.Scope, int) core.Node
+	a      *App
+	tabs   []pageTab
+	lists  []*pageList
 	// A search supplies its own lists and starts them when selected.
 	newList  func(int) *pageList
 	listView func(*core.Scope, int, listSpec) core.Node
@@ -201,6 +203,9 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 				Then: func(cx *core.Scope) core.Node {
 					if g.tabs[i].Kind == tabTopics {
 						return topics(cx)
+					}
+					if g.tabs[i].Kind == tabWeb {
+						return g.webTab(cx, i)
 					}
 					l, spec := g.list(cx, i), listSpec{pushed: g.pushed}
 					if g.newList != nil {

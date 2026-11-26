@@ -94,6 +94,8 @@ func (a *App) page(cx *core.Scope, r route) core.Node {
 	switch r.kind {
 	case routeFeed:
 		return a.detailPage(cx, r.id)
+	case routeEvent:
+		return a.eventPage(cx, r.id)
 	case routeLogin:
 		return a.loginPage(cx)
 	case routeWeb:

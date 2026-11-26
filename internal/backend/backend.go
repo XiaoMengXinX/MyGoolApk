@@ -15,6 +15,8 @@ import (
 type Backend interface {
 	// Feed returns one page of a home, headline or topic list.
 	Feed(ctx context.Context, q FeedQuery) (FeedPage, error)
+	// Event returns the details and discussion tabs of an activity.
+	Event(ctx context.Context, id string) (EventDetail, error)
 	// FeedDetail returns one post.
 	FeedDetail(ctx context.Context, id string) (Feed, error)
 	// FeedSummary returns the AI summary coolapk1s.com writes of a post,

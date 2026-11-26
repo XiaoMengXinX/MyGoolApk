@@ -31,6 +31,10 @@ func newFakeBackend() *fakeBackend {
 func (b *fakeBackend) Feed(context.Context, backend.FeedQuery) (backend.FeedPage, error) {
 	return backend.FeedPage{Feeds: []backend.Feed{b.feed}}, nil
 }
+func (b *fakeBackend) Event(context.Context, string) (backend.EventDetail, error) {
+	return backend.EventDetail{}, nil
+}
+
 func (b *fakeBackend) FeedDetail(_ context.Context, id string) (backend.Feed, error) {
 	b.mu.Lock()
 	b.details[id]++

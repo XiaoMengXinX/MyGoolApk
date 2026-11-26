@@ -130,6 +130,11 @@ func (a *App) logout() {
 	}
 	a.resetAccount()
 	a.home.reload(tabFollow, tabHeadline)
+	a.cx.ClearWebsiteData(func(err error) {
+		if err != nil {
+			a.notice("清除网页登录状态失败：" + err.Error())
+		}
+	})
 }
 
 // mePage is the account tab: the profile, then the lists and settings.

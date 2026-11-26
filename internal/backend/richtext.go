@@ -45,6 +45,10 @@ const (
 	LinkPage
 	// LinkSearch is a search, Param its keyword.
 	LinkSearch
+	// LinkEvent is a native activity detail, Param its id.
+	LinkEvent
+	// LinkDrawing opens the official drawing page at URL.
+	LinkDrawing
 )
 
 // LinkTarget is the destination of a topic, mention or link span.
@@ -57,9 +61,7 @@ type LinkTarget struct {
 
 // ResolveLink normalizes a Coolapk href, as "/feed/1",
 // "coolmarket://feed/1", a coolapk.com URL or a "#/feed/1" route, into an
-// in-app page. Everything else opens externally: paths of pages the
-// native client does not have, such as a product, apk, game, event or
-// custom page, go to the website.
+// in-app page. Paths without an in-app destination go to the website.
 func ResolveLink(raw string) LinkTarget {
 	s := strings.TrimSpace(raw)
 	if s == "" {
@@ -121,6 +123,17 @@ func ResolveLink(raw string) LinkTarget {
 		if id := trimPathID(path, "/product/"); id != "" {
 			return LinkTarget{Kind: LinkProduct, Param: id}
 		}
+	case strings.EqualFold(strings.TrimSuffix(path, "/"), "/mp/feedLotto/detail") && (web == "" || showsCoolapkWebsite(web)):
+		if u, err := url.Parse(s); err == nil && u.Query().Get("id") != "" {
+			if web == "" {
+				web = "https://m.coolapk.com" + s
+			}
+			return LinkTarget{Kind: LinkDrawing, URL: web}
+		}
+	case strings.HasPrefix(path, "/event/"):
+		if id := trimPathID(path, "/event/"); id != "" {
+			return LinkTarget{Kind: LinkEvent, Param: id}
+		}
 	case strings.HasPrefix(path, "/dyh/"):
 		if id := trimPathID(path, "/dyh/"); id != "" {
 			return LinkTarget{Kind: LinkPage, Param: ChannelURLPrefix + id, Title: "看看号"}
@@ -175,6 +188,11 @@ func ResolveLink(raw string) LinkTarget {
 		return LinkTarget{URL: web}
 	}
 	return LinkTarget{URL: coolapkWebURL(s)}
+}
+
+func showsCoolapkWebsite(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && IsCoolapkHost(u.Hostname())
 }
 
 // IsCoolapkHost reports whether host belongs to coolapk.com.

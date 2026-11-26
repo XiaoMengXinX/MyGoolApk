@@ -101,15 +101,68 @@ func (a *App) topicPage(cx *core.Scope, param string) core.Node {
 			return pagerList(cx, feeds, listSpec{pushed: true, header: head, empty: "暂无内容", emptyHint: "这里还没有帖子。", bottom: 24, skeleton: skeletonCard},
 				func(cx *core.Scope, get func() backend.Feed, r core.ListRow) core.Node { return a.feedCard(cx, get) })
 		}
-		pages := make([]pageTab, len(d.Tabs))
-		for i, t := range d.Tabs {
-			pages[i] = pageTab{Title: t.Title, Kind: tabPage, URL: t.URL}
-		}
-		g := a.newTabGroup(cx, pages, d.Selected)
-		g.pushed, g.head = true, head
-		return g.view(cx, nil)
+		return a.topicTabs(cx, d, head)
 	}))
 }
+
+func (a *App) topicTabs(cx *core.Scope, d backend.TopicDetail, head core.Node) core.Node {
+	tabs := make([]pageTab, len(d.Tabs))
+	hasWeb := false
+	for i, t := range d.Tabs {
+		tabs[i] = pageTab{Title: t.Title, Kind: tabPage, URL: t.URL}
+		if showsInApp(t.URL) {
+			tabs[i].Kind, hasWeb = tabWeb, true
+		}
+	}
+	g := a.newTabGroup(cx, tabs, d.Selected)
+	g.pushed = true
+	if !hasWeb {
+		g.head = head
+		return g.view(cx, nil)
+	}
+	lotto := core.NewSignal[*core.Ref](cx, nil)
+	lottoTab := d.Selected
+	for i, tab := range tabs {
+		if tab.Kind == tabWeb {
+			lottoTab = i
+			break
+		}
+	}
+	g.webTab = func(cx *core.Scope, i int) core.Node {
+		var ready func(*core.Ref)
+		if d.LottoLogo != "" && i == lottoTab {
+			ready = lotto.Set
+		}
+		web, _ := a.siteContent(cx, tabs[i].URL, nil, func() bool { return g.selected.GetUntracked() == i }, ready)
+		return web
+	}
+	return column(fill, "", head, core.Show{
+		When: func() bool { return lotto.Get() != nil },
+		Then: func(cx *core.Scope) core.Node {
+			return tap("一键抽奖", func() {
+				g.selectTab(lottoTab)
+				lotto.GetUntracked().InjectJavaScript(openActivityDrawing)
+			},
+				core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12,
+					Margin: core.Edges{Left: 16, Right: 16, Bottom: 8}, Padding: core.Symmetric(8, 12), CornerRadius: 12},
+				"bg-primary-container", a.clippedPic(cx, d.LottoLogo, 36, 36, 8),
+				column(fill.Merge(core.Style{Gap: 2}), "",
+					label("一键抽奖", textSecondary, 600, "text-on-primary-container"),
+					label("参与互动，赢取奖品", textCaption, 400, "text-on-primary-container")),
+				icon(&symbols.ChevronRight, 20, "text-on-primary-container"))
+		},
+	}, g.view(cx, nil))
+}
+
+// The activity site supplies the drawing ID in the same link its button uses.
+const openActivityDrawing = `(function () {
+	const a = document.querySelector('a[href*="/mp/feedLotto/detail/"]');
+	if (!a) return;
+	const u = new URL(a.href);
+	if (u.origin === "https://m.coolapk.com" && u.pathname === "/mp/feedLotto/detail/" && u.searchParams.has("id")) {
+		window.location.assign(u.href);
+	}
+})();`
 
 // topicHead shows what a topic is: its logo, name and counts, the button
 // that follows it, and its introduction.
@@ -156,7 +209,8 @@ func (a *App) topicHead(cx *core.Scope, get func() backend.TopicDetail, follow f
 			if !has {
 				return core.Group{}
 			}
-			return core.Text{ContentFunc: func() string { return get().Intro }, MaxLines: 3, Class: "text-on-surface-variant", Style: textStyle(textSecondary, 400)}
+			return core.Text{ContentFunc: func() string { return get().Intro }, MaxLines: 3, Class: "text-on-surface-variant",
+				Style: textStyle(textSecondary, 400).Merge(core.Style{LineHeight: 24})}
 		}),
 		core.Group(more))
 }

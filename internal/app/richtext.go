@@ -146,6 +146,10 @@ func (a *App) openInApp(target backend.LinkTarget) bool {
 		a.openTarget(&backend.Target{ID: target.Param, Title: target.Title, Product: true})
 	case backend.LinkPage:
 		a.openList(target.Title, target.Param)
+	case backend.LinkEvent:
+		a.push(routeEvent, target.Param)
+	case backend.LinkDrawing:
+		a.openWebPage("抽奖详情", target.URL)
 	case backend.LinkSearch:
 		a.searchFor(target.Param)
 	default:
