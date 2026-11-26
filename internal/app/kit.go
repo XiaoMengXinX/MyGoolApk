@@ -30,14 +30,23 @@ func pressable(v core.View) core.View {
 	return hoverFeedback(v)
 }
 
-// hoverFeedback gives a view that takes presses, where a pointer hovers, the
-// pointing hand and an on-surface state layer at 8% over the view while
-// hovered.
+// pointing gives a view that takes presses the pointing hand, where a
+// pointer hovers.
+func pointing(v core.View) core.View {
+	if hoverable {
+		v.Style.Cursor = core.CursorPointer
+	}
+	return v
+}
+
+// hoverFeedback is pointing with an on-surface state layer at 8% over the
+// view while hovered.
 func hoverFeedback(v core.View) core.View {
 	if !hoverable {
 		return v
 	}
-	v.Style.Cursor, v.Style.Group = core.CursorPointer, "press"
+	v = pointing(v)
+	v.Style.Group = "press"
 	layer := core.View{Class: "bg-on-surface", PointerEvents: core.PointerEventsNone,
 		Style: fillAbs.Merge(core.Style{Opacity: core.Alpha(0), GroupStyle: &core.GroupStyle{Name: "press", Hover: &core.Style{Opacity: core.Alpha(0.08)}}})}
 	v.Children = append(v.Children[:len(v.Children):len(v.Children)], layer)

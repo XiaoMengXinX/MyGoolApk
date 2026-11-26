@@ -132,8 +132,8 @@ func (a *App) navItem(i int, d destination, rail bool) core.Node {
 		}
 		return icon(d.outline, 24, "text-on-surface-variant")
 	})
-	// The indicator is the item's feedback, as Material 3's bar has no ripple.
-	return hoverFeedback(core.View{
+	// The indicator is the item's only feedback.
+	return pointing(core.View{
 		Role: core.RoleTab, Label: d.title,
 		OnPress: func(core.PressEvent) { a.selectDestination(i) },
 		Style:   size.Merge(core.Style{Padding: core.Edges{Top: top}, Gap: gap, AlignItems: core.AlignCenter, Overflow: core.Hidden}),
