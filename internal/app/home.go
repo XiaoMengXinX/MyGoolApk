@@ -15,7 +15,7 @@ func (a *App) topBar(content ...core.Node) core.Node {
 }
 
 // iconAction is a 48dp icon button of a top bar.
-func iconAction(glyph *symbol, name string, fn func()) core.Node {
+func iconAction(glyph *symbol, name string, fn func()) core.View {
 	return tap(name, fn, core.Style{Width: core.Pt(48), Height: core.Pt(48), CornerRadius: 24, AlignItems: core.AlignCenter,
 		JustifyContent: core.JustifyCenter, FlexShrink: 0, Overflow: core.Hidden}, "", icon(glyph, 24, "text-on-surface-variant"))
 }

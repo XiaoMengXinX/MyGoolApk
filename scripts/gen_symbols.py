@@ -12,6 +12,7 @@ BASE = "https://raw.githubusercontent.com/google/material-design-icons/master/sy
 ICONS = [
     ("Search", "search", False), ("Add", "add", False), ("Send", "send", False),
     ("Settings", "settings", False), ("Check", "check", False), ("Close", "close", False),
+    ("DoneAll", "done_all", False),
     ("Refresh", "refresh", False), ("Back", "arrow_back", False),
     ("Home", "home", False), ("HomeFill", "home", True),
     ("Devices", "devices", False), ("DevicesFill", "devices", True),

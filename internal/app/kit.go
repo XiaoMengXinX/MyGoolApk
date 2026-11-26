@@ -5,7 +5,7 @@ import (
 )
 
 // tap makes a view that runs fn when pressed, with Android's ripple.
-func tap(label string, fn func(), s core.Style, class string, children ...core.Node) core.Node {
+func tap(label string, fn func(), s core.Style, class string, children ...core.Node) core.View {
 	// A pressable that clips its content takes touches only within its bounds:
 	// Android hands a touch outside every child to the last child that does not
 	// clip, which would take it from the pressables before it.

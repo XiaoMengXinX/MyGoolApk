@@ -106,6 +106,8 @@ func (b *fakeBackend) UnreadCounts(context.Context) (backend.UnreadCounts, error
 func (b *fakeBackend) Notifications(context.Context, backend.NoticeKind, int) (backend.NotificationPage, error) {
 	return backend.NotificationPage{}, nil
 }
+func (b *fakeBackend) MarkNotificationsRead(context.Context) error { return nil }
+func (b *fakeBackend) ClearNotifications(context.Context) error    { return nil }
 func (b *fakeBackend) NoticeSenders(context.Context) ([]backend.NoticeSender, error) {
 	return nil, nil
 }

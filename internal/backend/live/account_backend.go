@@ -3,6 +3,7 @@ package live
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -131,8 +132,18 @@ func (b *coolapkBackend) Notifications(ctx context.Context, kind backend.NoticeK
 	return backend.NotificationPage{Items: items, HasMore: len(objects) > 0}, nil
 }
 
+func (b *coolapkBackend) MarkNotificationsRead(ctx context.Context) error {
+	_, err := b.client.GetRawWithCtx(ctx, "/notification/clearCount", map[string]interface{}{"type": "all"})
+	return err
+}
+
+func (b *coolapkBackend) ClearNotifications(ctx context.Context) error {
+	_, err := b.client.PostFormWithCtx(ctx, "/notificationV18/deleteAll", url.Values{"type": {"notification"}}, nil)
+	return err
+}
+
 func (b *coolapkBackend) NoticeSenders(ctx context.Context) ([]backend.NoticeSender, error) {
-	objects, err := listObjects(b.client.GetNotificationListWithCtx(ctx, coolapk.NotificationAll, coolapk.ListRequest{Page: 1}))
+	objects, err := listObjects(b.client.GetRawWithCtx(ctx, "/notificationV18/subGroupList", nil))
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +151,7 @@ func (b *coolapkBackend) NoticeSenders(ctx context.Context) ([]backend.NoticeSen
 	seen := map[string]bool{}
 	for _, object := range objects {
 		kind := firstAPIString(object, "note_type")
-		if !serviceNotice(object) || kind == "" || seen[kind] {
+		if kind == "" || seen[kind] {
 			continue
 		}
 		seen[kind] = true
@@ -152,11 +163,17 @@ func (b *coolapkBackend) NoticeSenders(ctx context.Context) ([]backend.NoticeSen
 func (b *coolapkBackend) ServiceNotices(ctx context.Context, sender string, page int) (backend.NotificationPage, error) {
 	key := "notifications:service:" + sender
 	cursor := b.cursor(key, page)
-	objects, err := listObjects(b.client.GetServiceNotificationsWithCtx(ctx, sender, coolapk.ListRequest{Page: page, LastItem: cursor.last}))
+	objects, err := listObjects(b.client.GetServiceNotificationsWithCtx(ctx, sender, coolapk.ListRequest{
+		Page: page, FirstItem: cursor.first, LastItem: cursor.last,
+	}))
 	if err != nil {
 		return backend.NotificationPage{}, err
 	}
-	b.storeCursor(key, page, feedCursor(objects))
+	next := feedCursor(objects)
+	if page > 1 {
+		next.first = cursor.first
+	}
+	b.storeCursor(key, page, next)
 	items := make([]backend.Notification, 0, len(objects))
 	for _, object := range objects {
 		n := noticeFromObject(object, backend.NoticesAll)

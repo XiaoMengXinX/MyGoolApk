@@ -68,6 +68,10 @@ type Backend interface {
 	UnreadCounts(ctx context.Context) (UnreadCounts, error)
 	// Notifications returns one page of message-center entries.
 	Notifications(ctx context.Context, kind NoticeKind, page int) (NotificationPage, error)
+	// MarkNotificationsRead clears the account's unread counts.
+	MarkNotificationsRead(ctx context.Context) error
+	// ClearNotifications deletes the entries of the main notification list.
+	ClearNotifications(ctx context.Context) error
 	// NoticeSenders returns the senders of service notices.
 	NoticeSenders(ctx context.Context) ([]NoticeSender, error)
 	// ServiceNotices returns one page of a sender's notices, by its kind.

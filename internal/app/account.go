@@ -11,13 +11,14 @@ import (
 // accountState is the signed-in profile and the message-center badges. The
 // session itself lives in the backend; uid mirrors it for the views.
 type accountState struct {
-	uid     *core.Signal[string]
-	profile *core.Signal[backend.UserProfile]
-	loaded  *core.Signal[bool]
-	err     *core.Signal[string]
-	unread  *core.Signal[backend.UnreadCounts]
-	loading bool
-	gen     int
+	uid       *core.Signal[string]
+	profile   *core.Signal[backend.UserProfile]
+	loaded    *core.Signal[bool]
+	err       *core.Signal[string]
+	unread    *core.Signal[backend.UnreadCounts]
+	loading   bool
+	gen       int
+	unreadGen int
 }
 
 func (a *App) newAccountState(cx *core.Scope) {
@@ -56,10 +57,8 @@ func (a *App) loadAccount() {
 	s.loading = true
 	s.gen++
 	gen := s.gen
-	go func() {
-		profile, err := a.backend.User(context.Background(), uid)
-		unread, unreadErr := a.backend.UnreadCounts(context.Background())
-		a.cx.Post(func() {
+	background(a, func(ctx context.Context) (backend.UserProfile, error) { return a.backend.User(ctx, uid) },
+		func(profile backend.UserProfile, err error) {
 			if gen != s.gen {
 				return
 			}
@@ -71,11 +70,8 @@ func (a *App) loadAccount() {
 				s.loaded.Set(true)
 				s.err.Set("")
 			}
-			if unreadErr == nil {
-				s.unread.Set(unread)
-			}
 		})
-	}()
+	a.refreshUnread()
 }
 
 // refreshUnread reads the message-center badges again, as the account opens
@@ -86,8 +82,10 @@ func (a *App) refreshUnread() {
 		return
 	}
 	gen := s.gen
+	s.unreadGen++
+	unreadGen := s.unreadGen
 	background(a, a.backend.UnreadCounts, func(unread backend.UnreadCounts, err error) {
-		if err == nil && gen == s.gen {
+		if err == nil && gen == s.gen && unreadGen == s.unreadGen {
 			s.unread.Set(unread)
 		}
 	})

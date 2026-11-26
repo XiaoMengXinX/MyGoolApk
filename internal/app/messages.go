@@ -26,6 +26,7 @@ const (
 type messageCenter struct {
 	notices, likes, follows *pager[backend.Notification]
 	conversations           *pager[backend.Conversation]
+	updating                *core.Signal[bool]
 	// senders are the senders of service notices, sender the kind of the one
 	// shown, and service its notices.
 	senders *core.Signal[[]backend.NoticeSender]
@@ -48,8 +49,9 @@ func (a *App) newMessageCenter(cx *core.Scope) *messageCenter {
 			r, err := a.backend.Conversations(ctx, page)
 			return r.Items, r.HasMore, err
 		}, func(m backend.Conversation) string { return m.Ukey }),
-		senders: core.NewSignalFunc(cx, []backend.NoticeSender(nil), nil),
-		sender:  core.NewSignal(cx, ""),
+		updating: core.NewSignal(cx, false),
+		senders:  core.NewSignalFunc(cx, []backend.NoticeSender(nil), nil),
+		sender:   core.NewSignal(cx, ""),
 	}
 	m.service = newQueryPager(cx, m.sender.GetUntracked, func(ctx context.Context, sender string, page int) ([]backend.Notification, bool, error) {
 		// The senders come first: the notices are those of the first one
@@ -106,8 +108,59 @@ func (a *App) messagesPage(cx *core.Scope) core.Node {
 		entry(&symbols.Campaign, "服务通知", noticesService, func() int { return unread().Service }))
 	a.refreshUnread()
 	notices := a.messages.notices
-	return pagerList(cx, notices, listSpec{pushed: true, empty: "暂无通知", header: entries,
+	list := pagerList(cx, notices, listSpec{pushed: true, empty: "暂无通知", header: entries,
 		onRefresh: func() { a.refreshUnread(); notices.reload() }}, a.noticeRow)
+	return a.screen(titled("通知中心"), a.notificationActions(cx), list)
+}
+
+func (a *App) notificationActions(cx *core.Scope) core.Node {
+	button := func(glyph *symbol, title string, press func()) core.Node {
+		view := iconAction(glyph, title, press)
+		view.Disabled = a.messages.updating.Get
+		view.Style.Disabled = &core.Style{Opacity: core.Alpha(0.4)}
+		return view
+	}
+	return row(core.Style{AlignItems: core.AlignCenter, FlexShrink: 0}, "",
+		button(&symbols.DoneAll, "全部已读", func() { a.updateNotifications(false) }),
+		button(&symbols.Delete, "清除通知", func() {
+			cx.ShowAlert(core.AlertConfig{Title: "清除通知？", Message: "将删除通知中心的评论、回复和提及通知。", Cancelable: true,
+				Actions: []core.AlertAction{{Label: "取消", Role: core.AlertCancel}, {Label: "清除", Role: core.AlertDestructive}},
+			}, func(choice int) {
+				if choice == 1 {
+					a.updateNotifications(true)
+				}
+			})
+		}))
+}
+
+func (a *App) updateNotifications(clear bool) {
+	m := a.messages
+	uid := a.account.uid.GetUntracked()
+	if m.updating.GetUntracked() || uid == "" {
+		return
+	}
+	work, title, success := a.backend.MarkNotificationsRead, "标记已读", "已全部标为已读"
+	if clear {
+		work, title, success = a.backend.ClearNotifications, "清除通知", "通知已清除"
+	}
+	m.updating.Set(true)
+	backgroundErr(a, work, func(err error) {
+		m.updating.Set(false)
+		if a.account.uid.GetUntracked() != uid {
+			return
+		}
+		if err != nil {
+			a.notice(title + "失败：" + err.Error())
+			return
+		}
+		if clear {
+			m.notices.reset()
+		} else {
+			m.notices.restart()
+		}
+		a.refreshUnread()
+		a.notice(success)
+	})
 }
 
 // noticesPage is a list of the message center opened from its entries.

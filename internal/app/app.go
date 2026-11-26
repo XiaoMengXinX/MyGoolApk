@@ -121,7 +121,7 @@ func (a *App) page(cx *core.Scope, r route) core.Node {
 	case routeChat:
 		return a.chatPage(cx, r.id)
 	case routeMessages:
-		return a.screen(titled("通知中心"), nil, a.messagesPage(cx))
+		return a.messagesPage(cx)
 	case routeNotices:
 		return a.noticesPage(cx, r.id)
 	}
