@@ -136,7 +136,7 @@ func (a *App) topicHead(cx *core.Scope, get func() backend.TopicDetail, follow f
 				Style:    core.Style{Height: core.Pt(32), Padding: core.Symmetric(0, 12), CornerRadius: 8, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter},
 				Children: []core.Node{core.Text{Content: t, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textSecondary, 500)}}}
 		}
-		more = append(more, sideScroll{Style: core.Style{Margin: core.Symmetric(0, -16)},
+		more = append(more, core.Scroll{Horizontal: true, HideIndicator: true, Style: core.Style{Margin: core.Symmetric(0, -16)},
 			Children: []core.Node{row(core.Style{Gap: 8, Padding: core.Symmetric(0, 16)}, "", chips...)}})
 	}
 	return column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 12, Left: 16}, Gap: 12}, "bg-background",
