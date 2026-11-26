@@ -12,12 +12,70 @@ func tap(label string, fn func(), s core.Style, class string, children ...core.N
 	if s.Overflow == 0 {
 		s.Overflow = core.Hidden
 	}
-	return core.View{
+	return pressable(core.View{
 		Class: class, Style: s, Role: core.RoleButton, Label: label,
+		OnPress:  func(core.PressEvent) { fn() },
+		Children: children,
+	})
+}
+
+// link is a press area that shows no state layer, only the pointing hand
+// where a pointer hovers and the ripple on Android: an author's avatar and
+// name, which read as part of what they head.
+func link(label string, fn func(), s core.Style, children ...core.Node) core.View {
+	if s.Overflow == 0 {
+		s.Overflow = core.Hidden
+	}
+	return pointing(core.View{
+		Style: s, Role: core.RoleButton, Label: label,
 		OnPress:  func(core.PressEvent) { fn() },
 		Android:  core.AndroidViewProps{Ripple: &core.Ripple{}},
 		Children: children,
+	})
+}
+
+// hoverable says the app runs where a pointer hovers: a desktop's, set once
+// as the app starts.
+var hoverable bool
+
+// pressable gives a view that takes presses the feedback of Material 3:
+// Android's ripple, and hoverFeedback.
+func pressable(v core.View) core.View {
+	v.Android.Ripple = &core.Ripple{}
+	return hoverFeedback(v)
+}
+
+// pointing gives a view that takes presses the pointing hand, where a
+// pointer hovers.
+func pointing(v core.View) core.View {
+	if hoverable {
+		v.Style.Cursor = core.CursorPointer
 	}
+	return v
+}
+
+// hoverFeedback is pointing with an on-surface state layer at 8% over the
+// view while hovered.
+func hoverFeedback(v core.View) core.View {
+	if !hoverable {
+		return v
+	}
+	v = pointing(v)
+	return hoverGroup(v, "press", fillAbs)
+}
+
+// hoverGroup makes v the group named group, and lays over it at place a
+// state layer shown while the pointer is over v or anything in it: a press
+// area under others that take presses shows its feedback through them.
+func hoverGroup(v core.View, group string, place core.Style) core.View {
+	if !hoverable {
+		return v
+	}
+	v.Style.Group = group
+	layer := core.View{Class: "bg-on-surface", PointerEvents: core.PointerEventsNone,
+		Style: place.Merge(core.Style{Opacity: core.Alpha(0), GroupStyle: &core.GroupStyle{Name: group, Hover: &core.Style{Opacity: core.Alpha(0.08)}}})}
+	v.Children = append(v.Children[:len(v.Children):len(v.Children)], layer)
+	return v
 }
 
 // row and column are flex containers.

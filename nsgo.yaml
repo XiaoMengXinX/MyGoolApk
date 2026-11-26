@@ -4,6 +4,8 @@ version: 0.1.0
 
 icon:
   png: assets/Icon.png
+  # macOS shows an icon as drawn: scripts/gen_mac_icon.py shapes this one from Icon.png.
+  apple: assets/AppIcon.icns
   android:
     foreground: assets/IconForeground.png
     background: "#16b36c"

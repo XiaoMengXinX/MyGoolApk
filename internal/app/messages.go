@@ -215,7 +215,7 @@ func (a *App) serviceNotices(cx *core.Scope) core.Node {
 				}
 			})
 		}
-		return core.Scroll{Horizontal: true, HideIndicator: true, Style: core.Style{FlexGrow: 0}, Children: []core.Node{
+		return sideScroll{Style: core.Style{FlexGrow: 0}, Children: []core.Node{
 			row(core.Style{Padding: core.Symmetric(8, 16), Gap: 8}, "", kids...)}}
 	})
 	return column(fill, "", chips,
@@ -326,7 +326,7 @@ func (a *App) chatRow(cx *core.Scope, get func() backend.ChatMessage) core.Node 
 			class, text, side = "bg-primary-container", "text-on-primary-container", core.AlignEnd
 		}
 		bubble := column(core.Style{FlexShrink: 1, Gap: 4, AlignItems: side}, "",
-			core.View{Class: class, Style: core.Style{Padding: core.Symmetric(10, 14), CornerRadius: 18},
+			core.View{Class: class, Style: core.Style{Padding: core.Symmetric(10, 14), CornerRadius: 20},
 				Children: []core.Node{core.Text{ContentFunc: body, Selectable: core.SelectableOn, Class: text, Style: textStyle(textBody, 400)}}},
 			core.Text{ContentFunc: func() string { return formatTimeNow(get().CreatedAt) }, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)})
 		if mine {

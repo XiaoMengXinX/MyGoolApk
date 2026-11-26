@@ -246,7 +246,9 @@ type listSpec struct {
 	// onScroll hears the list scroll.
 	onScroll func(core.ScrollEvent)
 	// inverted puts the first row at the bottom, as a chat does.
-	inverted    bool
+	inverted bool
+	// inSheet says the list is in a sheet, under no top bar of its own.
+	inSheet     bool
 	manualStart bool
 }
 
@@ -355,7 +357,7 @@ func pagerRows[T, R any](cx *core.Scope, p *pager[T], rows func([]T) []R, key fu
 				return pagerFooter(cx, p)
 			})
 		},
-		OnScroll:          spec.onScroll,
+		OnScroll:          scrollReport(cx, spec),
 		OnLoadMore:        p.loadMore,
 		LoadMoreThreshold: 1.5,
 		OnRefresh: func() {
@@ -385,4 +387,25 @@ func pagerFooter[T any](cx *core.Scope, p *pager[T]) core.Node {
 		}
 		return column(core.Style{Padding: core.All(16), AlignItems: core.AlignCenter}, "", label("没有更多了", textCaption, 400, "text-on-surface-variant"))
 	})
+}
+
+// scrolledUnder is set by a pushed page: whether its list has scrolled under
+// its top bar, which then takes the on-scroll color of Material 3.
+var scrolledUnder = core.NewKey[*core.Signal[bool]]("scrolled-under", nil)
+
+// scrollReport is what a list does as it scrolls: what spec asks, and telling
+// the page's top bar whether rows have gone under it.
+func scrollReport(cx *core.Scope, spec listSpec) func(core.ScrollEvent) {
+	under := scrolledUnder.Use(cx)
+	if under == nil || spec.inSheet || spec.inverted {
+		return spec.onScroll
+	}
+	return func(e core.ScrollEvent) {
+		if !e.Stale {
+			under.Set(e.Offset.Y > 0)
+		}
+		if spec.onScroll != nil {
+			spec.onScroll(e)
+		}
+	}
 }

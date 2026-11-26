@@ -12,7 +12,7 @@ func spinner() core.Node { return ui.Spinner{Size: 28, LineWidth: 3} }
 
 // textButton is a Material 3 text button.
 func textButton(text string, fn func()) core.Node {
-	return tap(text, fn, core.Style{Padding: core.Symmetric(8, 12), CornerRadius: 20, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, "",
+	return tap(text, fn, core.Style{Height: core.Pt(40), Padding: core.Symmetric(0, 12), CornerRadius: 20, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, "",
 		label(text, textSecondary, 500, "text-primary"))
 }
 
@@ -60,7 +60,7 @@ func errorBanner(text string, retry, dismiss func()) core.Node {
 }
 
 func textButtonOn(text string, fn func(), class string) core.Node {
-	return tap(text, fn, core.Style{Padding: core.Symmetric(8, 12), CornerRadius: 20, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, "",
+	return tap(text, fn, core.Style{Height: core.Pt(40), Padding: core.Symmetric(0, 12), CornerRadius: 20, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, "",
 		label(text, textSecondary, 500, class))
 }
 
@@ -105,18 +105,17 @@ func simpleTabs(selected *core.Signal[int], at *core.Signal[float32], titles ...
 	tabs := make([]core.Node, len(titles))
 	for i, title := range titles {
 		i := i
-		tabs[i] = core.View{
+		tabs[i] = pressable(core.View{
 			Role: core.RoleTab, Label: title,
 			Style:   fill.Merge(core.Style{Height: core.Pct(100), JustifyContent: core.JustifyCenter, AlignItems: core.AlignCenter, Overflow: core.Hidden}),
 			OnPress: func(core.PressEvent) { selected.Set(i) },
-			Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 			Children: []core.Node{core.Text{Content: title, Style: textStyle(textSecondary, 500), Class: "text-on-surface-variant", ClassFunc: func() string {
 				if selected.Get() == i {
 					return "text-primary"
 				}
 				return "text-on-surface-variant"
 			}}},
-		}
+		})
 	}
 	share := 100 / float32(len(titles))
 	indicator := core.View{
@@ -129,42 +128,59 @@ func simpleTabs(selected *core.Signal[int], at *core.Signal[float32], titles ...
 	return column(core.Style{FlexShrink: 0}, "bg-background",
 		core.View{Style: core.Style{Height: core.Pt(48), Padding: core.Symmetric(0, 8)}, Children: []core.Node{
 			core.View{Style: fill.Merge(core.Style{Direction: core.Row}), Children: append(tabs, indicator)}}},
-		core.View{Style: core.Style{Height: core.Pt(1)}, Class: "bg-surface-container-highest"})
+		core.View{Style: core.Style{Height: core.Pt(1)}, Class: "bg-outline-variant"})
 }
 
-// filterChip is a Material 3 filter chip.
-func filterChip(name string, on func() bool, fn func()) core.View {
-	return core.View{
+// filterChip is a Material 3 filter chip. Its border stays, transparent
+// while selected, so selecting it moves nothing but the check it leads with.
+func filterChip(name string, on func() bool, fn func()) core.View { return chip(name, on, fn, true) }
+
+// compactChip is a filter chip without the check, for a row of choices whose
+// places must not move as one is chosen, such as a search's sort.
+func compactChip(name string, on func() bool, fn func()) core.View { return chip(name, on, fn, false) }
+
+func chip(name string, on func() bool, fn func(), check bool) core.View {
+	leads := func() bool { return check && on() }
+	return pressable(core.View{
 		Role: core.RoleButton, Label: name, Selected: on, OnPress: func(core.PressEvent) { fn() },
-		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
 		ClassFunc: func() string {
 			if on() {
 				return "bg-secondary-container border-transparent"
 			}
 			return "border-outline-variant"
 		},
-		Style: core.Style{Height: core.Pt(32), Padding: core.Symmetric(0, 12), BorderWidth: 1, CornerRadius: 8, AlignItems: core.AlignCenter,
-			JustifyContent: core.JustifyCenter, Overflow: core.Hidden},
-		Children: []core.Node{core.Text{Content: name, Style: textStyle(textSecondary, 500), ClassFunc: func() string {
-			if on() {
-				return "text-on-secondary-container"
+		// Selected, the chip leads with a check and keeps 8dp before it.
+		StyleFunc: func() core.Style {
+			if leads() {
+				return core.Style{Padding: core.Edges{Left: 8, Right: 12}}
 			}
-			return "text-on-surface-variant"
-		}}},
-	}
+			return core.Style{}
+		},
+		Style: core.Style{Direction: core.Row, Height: core.Pt(32), Padding: core.Symmetric(0, 12), Gap: 8, BorderWidth: 1, CornerRadius: 8, AlignItems: core.AlignCenter,
+			JustifyContent: core.JustifyCenter, Overflow: core.Hidden},
+		// The chip takes presses over 48dp, as Material 3 asks of a target.
+		HitSlop: core.Edges{Top: 8, Bottom: 8},
+		Children: []core.Node{
+			core.Show{When: leads, Then: func(*core.Scope) core.Node { return icon(&symbols.Check, 18, "text-on-secondary-container") }},
+			core.Text{Content: name, Style: textStyle(textSecondary, 500), ClassFunc: func() string {
+				if on() {
+					return "text-on-secondary-container"
+				}
+				return "text-on-surface-variant"
+			}}},
+	})
 }
 
 // filledButton is a Material 3 filled button, dimmed while enabled says no.
 func filledButton(text string, enabled func() bool, fn func()) core.Node {
-	return core.View{
+	return pressable(core.View{
 		Role: core.RoleButton, Label: text,
 		OnPress: func(core.PressEvent) {
 			if enabled() {
 				fn()
 			}
 		},
-		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
-		Class:   "bg-primary",
+		Class: "bg-primary",
 		StyleFunc: func() core.Style {
 			if enabled() {
 				return core.Style{}
@@ -173,7 +189,7 @@ func filledButton(text string, enabled func() bool, fn func()) core.Node {
 		},
 		Style:    core.Style{Padding: core.Symmetric(10, 24), CornerRadius: 20, Overflow: core.Hidden, FlexShrink: 0, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter},
 		Children: []core.Node{label(text, textSecondary, 500, "text-on-primary")},
-	}
+	})
 }
 
 // m3Switch is a Material 3 switch: a 52x32 track whose thumb grows from 16 to

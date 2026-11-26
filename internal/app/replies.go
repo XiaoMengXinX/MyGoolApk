@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 
 	"app/internal/backend"
 )
@@ -18,12 +19,14 @@ type replyShape struct {
 func (d *detail) replyRow(cx *core.Scope, get func() backend.Reply) core.Node {
 	a := d.a
 	author := func() backend.Author { return get().Author }
-	return row(core.Style{Padding: core.Edges{Top: 12, Right: 16, Bottom: 8, Left: 16}, Gap: 12}, "bg-background",
-		tap("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 0, CornerRadius: 18, Overflow: core.Hidden, AlignSelf: core.AlignStart}, "",
+	v := row(core.Style{Padding: core.Edges{Top: 12, Right: 16, Bottom: 8, Left: 16}, Gap: 12}, "bg-background",
+		link("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 0, CornerRadius: 18, AlignSelf: core.AlignStart},
 			a.avatar(cx, author, 36)),
 		column(fill.Merge(core.Style{Gap: 6}), "",
 			row(core.Style{Gap: 8, AlignItems: core.AlignCenter}, "",
-				authorName(cx, author, textSecondary),
+				// The name opens the author, as the avatar does.
+				link("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 1, MinWidth: core.Pt(0)},
+					authorName(cx, author, textSecondary)),
 				dynamicShape(cx, func() bool { return get().IsAuthor }, func(cx *core.Scope, owner bool) core.Node {
 					if !owner {
 						return core.Group{}
@@ -95,7 +98,10 @@ func (d *detail) replyRow(cx *core.Scope, get func() backend.Reply) core.Node {
 				}),
 			),
 		),
-	)
+	).(core.View)
+	// A secondary click opens the actions of the ⋮ as the desktop's menu.
+	v.OnContextMenu = func(e core.ContextMenuEvent) { d.popupReplyMenu(get(), e.PagePosition) }
+	return v
 }
 
 // replyLead names whom a nested reply answers, before its text.
@@ -110,39 +116,67 @@ func replyLead(r backend.Reply) []backend.RichSpan {
 	return []backend.RichSpan{{Kind: backend.SpanText, Text: "回复 "}, to, {Kind: backend.SpanText, Text: "："}}
 }
 
-// replyMenu is the sheet of what else to do with the comment d.menu holds:
-// copy its text, see the replies under it, delete it when it is the
-// account's, and else report it on the site's page.
-func (d *detail) replyMenu() core.Node {
+// replyAction is something to do with a comment, from its menu.
+type replyAction struct {
+	glyph *symbol
+	name  string
+	run   func(backend.Reply)
+}
+
+// replyActions are what else there is to do with comment r: copy its text,
+// see the replies under it, delete it when it is the account's, and else
+// report it on the site's page.
+func (d *detail) replyActions(r backend.Reply) []replyAction {
 	a := d.a
+	actions := []replyAction{{&symbols.Copy, "复制", func(r backend.Reply) {
+		a.cx.SetClipboard(replyText(r))
+		a.notice("已复制")
+	}}}
+	if r.ChildrenTotal > 0 && d.thread.GetUntracked() == nil {
+		actions = append(actions, replyAction{&symbols.Comment, "查看回复", d.openThread})
+	}
+	if r.Author.ID != "" && r.Author.ID == a.backend.SessionUID() {
+		actions = append(actions, replyAction{&symbols.Delete, "删除", d.deleteReply})
+	} else {
+		actions = append(actions, replyAction{&symbols.Flag, "举报", func(r backend.Reply) {
+			a.openWeb("https://m.coolapk.com/mp/do?c=feed&m=report&type=feed_reply&id=" + r.ID)
+		}})
+	}
+	return actions
+}
+
+// popupReplyMenu shows comment r's actions as the desktop's own menu at
+// at, as a secondary click asks.
+func (d *detail) popupReplyMenu(r backend.Reply, at core.Point) {
+	actions := d.replyActions(r)
+	items := make([]desktop.MenuItem, len(actions))
+	for i, act := range actions {
+		items[i] = desktop.MenuItem{Label: act.name, OnSelect: func() { act.run(r) }}
+	}
+	desktop.PopupMenu(d.cx, items, at, nil)
+}
+
+// replyMenu is the sheet of the actions of the comment d.menu holds.
+func (d *detail) replyMenu() core.Node {
 	closeMenu := func() { d.menu.Set(nil) }
-	item := func(glyph *symbol, name string, fn func(r backend.Reply)) core.Node {
-		return tap(name, func() {
+	item := func(act replyAction) core.Node {
+		return tap(act.name, func() {
 			r := *d.menu.GetUntracked()
 			closeMenu()
-			fn(r)
+			act.run(r)
 		}, core.Style{Direction: core.Row, Height: core.Pt(56), Gap: 16, AlignItems: core.AlignCenter}, "",
-			icon(glyph, 24, "text-on-surface-variant"), label(name, textBody, 400, "text-on-surface"))
+			icon(act.glyph, 24, "text-on-surface-variant"), label(act.name, textBody, 400, "text-on-surface"))
 	}
-	return a.bottomSheet(func() bool { return d.menu.Get() != nil }, closeMenu,
+	return d.a.bottomSheet(func() bool { return d.menu.Get() != nil }, closeMenu,
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			r := d.menu.Get()
 			if r == nil {
 				return core.Group{}
 			}
-			items := []core.Node{item(&symbols.Copy, "复制", func(r backend.Reply) {
-				a.cx.SetClipboard(replyText(r))
-				a.notice("已复制")
-			})}
-			if r.ChildrenTotal > 0 && d.thread.GetUntracked() == nil {
-				items = append(items, item(&symbols.Comment, "查看回复", d.openThread))
-			}
-			if r.Author.ID != "" && r.Author.ID == a.backend.SessionUID() {
-				items = append(items, item(&symbols.Delete, "删除", d.deleteReply))
-			} else {
-				items = append(items, item(&symbols.Flag, "举报", func(r backend.Reply) {
-					a.openWeb("https://m.coolapk.com/mp/do?c=feed&m=report&type=feed_reply&id=" + r.ID)
-				}))
+			actions := d.replyActions(*r)
+			items := make([]core.Node, len(actions))
+			for i, act := range actions {
+				items[i] = item(act)
 			}
 			return column(core.Style{}, "", items...)
 		}))
@@ -356,10 +390,15 @@ func (d *detail) threadSheet(cx *core.Scope) core.Node {
 		core.Text{ContentFunc: title, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 500).Merge(core.Style{Padding: core.Symmetric(0, 16)})},
 		core.View{
 			// The sheet is as wide as what it holds, which a list is not: it
-			// gets the window's width, and its rows wrap in it.
+			// gets the window's width, or the dialog's in a wide window, and its
+			// rows wrap in it.
 			StyleFunc: func() core.Style {
 				w := a.cx.Env().Window()
-				return core.Style{Width: core.Pt(w.Width), Height: core.Pt(w.Height * 0.7)}
+				width := w.Width
+				if a.wide() {
+					width = min(dialogWidth, w.Width*0.9)
+				}
+				return core.Style{Width: core.Pt(width), Height: core.Pt(w.Height * 0.7)}
 			},
 			// Shown again, the list goes back to where it was.
 			OnLayout: func(core.Bounds) {
@@ -367,7 +406,7 @@ func (d *detail) threadSheet(cx *core.Scope) core.Node {
 					d.nested.list.ScrollTo(core.Point{Y: y}, false)
 				}
 			},
-			Children: []core.Node{pagerList(cx, d.nested, listSpec{empty: "暂无回复", bottom: 8,
+			Children: []core.Node{pagerList(cx, d.nested, listSpec{empty: "暂无回复", bottom: 8, inSheet: true,
 				onScroll: func(e core.ScrollEvent) {
 					if !e.Stale {
 						d.threadY = e.Offset.Y

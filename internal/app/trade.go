@@ -35,10 +35,9 @@ func (a *App) tradeBrandsPage(cx *core.Scope, title string) core.Node {
 		items := make([]core.Node, len(rows))
 		for i, e := range rows {
 			on := func() bool { return picked.Get() == i }
-			items[i] = core.View{
+			items[i] = pressable(core.View{
 				Role: core.RoleTab, Label: e.Title, OnPress: func(core.PressEvent) { picked.Set(i) },
-				Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
-				Style:   core.Style{Height: core.Pt(48), Padding: core.Symmetric(0, 12), JustifyContent: core.JustifyCenter, Overflow: core.Hidden},
+				Style: core.Style{Height: core.Pt(48), Padding: core.Symmetric(0, 12), JustifyContent: core.JustifyCenter, Overflow: core.Hidden},
 				ClassFunc: func() string {
 					if on() {
 						return "bg-background"
@@ -51,7 +50,7 @@ func (a *App) tradeBrandsPage(cx *core.Scope, title string) core.Node {
 					}
 					return "text-on-surface-variant"
 				}}},
-			}
+			})
 		}
 		return core.Scroll{HideIndicator: true, Class: "bg-surface-container-low", Style: core.Style{Width: core.Pt(96), FlexGrow: 0, FlexShrink: 0},
 			Children: []core.Node{column(core.Style{PaddingEnv: core.EnvEdges{Bottom: core.EnvSafeArea}}, "", items...)}}

@@ -221,7 +221,9 @@ func TestCommentSortSwitches(t *testing.T) {
 	app := start(t, b)
 	openCard(app)
 	settle(app)
-	app.Press("role:button 最新")
+	app.Press("role:button 评论排序，默认")
+	settle(app)
+	app.Press("role:menuitemradio 最新")
 	settle(app)
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -427,5 +429,17 @@ func TestASelectorChipSwapsTheListBelowIt(t *testing.T) {
 	}
 	if !shows(app, "role:button 今日热门") {
 		t.Error("the selector went with the list it replaced")
+	}
+}
+
+func TestWideWindowShowsThePostBesideTheList(t *testing.T) {
+	app := start(t, newFakeBackend())
+	app.Resize(1200, 800)
+	settle(app)
+	openCard(app)
+	app.FastForward(time.Second)
+	settle(app)
+	if !shows(app, "text:帖子 1") || !shows(app, "text:第一条") {
+		t.Fatalf("the post is not beside the list:\n%s", app.Dump())
 	}
 }

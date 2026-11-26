@@ -41,17 +41,21 @@ func (a *App) feedCard(cx *core.Scope, get func() backend.Feed) core.Node {
 	// The pressable parts are siblings: Android gives a press to the outermost
 	// view that takes one, so a card that is itself pressable would open its
 	// post whatever was pressed in it.
-	return column(core.Style{}, "bg-background",
+	card := column(core.Style{}, "bg-background",
 		// The press area under the card: its parts let a press on empty space
-		// through to it.
-		tap("查看帖子", open, fillAbs, ""),
+		// through to it. Its hover follows the whole card, which the parts over
+		// it would otherwise turn off and on as the pointer crosses them.
+		pointing(core.View{Role: core.RoleButton, Label: "查看帖子", OnPress: func(core.PressEvent) { open() },
+			Android: core.AndroidViewProps{Ripple: &core.Ripple{}}, Style: fillAbs.Merge(core.Style{Overflow: core.Hidden})}),
 		through(column(core.Style{Padding: core.Edges{Top: 16, Right: 16, Bottom: 8, Left: 16}, Gap: 12}, "",
 			a.feedHeader(cx, get, 40),
 			dynamicOnShape(cx, func() feedShape { return shapeOfFeed(get(), 6) },
 				func(cx *core.Scope, s feedShape) core.Node { return a.feedBody(cx, get, s) }),
 		)),
 		a.feedFooter(cx, get, open),
-		core.View{Style: core.Style{Height: core.Pt(8)}, Class: "bg-surface-container-low"})
+		core.View{Style: core.Style{Height: core.Pt(8)}, Class: "bg-surface-container-low"}).(core.View)
+	// The layer leaves the band between cards.
+	return hoverGroup(card, "card", fillAbs.Merge(core.Style{Bottom: core.Pt(8)}))
 }
 
 func (a *App) feedFooter(cx *core.Scope, get func() backend.Feed, open func()) core.Node {
@@ -78,8 +82,9 @@ func (a *App) feedFooter(cx *core.Scope, get func() backend.Feed, open func()) c
 		if len(chips) > 0 {
 			topics = through(row(core.Style{Gap: 6, MaxWidth: core.Pct(100), MinWidth: core.Pt(0)}, "", chips...))
 		}
-		stats := tap("查看帖子", open, core.Style{Height: core.Pt(32), AutoMargin: core.SideLeft,
-			JustifyContent: core.JustifyCenter, FlexShrink: 0}, "", feedStats(get))
+		// The counts open the post as the card does, under the card's hover.
+		stats := link("查看帖子", open, core.Style{Height: core.Pt(32), AutoMargin: core.SideLeft,
+			JustifyContent: core.JustifyCenter, FlexShrink: 0}, feedStats(get))
 		return through(row(core.Style{
 			Padding: core.Edges{Right: 16, Bottom: 8, Left: 16},
 			Wrap:    core.Wrap, RowGap: 4, ColumnGap: 12, AlignItems: core.AlignCenter,
@@ -130,13 +135,14 @@ func (a *App) feedHeader(cx *core.Scope, get func() backend.Feed, size core.Poin
 		return joinNonEmpty([]string{formatTime(time.Now(), f.PublishedAt), f.Device, f.Location}, "  ")
 	}
 	return through(row(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
-		tap("作者主页", func() { a.openUser(author()) }, core.Style{FlexShrink: 0, CornerRadius: size / 2, Overflow: core.Hidden}, "",
-			a.avatar(cx, author, size)),
-		// The name opens the author; the room beside it is the card's.
-		tap("作者主页", func() { a.openUser(author()) }, core.Style{Gap: 2, FlexShrink: 1, MinWidth: core.Pt(0)}, "",
-			authorName(cx, author, textBody),
-			core.Text{ContentFunc: meta, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
-		),
+		// The avatar and the name open the author as one; the room beside them
+		// is the card's.
+		link("作者主页", func() { a.openUser(author()) }, core.Style{Direction: core.Row, Gap: 12, AlignItems: core.AlignCenter, FlexShrink: 1, MinWidth: core.Pt(0)},
+			a.avatar(cx, author, size),
+			column(core.Style{Gap: 2, FlexShrink: 1, MinWidth: core.Pt(0)}, "",
+				authorName(cx, author, textBody),
+				core.Text{ContentFunc: meta, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
+			)),
 		core.View{Style: core.Style{FlexGrow: 1}, PointerEvents: core.PointerEventsNone},
 		// A rating heads its text with its own tags.
 		dynamicShape(cx, func() backend.PostKind { return get().Kind }, func(cx *core.Scope, kind backend.PostKind) core.Node {
@@ -258,8 +264,8 @@ func (a *App) feedContent(cx *core.Scope, get func() backend.Feed, s feedShape, 
 	if !s.more {
 		return text
 	}
-	return through(column(core.Style{Gap: 4}, "", text, tap("查看更多", func() { a.openFeed(get()) }, core.Style{},
-		"", label("查看更多", textSecondary, 500, "text-primary"))))
+	return through(column(core.Style{Gap: 4}, "", text, link("查看更多", func() { a.openFeed(get()) }, core.Style{AlignSelf: core.AlignStart},
+		label("查看更多", textSecondary, 500, "text-primary"))))
 }
 
 // coverImage shows the cover of an article, at its ratio between 4:3 and
@@ -368,11 +374,10 @@ func (a *App) singleImage(cx *core.Scope, get func() backend.Image, detail bool,
 // the server cuts at that ratio, and is marked 长图.
 func (a *App) pictureButton(cx *core.Scope, get func() backend.Image, size string, open func()) core.Node {
 	long := func() bool { return mediaRatio(get(), 4.0/3, 0, 1e6) < longImageRatio }
-	return core.View{
+	return pressable(core.View{
 		Role: core.RoleButton, Label: "查看图片", OnPress: func(core.PressEvent) { open() },
-		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
-		Class:   "bg-surface-container-highest",
-		Style:   fillAbs.Merge(core.Style{CornerRadius: 12, Overflow: core.Hidden}),
+		Class: "bg-surface-container-highest",
+		Style: fillAbs.Merge(core.Style{CornerRadius: 12, Overflow: core.Hidden}),
 		Children: []core.Node{
 			a.pic(cx, func() string {
 				if long() {
@@ -392,7 +397,7 @@ func (a *App) pictureButton(cx *core.Scope, get func() backend.Image, size strin
 				}()}
 			}),
 		},
-	}
+	})
 }
 
 // videoCover shows a video's cover with a play mark and its length. The
@@ -632,9 +637,10 @@ func versusOptions(v *backend.Vote, pct func(backend.VoteOption) int, pick func(
 			core.Text{Content: text, MaxLines: 1, Style: textStyle(textSecondary, 500).Merge(core.Style{Color: core.RGB(0xFFFFFF)})})
 	}
 	return row(core.Style{Gap: 4, AlignItems: core.AlignCenter}, "",
-		side(0, 0xF44336),
+		// The red and blue keep white labels at a 4.5:1 contrast.
+		side(0, 0xD32F2F),
 		label("VS", textSecondary, 600, "text-on-surface-variant"),
-		side(1, 0x2196F3))
+		side(1, 0x1976D2))
 }
 
 // voteOption is one option of a vote: an outlined row, filled to its share
@@ -653,10 +659,9 @@ func voteOption(o backend.VoteOption, counted bool, pct int, picked func() bool,
 		line = append(line, label(fmt.Sprintf("%d%%", pct), textSecondary, 500, "text-on-surface-variant"))
 	}
 	kids = append(kids, row(core.Style{Gap: 8, AlignItems: core.AlignCenter, MinHeight: core.Pt(44), Padding: core.Symmetric(8, 16)}, "", line...))
-	return core.View{
+	return pressable(core.View{
 		Role: core.RoleButton, Label: o.Text, OnPress: func(core.PressEvent) { pick() },
-		Android: core.AndroidViewProps{Ripple: &core.Ripple{}},
-		Style:   core.Style{CornerRadius: 12, Overflow: core.Hidden, BorderWidth: 1},
+		Style: core.Style{CornerRadius: 12, Overflow: core.Hidden, BorderWidth: 1},
 		ClassFunc: func() string {
 			if picked() || o.Chosen {
 				return "border-primary"
@@ -664,7 +669,7 @@ func voteOption(o backend.VoteOption, counted bool, pct int, picked func() bool,
 			return "border-outline-variant"
 		},
 		Children: kids,
-	}
+	})
 }
 
 func (a *App) forwardCard(cx *core.Scope, get func() *backend.Forward, open func()) core.Node {
@@ -686,7 +691,7 @@ func (a *App) forwardCard(cx *core.Scope, get func() *backend.Forward, open func
 			return backend.Forward{}
 		}
 		kids := []core.Node{
-			tap("作者主页", func() { a.openUser(fw().Author) }, core.Style{}, "",
+			link("作者主页", func() { a.openUser(fw().Author) }, core.Style{AlignSelf: core.AlignStart},
 				core.Text{ContentFunc: func() string { return "@" + displayName(fw().Author.Name) }, MaxLines: 1, Class: "text-primary", Style: textStyle(textSecondary, 500)}),
 			a.richText(cx, func() ([]backend.RichSpan, string) { f := fw(); return f.Rich, f.Content }, richOptions{size: textSecondary, class: "text-on-surface", maxLines: 4, press: open}),
 		}

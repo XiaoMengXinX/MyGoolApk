@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"slices"
+	"strconv"
 	"unicode/utf16"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -257,7 +258,7 @@ func (a *App) detailPage(cx *core.Scope, id string) core.Node {
 	markdown := core.Show{
 		When: func() bool { return d.documents.Get().hasMarkdown },
 		Then: func(*core.Scope) core.Node {
-			button := filterChip("Markdown", d.markdown.Get, func() { d.markdown.Set(!d.markdown.GetUntracked()) })
+			button := compactChip("Markdown", d.markdown.Get, func() { d.markdown.Set(!d.markdown.GetUntracked()) })
 			button.Style.CornerRadius = 16
 			button.Style.FlexShrink = 0
 			button.HitSlop = core.Symmetric(8, 0)
@@ -434,15 +435,15 @@ func (d *detail) commentsHeader() core.Node {
 				if of == backend.RepliesOfVote {
 					return core.Group{}
 				}
-				chips := []core.Node{
-					filterChip("默认", func() bool { return d.sort.Get() == 0 }, func() { d.setSort(0) }),
-					filterChip("最新", func() bool { return d.sort.Get() == 1 }, func() { d.setSort(1) }),
-					filterChip("热门", func() bool { return d.sort.Get() == 2 }, func() { d.setSort(2) }),
-				}
+				// The values are backend.ReplySort's; only a post's replies can be its author's.
+				sorts := []option{{"默认", "0"}, {"最新", "1"}, {"热门", "2"}}
 				if of == backend.RepliesOfPost {
-					chips = append(chips, filterChip("楼主", func() bool { return d.sort.Get() == 3 }, func() { d.setSort(3) }))
+					sorts = append(sorts, option{"楼主", "3"})
 				}
-				return row(core.Style{Gap: 8}, "", chips...)
+				return optionMenu(cx, "评论排序", core.AlignEnd, sorts, func() string { return strconv.Itoa(d.sort.Get()) }, func(v string) {
+					i, _ := strconv.Atoi(v)
+					d.setSort(i)
+				})
 			}),
 		),
 	}}

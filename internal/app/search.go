@@ -69,7 +69,7 @@ func (a *App) searchPage(cx *core.Scope, keyword string) core.Node {
 		Style: func() core.Style { st := textStyle(textBody, 400); st.FlexGrow, st.MinWidth = 1, core.Pt(0); return st }(),
 	}
 	bar := a.topBar(
-		iconAction(&symbols.Back, "返回", func() {
+		backAction(func() {
 			s.cx.DismissKeyboard()
 			a.nav.Pop()
 		}),

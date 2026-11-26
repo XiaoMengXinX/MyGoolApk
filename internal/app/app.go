@@ -13,6 +13,7 @@ import (
 func Root(newBackend func(dir string) (backend.Backend, error)) func(cx *core.Scope) core.Node {
 	return func(cx *core.Scope) core.Node {
 		cx.SetTheme(newTheme())
+		hoverable = cx.Env().Desktop()
 		b, err := newBackend(cx.DataDir())
 		if err != nil {
 			panic(err)
@@ -25,12 +26,14 @@ func Root(newBackend func(dir string) (backend.Backend, error)) func(cx *core.Sc
 			toasts: ui.NewToaster(cx),
 		}
 		a.nav = a.newPageStack(cx)
+		a.size = a.newSize(cx)
 		a.viewing = core.NewSignalFunc(cx, (*viewer)(nil), nil)
 		a.viewerShown = core.NewSignal(cx, false)
 		a.searchHistory = core.NewSignalFunc(cx, a.local.Searches, nil)
 		a.history = core.NewSignalFunc(cx, a.local.History, nil)
 		a.topics = a.newTopicHome(cx)
 		a.applyAppearance()
+		a.placeWindow(cx)
 		cx.OnOpenLinks(func(links []string) {
 			for _, l := range links {
 				a.openLink(l)
@@ -50,6 +53,7 @@ type App struct {
 	images        *imageStore
 	nav           *pageStack
 	tab           *core.Signal[int]
+	size          *core.Memo[sizeClass]
 	lists         []*pageList             // the server lists shown, which a post's page keeps current
 	seeds         map[string]backend.Feed // posts a card shows, until the page loads the full post
 	local         localState
@@ -86,11 +90,18 @@ func (a *App) view(cx *core.Scope) core.Node {
 	stack := a.nav.view(cx, func(cx *core.Scope) core.Node {
 		return core.Group{a.rootBack(), a.shell(cx, dests)}
 	}, a.page)
-	return core.Group{stack, a.viewerLayer(), ui.Toasts{Toaster: a.toasts, Placement: ui.ToastBottom, Inset: 72}}
+	// A window wider than a phone's has the destinations on a rail at its left.
+	body := row(fill, "bg-background",
+		core.Show{When: a.wide, Then: func(cx *core.Scope) core.Node { return a.rail(dests) }},
+		// The stack keeps to its room: a layer shifting under a page goes off
+		// its left edge, which in a medium window is the rail's.
+		core.View{Style: fill.Merge(core.Style{Overflow: core.Hidden}), Children: []core.Node{stack}})
+	return core.Group{body, a.viewerLayer(), ui.Toasts{Toaster: a.toasts, Placement: ui.ToastBottom, Inset: 72}}
 }
 
 // page builds the page of a route pushed over the tabs.
 func (a *App) page(cx *core.Scope, r route) core.Node {
+	scrolledUnder.Provide(cx, core.NewSignal(cx, false))
 	switch r.kind {
 	case routeFeed:
 		return a.detailPage(cx, r.id)
@@ -130,12 +141,11 @@ func (a *App) page(cx *core.Scope, r route) core.Node {
 	return a.screen(titled(r.kind), nil)
 }
 
-// rootBack takes back while no page is pushed, and on Android for the pages
-// too, which are the app's own layers there. iOS's stack pops its pages
-// itself.
+// rootBack takes back while no page is pushed, and for the pages too where
+// they are the app's own layers. An iPhone's stack pops its pages itself.
 func (a *App) rootBack() core.Node {
 	return core.Show{
-		When: func() bool { return a.nav.android() || a.nav.Depth() == 0 },
+		When: func() bool { return !a.nav.native() || a.nav.Depth() == 0 },
 		Then: func(cx *core.Scope) core.Node {
 			cx.OnBackPress(a.backFromRoot)
 			return core.Group{}

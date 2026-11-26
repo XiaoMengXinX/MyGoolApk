@@ -1,6 +1,8 @@
 package app
 
 import (
+	"time"
+
 	"github.com/nsgo-dev/nsgo/core"
 )
 
@@ -16,8 +18,18 @@ func (a *App) topBar(content ...core.Node) core.Node {
 
 // iconAction is a 48dp icon button of a top bar.
 func iconAction(glyph *symbol, name string, fn func()) core.View {
+	return iconButton(glyph, name, "text-on-surface-variant", fn)
+}
+
+// backAction is the way back that leads a top bar, in on-surface as Material
+// 3 draws a bar's navigation icon.
+func backAction(fn func()) core.View {
+	return iconButton(&symbols.Back, "返回", "text-on-surface", fn)
+}
+
+func iconButton(glyph *symbol, name, class string, fn func()) core.View {
 	return tap(name, fn, core.Style{Width: core.Pt(48), Height: core.Pt(48), CornerRadius: 24, AlignItems: core.AlignCenter,
-		JustifyContent: core.JustifyCenter, FlexShrink: 0, Overflow: core.Hidden}, "", icon(glyph, 24, "text-on-surface-variant"))
+		JustifyContent: core.JustifyCenter, FlexShrink: 0, Overflow: core.Hidden}, "", icon(glyph, 24, class))
 }
 
 func (a *App) homePage(cx *core.Scope) core.Node {
@@ -53,7 +65,9 @@ func (a *App) rootTopBar(title string) core.Node {
 func (a *App) underStatusBar(children ...core.Node) core.Node {
 	env := a.cx.Env()
 	return core.View{Class: "bg-background", Style: core.Style{FlexShrink: 0},
-		StyleFunc: func() core.Style { return core.Style{Padding: core.Edges{Top: env.SafeArea().Top}} },
+		// A desktop's window has no status bar: the bar keeps 8dp from the title
+		// bar, which the 56dp row's 4dp alone leaves too close.
+		StyleFunc: func() core.Style { return core.Style{Padding: core.Edges{Top: max(env.SafeArea().Top, 8)}} },
 		Children:  children}
 }
 
@@ -69,13 +83,28 @@ func (a *App) screen(title func() string, trailing core.Node, body ...core.Node)
 // screenBack is screen with a way back of the page's own.
 func (a *App) screenBack(back func(), title func() string, trailing core.Node, body ...core.Node) core.Node {
 	bar := []core.Node{
-		iconAction(&symbols.Back, "返回", back),
+		backAction(back),
 		core.Text{ContentFunc: title, MaxLines: 1, Class: "text-on-surface", Style: fill.Merge(textStyle(textTitle, 400))},
 	}
 	if trailing != nil {
 		bar = append(bar, trailing)
 	}
-	top := a.underStatusBar(
-		row(core.Style{Height: core.Pt(topBarHeight), Padding: core.Edges{Right: 12, Left: 4}, Gap: 4, AlignItems: core.AlignCenter}, "", bar...))
+	// The bar takes surface-container while rows are under it, as Material
+	// 3's on-scroll state of a top app bar.
+	top := core.Dynamic(func(cx *core.Scope) core.Node {
+		under := scrolledUnder.Use(cx)
+		v := a.underStatusBar(
+			row(core.Style{Height: core.Pt(topBarHeight), Padding: core.Edges{Right: 12, Left: 4}, Gap: 4, AlignItems: core.AlignCenter}, "", bar...)).(core.View)
+		if under != nil {
+			v.Style.Transition = core.Transition{Duration: 200 * time.Millisecond, Easing: emphasized, Properties: core.TransitionBackground}
+			v.Class, v.ClassFunc = "", func() string {
+				if under.Get() {
+					return "bg-surface-container"
+				}
+				return "bg-background"
+			}
+		}
+		return v
+	})
 	return column(fill, "bg-background", append([]core.Node{top}, body...)...)
 }
