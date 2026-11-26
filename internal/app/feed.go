@@ -17,14 +17,14 @@ type feedShape struct {
 	kind                         backend.PostKind
 	images                       int
 	cover, video, link, vote, fw bool
-	title, more                  bool
+	title, text, more            bool
 }
 
 func shapeOfFeed(f backend.Feed, lines int) feedShape {
 	return feedShape{
 		kind: f.Kind, images: len(f.Images), cover: f.Cover != nil, video: f.Video != nil,
 		link: f.Link != nil, vote: f.Vote != nil, fw: f.Forward != nil,
-		title: f.Title != "", more: feedTextNeedsMore(f.Content, lines),
+		title: f.Title != "", text: strings.TrimSpace(f.Content) != "" || len(f.Rich) > 0, more: feedTextNeedsMore(f.Content, lines),
 	}
 }
 
@@ -221,6 +221,9 @@ func countLabel(n int, unit string) string {
 // feedContent shows the text of a post, cut to lines, with the link that
 // opens the rest.
 func (a *App) feedContent(cx *core.Scope, get func() backend.Feed, s feedShape, lines int) core.Node {
+	if !s.text {
+		return core.Group{}
+	}
 	text := a.feedRich(cx, get, richOptions{size: textBody, lineHeight: feedLineHeight, class: "text-on-surface", maxLines: lines, press: func() { a.openFeed(get()) }})
 	if !s.more {
 		return text
