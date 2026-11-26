@@ -97,8 +97,15 @@ var thumbWidths = map[string]int{thumbSquare: 480, thumbSmall: 720, thumbMedium:
 // when it is no wider or is not a Coolapk upload. Variants are upscaled
 // past the original's width, which only adds bytes.
 func thumbURL(im backend.Image, size string) string {
-	if !strings.HasPrefix(im.URL, "https://image.coolapk.com/") || strings.Contains(im.URL, "?") {
+	path, coolapk := strings.CutPrefix(im.URL, "https://image.coolapk.com/")
+	// The goods_cover directory serves the original URL supplied by the API.
+	if !coolapk || strings.Contains(path, "?") || strings.HasPrefix(path, "goods_cover/") {
 		return im.URL
+	}
+	for _, suffix := range [...]string{".xs.jpg", ".s.jpg", ".m.jpg", ".s2x.jpg"} {
+		if strings.HasSuffix(im.URL, suffix) {
+			return im.URL
+		}
 	}
 	if size != thumbSquare && im.Width > 0 && im.Width <= thumbWidths[size] {
 		return im.URL

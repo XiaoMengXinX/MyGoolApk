@@ -39,6 +39,14 @@ func TestThumbURLPicksTheVariant(t *testing.T) {
 	if got, want := thumbURL(cdn, thumbSquare), cdn.URL+".xs.jpg"; got != want {
 		t.Errorf("square = %q, want %q", got, want)
 	}
+	cover := backend.Image{URL: "https://image.coolapk.com/feed_cover/a@1555x699.jpeg.xs.jpg"}
+	if got := thumbURL(cover, thumbSquare); got != cover.URL {
+		t.Errorf("article link cover = %q, want %q", got, cover.URL)
+	}
+	goods := backend.Image{URL: "https://image.coolapk.com/goods_cover/2024/0927/16/0_4501_6382_117@800x800.jpg"}
+	if got := thumbURL(goods, thumbSquare); got != goods.URL {
+		t.Errorf("goods link cover = %q, want %q", got, goods.URL)
+	}
 	narrow := backend.Image{URL: "https://image.coolapk.com/feed/b.jpg", Width: 600}
 	if got := thumbURL(narrow, thumbSmall); got != narrow.URL {
 		t.Errorf("an original narrower than the variant should be used as it is, got %q", got)

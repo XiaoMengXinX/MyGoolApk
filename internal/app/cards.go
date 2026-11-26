@@ -602,10 +602,13 @@ func (a *App) buttonsCard(cx *core.Scope, c *backend.Card) core.Node {
 	return row(core.Style{Gap: 8, Padding: core.Symmetric(12, 16)}, "", cells...)
 }
 
-// clippedPic is a picture of a fixed size with rounded corners: an image's own
-// corner radius does not clip what it draws, the view around it does.
 func (a *App) clippedPic(cx *core.Scope, url string, w, h, radius core.Points) core.Node {
+	return a.clippedPicFrom(cx, func() string { return url }, w, h, radius)
+}
+
+// An image's own corner radius does not clip what it draws, the view around it does.
+func (a *App) clippedPicFrom(cx *core.Scope, url func() string, w, h, radius core.Points) core.Node {
 	return core.View{Class: "bg-surface-container-high",
 		Style:    core.Style{Width: core.Pt(w), Height: core.Pt(h), CornerRadius: radius, Overflow: core.Hidden, FlexShrink: 0},
-		Children: []core.Node{a.picOf(cx, url, core.Cover, "", fillAbs)}}
+		Children: []core.Node{a.pic(cx, url, core.Cover, "", fillAbs)}}
 }

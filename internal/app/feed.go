@@ -2,6 +2,8 @@ package app
 
 import (
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -406,16 +408,32 @@ func (a *App) linkCard(cx *core.Scope, get func() *backend.Link, detail bool, ca
 			return core.View{Class: "bg-primary-container", Style: core.Style{Width: core.Pt(32), Height: core.Pt(32), CornerRadius: 16, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, FlexShrink: 0},
 				Children: []core.Node{icon(&symbols.Link, 18, "text-on-primary-container")}}
 		}
-		return a.pic(cx, func() string { return thumbURL(backend.Image{URL: link().CoverURL}, thumbSquare) },
-			core.Cover, "bg-surface-container-highest", core.Style{Width: core.Pt(40), Height: core.Pt(40), CornerRadius: 8, FlexShrink: 0})
+		return a.clippedPicFrom(cx, func() string {
+			return thumbURL(backend.Image{URL: link().CoverURL}, thumbSquare)
+		}, 40, 40, 8)
 	})
-	words := column(fill.Merge(core.Style{Gap: 2}), "",
-		core.Text{ContentFunc: func() string { return link().Title }, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textSecondary, 500)},
-		dynamicShape(cx, func() bool { return link().Subtitle != "" }, func(cx *core.Scope, has bool) core.Node {
+	lines := 1
+	if detail {
+		lines = 2
+	}
+	subtitle := core.NewMemo(cx, func() string {
+		l := link()
+		if l.Subtitle != "" || !detail {
+			return l.Subtitle
+		}
+		u, err := url.Parse(l.URL)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimPrefix(u.Hostname(), "www.")
+	})
+	words := column(fill.Merge(core.Style{Gap: 2, MinWidth: core.Pt(0)}), "",
+		core.Text{ContentFunc: func() string { return link().Title }, MaxLines: lines, Class: "text-on-surface", Style: textStyle(textSecondary, 500)},
+		dynamicShape(cx, func() bool { return subtitle.Get() != "" }, func(cx *core.Scope, has bool) core.Node {
 			if !has {
 				return core.Group{}
 			}
-			return core.Text{ContentFunc: func() string { return link().Subtitle }, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)}
+			return core.Text{ContentFunc: subtitle.Get, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)}
 		}))
 	style := core.Style{Direction: core.Row, Padding: core.Edges{Top: 8, Right: 12, Bottom: 8, Left: 8}, Gap: 10, AlignItems: core.AlignCenter, CornerRadius: 24, Overflow: core.Hidden}
 	onPress := func() {
@@ -425,9 +443,7 @@ func (a *App) linkCard(cx *core.Scope, get func() *backend.Link, detail bool, ca
 			}
 			return
 		}
-		if l := link(); l.URL != "" {
-			a.openWeb(l.URL)
-		}
+		a.openURL(link().URL)
 	}
 	return tap("链接", onPress, style, "bg-surface-container-high", lead, words, icon(&symbols.ChevronRight, 20, "text-on-surface-variant"))
 }

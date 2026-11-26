@@ -236,6 +236,24 @@ func TestSearchShowsResults(t *testing.T) {
 	}
 }
 
+func TestArticleShareCardOpensReferencedPost(t *testing.T) {
+	b := newFakeBackend()
+	b.feed.Kind = backend.PostArticle
+	b.feed.Blocks = []backend.Block{{Kind: backend.BlockLink, Link: &backend.Link{
+		Title: "引用的图文", URL: "https://www.coolapk.com/feed/62425872?s=share",
+	}}}
+	app := start(t, b)
+	openCard(app)
+	settle(app)
+	app.Press("role:button 链接")
+	settle(app)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.details["62425872"] == 0 {
+		t.Fatal("the referenced post detail was not requested")
+	}
+}
+
 func TestTheDigitalTabListsCategories(t *testing.T) {
 	app := start(t, newFakeBackend())
 	app.Press("role:tab 数码")
