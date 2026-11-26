@@ -1,10 +1,6 @@
 package app
 
-import (
-	"time"
-
-	"github.com/nsgo-dev/nsgo/core"
-)
+import "github.com/nsgo-dev/nsgo/core"
 
 // swipePager moves a paged horizontal Scroll by a pan on its content: on iOS
 // a paged scroll view with scroll views inside its pages never gets a
@@ -82,18 +78,13 @@ type headed struct {
 	// glide stops the glide a throw of it set off.
 	from  core.Points
 	glide func()
-	// reach is how far each list scrolls; wheelY is where the head's wheel
-	// sends the shown list, wheeled when it last did.
-	reach   map[int]core.Points
-	wheelY  core.Points
-	wheeled time.Time
 }
 
 // newHeaded is a head over count lists that list returns the refs of, nil for
 // one not made yet, of which shown is in sight.
 func newHeaded(cx *core.Scope, shown *core.Signal[int], count int, list func(i int) *core.Ref) *headed {
 	h := &headed{cx: cx, shown: shown, count: count, list: list, head: core.NewSignal(cx, core.Points(0)), top: core.NewSignal(cx, core.Points(0)),
-		shift: core.NewSignal(cx, core.Points(0)), offsets: map[int]core.Points{}, held: map[int]bool{}, reach: map[int]core.Points{}}
+		shift: core.NewSignal(cx, core.Points(0)), offsets: map[int]core.Points{}, held: map[int]bool{}}
 	h.rests, h.ends = make([]*core.Signal[core.Points], count), make([][2]core.Ref, count)
 	for i := range h.rests {
 		h.rests[i] = core.NewSignal(cx, core.Points(0))
@@ -203,7 +194,6 @@ func (h *headed) scrolled(i int) func(core.ScrollEvent) {
 			return
 		}
 		h.offsets[i] = max(0, e.Offset.Y)
-		h.reach[i] = max(0, e.ContentSize.Height-e.Size.Height)
 		if i == h.shown.GetUntracked() && !h.held[i] {
 			h.shift.Set(min(h.offsets[i], h.head.GetUntracked()))
 			h.follow(i - 1)
@@ -213,8 +203,9 @@ func (h *headed) scrolled(i int) func(core.ScrollEvent) {
 }
 
 // drag scrolls the shown list by a vertical drag that began on the head or
-// the bar, which lie over the lists rather than in them, and glides it on as
-// the finger lets go. A sideways drag stays the head's own rows'.
+// the bar on iOS, and glides it on as the finger lets go. A sideways drag
+// stays the head's own rows'. Elsewhere the head hands its scrolls to the
+// list natively (View.ScrollTarget).
 func (h *headed) drag(e core.PanEvent) {
 	i := h.shown.GetUntracked()
 	ref := h.list(i)
@@ -240,33 +231,13 @@ func (h *headed) drag(e core.PanEvent) {
 	}
 }
 
-// wheel scrolls the shown list by a desktop's wheel or touchpad over the head
-// or the bar, which go to the scroll views under the pointer, and the lists
-// are not under it there. A touchpad's scroll and its glide follow as they
-// come; a wheel's notch scrolls on with an animation.
-func (h *headed) wheel(e core.WheelEvent) {
-	i := h.shown.GetUntracked()
-	ref := h.list(i)
-	if ref == nil || e.Delta.Y == 0 {
-		return
-	}
-	// A scroll that comes on soon after the last goes on from where that one
-	// sent the list, which may not have told where it got yet.
-	if time.Since(h.wheeled) > 200*time.Millisecond {
-		h.wheelY = h.offsets[i]
-	}
-	h.wheeled = time.Now()
-	// AppKit's deltas move the content; offsets move the other way.
-	h.wheelY = max(0, min(h.wheelY-e.Delta.Y, h.reach[i]))
-	ref.ScrollTo(core.Point{Y: h.wheelY}, !e.Touchpad)
-}
-
-// wheelOn is wheel where a pointer hovers, nil elsewhere.
-func (h *headed) wheelOn() func(core.WheelEvent) {
-	if !hoverable {
+// iosDrag is drag on iOS, whose backend hands no touches to a ScrollTarget,
+// nil elsewhere.
+func (h *headed) iosDrag() func(core.PanEvent) {
+	if h.cx.Env().OS() != core.OSIOS {
 		return nil
 	}
-	return h.wheel
+	return h.drag
 }
 
 // view lays head and bar over pages.
@@ -278,8 +249,10 @@ func (h *headed) view(head, bar, pages core.Node) core.Node {
 			PointerEvents: core.PointerEventsBoxNone,
 			StyleFunc:     func() core.Style { return core.Style{Transform: core.Transform{TranslateY: -h.shift.Get()}} },
 			OnLayout:      func(b core.Bounds) { h.top.Set(b.Size.Height) },
-			OnPan:         h.drag,
-			OnWheel:       h.wheelOn(),
+			// The head and the bar lie over the lists rather than in them:
+			// the scrolls that start on them go to the list shown.
+			ScrollTarget:  func() *core.Ref { return h.list(h.shown.GetUntracked()) },
+			OnPan:         h.iosDrag(),
 			PanActivation: core.PanActivation{ActiveOffsetY: 10, FailOffsetX: 10},
 			Children: []core.Node{
 				core.View{OnLayout: func(b core.Bounds) { h.head.Set(b.Size.Height) }, Children: []core.Node{head}},
