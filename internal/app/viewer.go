@@ -148,8 +148,17 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	cx.OnKey("right", func() { turn(1) })
 	// zooms are the pictures built, by page, for a drag on a zoomed one.
 	zooms := map[int]*zoomPage{}
-	wheel := viewerWheel(&pager, width.GetUntracked, len(v.images), current.GetUntracked, zoomed.GetUntracked,
-		func() *zoomPage { return zooms[current.GetUntracked()] }, turn)
+	var wheel func(core.WheelEvent)
+	if hoverable {
+		pageWheel := pagedWheel(&pager, width.GetUntracked, len(v.images), current.GetUntracked, turn)
+		wheel = func(e core.WheelEvent) {
+			if zp := zooms[current.GetUntracked()]; zoomed.GetUntracked() && zp != nil {
+				zp.ref.ScrollTo(zp.clamp(core.Point{X: zp.off.X - e.Delta.X, Y: zp.off.Y - e.Delta.Y}), false)
+				return
+			}
+			pageWheel(e)
+		}
+	}
 	// pinched is when a picture's zoom last changed: a pinch, whose fingers
 	// the pans over the pictures must leave alone.
 	var pinched time.Time
@@ -595,29 +604,17 @@ func (z *zoomPage) clamp(p core.Point) core.Point {
 	}
 }
 
-// viewerWheel is how the viewer's pictures take a desktop's wheel and
-// touchpad, which go to the picture under the pointer rather than to the
-// pager around it: a zoomed picture moves about, and otherwise a wheel's
-// notch turns to the next picture or the one before, and a touchpad's swipe
-// follows the fingers and settles on the picture beside. Nil where nothing
-// hovers.
-func viewerWheel(pager *core.Ref, width func() core.Points, count int, at func() int, zoomed func() bool,
-	zoom func() *zoomPage, turn func(d int)) func(core.WheelEvent) {
-	if !hoverable {
-		return nil
-	}
-	var from, moved core.Points
+// pagedWheel turns one page per wheel step and settles a touchpad swipe on
+// the page beside the one it started on.
+func pagedWheel(pager *core.Ref, width func() core.Points, count int, at func() int, turn func(d int)) func(core.WheelEvent) {
+	var startPage int
+	var moved core.Points
 	var swiping bool
 	var notched time.Time
 	return func(e core.WheelEvent) {
 		// AppKit's deltas move the content; offsets move the other way.
-		if zp := zoom(); zoomed() && zp != nil {
-			zp.ref.ScrollTo(zp.clamp(core.Point{X: zp.off.X - e.Delta.X, Y: zp.off.Y - e.Delta.Y}), false)
-			return
-		}
 		if !e.Touchpad {
-			// One notch, one picture: notches that come quicker go on to the
-			// next once it has had a moment to show.
+			// Keep a burst of wheel events from skipping pictures.
 			d := e.Delta.Y
 			if d == 0 {
 				d = e.Delta.X
@@ -636,11 +633,11 @@ func viewerWheel(pager *core.Ref, width func() core.Points, count int, at func()
 		w := width()
 		switch e.Phase {
 		case core.GestureBegan:
-			swiping, from, moved = true, core.Points(at())*w, 0
+			swiping, startPage, moved = true, at(), 0
 		case core.GestureChanged:
 			if swiping {
 				moved += e.Delta.X
-				pager.ScrollTo(core.Point{X: max(0, min(from-moved, core.Points(count-1)*w))}, false)
+				pager.ScrollTo(core.Point{X: max(0, min(core.Points(startPage)*w-moved, core.Points(count-1)*w))}, false)
 			}
 		case core.GestureEnded, core.GestureCancelled:
 			if !swiping {
@@ -653,11 +650,12 @@ func viewerWheel(pager *core.Ref, width func() core.Points, count int, at func()
 			} else if moved > w/5 || e.Velocity.X > 300 {
 				d = -1
 			}
-			if d == 0 || at()+d < 0 || at()+d >= count {
-				pager.ScrollTo(core.Point{X: from}, true)
-				return
+			next := max(0, min(startPage+d, count-1))
+			if delta := next - at(); delta != 0 {
+				turn(delta)
+			} else {
+				pager.ScrollTo(core.Point{X: core.Points(next) * w}, true)
 			}
-			turn(d)
 		}
 	}
 }

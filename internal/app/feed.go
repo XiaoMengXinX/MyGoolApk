@@ -243,9 +243,6 @@ func (a *App) feedBody(cx *core.Scope, get func() backend.Feed, s feedShape) cor
 	if s.cover {
 		media = a.coverImage(cx, get, s)
 	}
-	if s.bigCover {
-		return through(column(core.Style{Gap: 12}, "", media, title(), price, a.feedContent(cx, get, s, 6)))
-	}
 	return through(column(core.Style{Gap: 12}, "", title(), price, a.feedContent(cx, get, s, 6), media))
 }
 
@@ -297,9 +294,11 @@ func (a *App) feedMedia(cx *core.Scope, get func() backend.Feed, s feedShape, de
 	case s.video:
 		kids = append(kids, a.videoCover(cx, func() *backend.Video { return get().Video }, detail, open))
 	case s.images > 0:
-		if s.bigCover {
+		if detail && s.bigCover {
 			kids = append(kids, dynamicShape(cx, func() string { return get().ID }, func(cx *core.Scope, _ string) core.Node {
-				return a.bigCoverImages(cx, func() []backend.Image { return get().Images }, s.images)
+				// Detail text is inset 16dp; picture pages reach the pane edges.
+				return core.View{Style: core.Style{Margin: core.Edges{Left: -16, Right: -16}}, Children: []core.Node{
+					a.bigCoverImages(cx, func() []backend.Image { return get().Images }, s.images)}}
 			}))
 		} else {
 			kids = append(kids, a.imageSet(cx, func() []backend.Image { return get().Images }, s.images, detail))

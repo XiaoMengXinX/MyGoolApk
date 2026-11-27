@@ -360,7 +360,7 @@ type RatingSection struct {
 // Feed is one card of a feed list or one post's detail.
 type Feed struct {
 	ID string
-	// BigCover presents a picture carousel before the text.
+	// BigCover presents a picture carousel before the text in post details.
 	BigCover    bool
 	Author      Author
 	PublishedAt time.Time
