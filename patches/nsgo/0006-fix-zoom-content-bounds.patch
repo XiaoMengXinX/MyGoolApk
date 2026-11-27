@@ -1,0 +1,216 @@
+From 149d2df6d8367b828fb1e8bc6d4014b19fe48ba3 Mon Sep 17 00:00:00 2001
+From: xiaomengxin <xibaole2333@gmail.com>
+Date: Fri, 27 Nov 2026 19:51:17 +0800
+Subject: [PATCH] fix(scroll): size zoom content to visible bounds
+
+---
+ changelog.d/zoom-content-bounds.md            |  3 ++
+ core/layout.go                                |  8 ++++
+ core/scroll.go                                |  2 +-
+ docs/architecture/scrolling.md                |  1 +
+ internal/layout/tree.go                       |  5 ++
+ .../android/java/dev/oneo/nsgo/Scrolling.java |  4 +-
+ .../dev/oneo/nsgo/ZoomScrollCheck.java        | 28 +++++++++++
+ internal/platform/ios/behavior.go             |  3 ++
+ nsgotest/zoom_content_test.go                 | 46 +++++++++++++++++++
+ 9 files changed, 98 insertions(+), 2 deletions(-)
+ create mode 100644 changelog.d/zoom-content-bounds.md
+ create mode 100644 nsgotest/zoom_content_test.go
+
+diff --git a/changelog.d/zoom-content-bounds.md b/changelog.d/zoom-content-bounds.md
+new file mode 100644
+index 00000000..779aa9bb
+--- /dev/null
++++ b/changelog.d/zoom-content-bounds.md
+@@ -0,0 +1,3 @@
++### Fixed
++
++- Size zoomable content to its visible bounds and stop cancelled Android zoom drags without momentum.
+diff --git a/core/layout.go b/core/layout.go
+index 600d26b5..f5456154 100644
+--- a/core/layout.go
++++ b/core/layout.go
+@@ -708,6 +708,14 @@ func (t *Tree) syncContent(n *node) bool {
+ 		}
+ 	case n.scroll != nil:
+ 		c := Size{Width: Points(l.Size.Width + l.ScrollWidth()), Height: Points(l.Size.Height + l.ScrollHeight())}
++		if n.scroll.config.Zooms() && !n.hidden {
++			c = Size{}
++			for _, child := range n.flatChildren() {
++				bounds := child.lstate.Rounded.ScrollableBounds(child.Style())
++				c.Width = max(c.Width, Points(bounds.Right+l.Padding.Right+l.Border.Right))
++				c.Height = max(c.Height, Points(bounds.Bottom+l.Padding.Bottom+l.Border.Bottom))
++			}
++		}
+ 		if end := Points(l.ScrollableOverflow.Bottom); c != n.scroll.content || end != n.scroll.contentEnd {
+ 			n.scroll.content, n.scroll.contentEnd = c, end
+ 			t.mark(n)
+diff --git a/core/scroll.go b/core/scroll.go
+index b80d3702..f2073df7 100644
+--- a/core/scroll.go
++++ b/core/scroll.go
+@@ -56,7 +56,7 @@ type scrollSpec struct {
+ }
+ 
+ // fittedContent returns the content size scroll view n sends under config c.
+-// Layout's is at least the view's, but platforms scroll a content's insets
++// Ordinary scroll layout is at least the view's, but platforms scroll content insets
+ // with it, so content that fits between a vertical view's insets stops at
+ // them, or the view would scroll with nothing to show.
+ func (n *node) fittedContent(c *driver.ScrollConfig) Size {
+diff --git a/docs/architecture/scrolling.md b/docs/architecture/scrolling.md
+index 06275442..08c5d033 100644
+--- a/docs/architecture/scrolling.md
++++ b/docs/architecture/scrolling.md
+@@ -29,6 +29,7 @@ A scroll view follows NSH's `scrolling-and-lists.md`: `ScrollBehavior` holds pag
+ - Android applies `KeyboardShouldPersistTaps` after a tap is dispatched, including a tap consumed by a child, on vertical, horizontal and zoomable scroll views. `KeyboardTapsHandled` keeps a handled row's keyboard, while `KeyboardTapsNever` dismisses it; taps on an input keep its keyboard.
+ - iOS and Android keep a focused field in a scroll view clear of the software keyboard: the keyboard's height joins the bottom inset while it shows, and the field scrolls into view with the keyboard's motion.
+ - Zooming (`MaxZoomScale` above `MinZoomScale`, `Ref.ZoomTo`) is iOS's zoom view, Android's `ZoomScroll`, a scaled content element on the web, the container's bounds on macOS, and scaled child transforms with Ctrl+wheel zooming and 2D panning on Windows and Linux (`scrollbar.ZoomEase`). Mouse drags never scroll content.
++- A zooming scroll's content follows its children's layout bounds, including content smaller than the viewport. `CenterContent` places that content in the middle without adding its surrounding space to the zoomable bounds. Android releases a cancelled drag without starting momentum.
+ - On the web, a zoom's last step schedules canvas replay after 120 ms without another step, at the cumulative scroll zoom and style transforms clamped to 1–4 times the screen's pixel ratio, drawing only the visible slice when a full bitmap would exceed 4096 × 4096 pixels ([canvas](canvas.md)). A new command, a pinch or Ctrl+wheel cancels the previous zoom animation; changing the limits cancels it too, so an old target cannot override the new one. Deleting a scroll cancels both the animation and pending replay.
+ 
+ ### Edge effects
+diff --git a/internal/layout/tree.go b/internal/layout/tree.go
+index 079b8516..544fc64f 100644
+--- a/internal/layout/tree.go
++++ b/internal/layout/tree.go
+@@ -138,6 +138,11 @@ type Layout struct {
+ 	Margin        Rect[float32]
+ }
+ 
++// ScrollableBounds is the child's box and visible overflow reachable from a scroll container.
++func (l *Layout) ScrollableBounds(style *Style) Rect[float32] {
++	return scrollableOverflowContribution(l.Location, l.Size, l.ScrollableOverflow, style.Overflow, style.Contain, true)
++}
++
+ // ContentBoxSize is the size inside the padding and border.
+ func (l *Layout) ContentBoxSize() Size[float32] {
+ 	return Size[float32]{
+diff --git a/internal/platform/android/java/dev/oneo/nsgo/Scrolling.java b/internal/platform/android/java/dev/oneo/nsgo/Scrolling.java
+index 1fd2e47f..a09e038b 100644
+--- a/internal/platform/android/java/dev/oneo/nsgo/Scrolling.java
++++ b/internal/platform/android/java/dev/oneo/nsgo/Scrolling.java
+@@ -1267,7 +1267,9 @@ final class Scrolling {
+                     if (dragging) {
+                         dragging = false;
+                         event(Protocol.EVENT_SCROLL_DRAG_END);
+-                        flinger.fling(getScrollX(), getScrollY(), -Math.round(vx), -Math.round(vy), 0, maxX(), 0, maxY());
++                        if (e.getActionMasked() == MotionEvent.ACTION_UP) {
++                            flinger.fling(getScrollX(), getScrollY(), -Math.round(vx), -Math.round(vy), 0, maxX(), 0, maxY());
++                        }
+                         if (!flinger.isFinished()) {
+                             momentum = true;
+                             event(Protocol.EVENT_MOMENTUM_START);
+diff --git a/internal/platform/android/testdata/zoomscroll/dev/oneo/nsgo/ZoomScrollCheck.java b/internal/platform/android/testdata/zoomscroll/dev/oneo/nsgo/ZoomScrollCheck.java
+index 2804a1a1..92e7db66 100644
+--- a/internal/platform/android/testdata/zoomscroll/dev/oneo/nsgo/ZoomScrollCheck.java
++++ b/internal/platform/android/testdata/zoomscroll/dev/oneo/nsgo/ZoomScrollCheck.java
+@@ -88,6 +88,7 @@ public final class ZoomScrollCheck {
+     }
+ 
+     public static void main(String[] args) {
++        imageBoundsAndCancelledDrag();
+         Context ctx = new Context();
+         FrameLayout parent = new FrameLayout(ctx);
+         Recorder host = new Recorder();
+@@ -259,4 +260,31 @@ public final class ZoomScrollCheck {
+         scroll.dispatchTouchEvent(new MotionEvent(MotionEvent.ACTION_UP, 100, 150, 1520));
+         check(content.downs == downsBefore + 1 && content.ups == upsBefore + 1, "noScroll blocked child press");
+     }
++
++    static void imageBoundsAndCancelledDrag() {
++        Context ctx = new Context();
++        Recorder host = new Recorder();
++        View content = new View(ctx);
++        content.setSize(180, 600);
++        Scrolling.ZoomScroll scroll = new Scrolling.ZoomScroll(ctx, host, 1f, content);
++        scroll.addView(content);
++        scroll.setSize(300, 600);
++        Scrolling.Config config = new Scrolling.Config();
++        config.minZoom = config.zoom = 1;
++        config.maxZoom = 4;
++        config.centerContent = true;
++        scroll.configure(config);
++        scroll.zoomTo(2, false, 0, 0, false);
++        scroll.scrollToPoints(1000, 1000, false);
++        check(scroll.getScrollX() == 60 && scroll.getScrollY() == 600, "zoom included space outside the image");
++        scroll.scrollToPoints(0, 0, false);
++        host.events.clear();
++        scroll.onTouchEvent(new MotionEvent(MotionEvent.ACTION_DOWN, 100, 300, 3000));
++        scroll.onTouchEvent(new MotionEvent(MotionEvent.ACTION_MOVE, 100, 260, 3016));
++        scroll.onTouchEvent(new MotionEvent(MotionEvent.ACTION_MOVE, 100, 180, 3032));
++        scroll.onTouchEvent(new MotionEvent(MotionEvent.ACTION_CANCEL, 100, 100, 3048));
++        int y = scroll.getScrollY();
++        for (int i = 0; i < 12; i++) scroll.computeScroll();
++        check(scroll.getScrollY() == y && count(host.events, Protocol.EVENT_MOMENTUM_START) == 0, "a cancelled drag started a fling");
++    }
+ }
+diff --git a/internal/platform/ios/behavior.go b/internal/platform/ios/behavior.go
+index 1be9ba78..de5b82b1 100644
+--- a/internal/platform/ios/behavior.go
++++ b/internal/platform/ios/behavior.go
+@@ -327,6 +327,9 @@ func (s *surface) pullBackResizedScrolls() {
+ 			(objc.Send[bool](n, sel("respondsToSelector:"), sel("isZoomAnimating")) && objc.Send[bool](n, sel("isZoomAnimating"))) {
+ 			continue
+ 		}
++		if v.sc.zoom != 0 {
++			v.layoutZoom()
++		}
+ 		_, end := scrollLimits(n)
+ 		at := objc.Send[apple.CGPoint](n, selContentOffset)
+ 		if to := (apple.CGPoint{X: min(at.X, end.X), Y: min(at.Y, end.Y)}); to != at {
+diff --git a/nsgotest/zoom_content_test.go b/nsgotest/zoom_content_test.go
+new file mode 100644
+index 00000000..428a839a
+--- /dev/null
++++ b/nsgotest/zoom_content_test.go
+@@ -0,0 +1,46 @@
++package nsgotest
++
++import (
++	"testing"
++
++	"github.com/nsgo-dev/nsgo/core"
++)
++
++func TestZoomContentUsesImageBounds(t *testing.T) {
++	var ref core.Ref
++	app := Start(t, func(*core.Scope) core.Node {
++		return core.Scroll{TestID: "zoom", Ref: &ref, MinZoomScale: 1, MaxZoomScale: 4, CenterContent: true,
++			Style:    core.Style{Width: core.Pt(300), Height: core.Pt(600)},
++			Children: []core.Node{core.View{Style: core.Style{Width: core.Pt(180), Height: core.Pt(600), FlexShrink: 0}}}}
++	}, Size(300, 600))
++	v := app.Find("zoom")
++	if v.Content.Width != 180 || v.Content.Height != 600 {
++		t.Fatalf("image bounds = %+v", v.Content)
++	}
++	app.Post(func() { ref.ZoomTo(2, nil, false); ref.ScrollTo(core.Point{X: 1000, Y: 1000}, false) })
++	app.Settle()
++	v = app.Find("zoom")
++	if v.Offset.X != 60 || v.Offset.Y != 600 {
++		t.Errorf("zoomed edge = %+v, want (60, 600)", v.Offset)
++	}
++}
++
++func TestZoomContentIncludesVisibleOverflow(t *testing.T) {
++	for _, overflow := range []core.Overflow{core.Visible, core.Hidden} {
++		app := Start(t, func(*core.Scope) core.Node {
++			return core.Scroll{TestID: "zoom", MinZoomScale: 1, MaxZoomScale: 4,
++				Style: core.Style{Width: core.Pt(300), Height: core.Pt(600)},
++				Children: []core.Node{core.View{
++					Style:    core.Style{Width: core.Pt(180), Height: core.Pt(100), FlexShrink: 0, Overflow: overflow},
++					Children: []core.Node{core.View{Style: core.Style{Width: core.Pt(180), Height: core.Pt(900), FlexShrink: 0}}},
++				}}}
++		}, Size(300, 600))
++		want := core.Points(900)
++		if overflow == core.Hidden {
++			want = 100
++		}
++		if got := app.Find("zoom").Content.Height; got != want {
++			t.Errorf("overflow %v: content height = %v, want %v", overflow, got, want)
++		}
++	}
++}
+-- 
+2.54.0 (Apple Git-157)
+

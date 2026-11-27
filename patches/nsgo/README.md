@@ -8,8 +8,9 @@ These patches apply, in order, to the NSGo release named in `go.mod` (`github.co
 3. `0003`: `core.View.ScrollTarget` hands the scrolls that start on a view to a scroll view it names: on macOS the wheel and touchpad over it, on Android a drag along the scroll view's axis, natively and with the platform's glide. A head laid over lists, as on the topic and event pages, scrolls the list shown through it. Windows, Linux and the web hand nothing yet.
 4. `0004`: on iOS, screens that slide in, out or under a swipe back run at the screen's full rate. Without it a ProMotion iPhone shows them at 60 Hz unless something else in the app animates.
 5. `0005`: iOS's `ScrollTarget`. A vertical drag on the view moves the target's content natively, stretching past its edges and gliding on at UIKit's normal deceleration, at the screen's full rate.
+6. `0006`: zoomable scroll content follows its children's bounds, so centering a smaller image leaves the margins outside its scrollable area. iOS centers the content again after viewport changes. Android releases a cancelled drag without starting a fling.
 
-`0002` and `0003` change the Android runtime's Java, so after applying the patches rebuild `classes.dex` and `classes.jar` with a JDK 17+ and an Android SDK with platform 36 and build-tools 36+ (CI does this through `rebuild-android-runtime`):
+`0002`, `0003` and `0006` change the Android runtime's Java, so after applying the patches rebuild `classes.dex` and `classes.jar` with a JDK 17+ and an Android SDK with platform 36 and build-tools 36+ (CI does this through `rebuild-android-runtime`):
 
 ```sh
 git clone --depth 1 --branch v0.3.4 https://github.com/nsgo-dev/nsgo.git nsgo
@@ -18,3 +19,5 @@ ANDROID_HOME=~/Library/Android/sdk sh nsgo/internal/platform/android/runtime/bui
 ```
 
 `go.mod` replaces the module with `../nsgo`, so the checkout goes beside `app-nsgo`. Drop a patch once upstream merges it, and the replace once none is left.
+
+Local development can select a separate patched framework worktree with a Go workspace. Keep that workspace file local.

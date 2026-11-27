@@ -232,7 +232,7 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 					if long && current.Get() == i || zoomedHere.Get() {
 						full = true
 					}
-					if full && thumbURL(im, thumbMedium) != im.URL {
+					if full && (long || thumbURL(im, thumbMedium) != im.URL) {
 						return im.URL
 					}
 					return ""
@@ -252,7 +252,10 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 					},
 					StyleFunc: func() core.Style { return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get())} },
 					Children: []core.Node{core.View{
-						StyleFunc:   func() core.Style { return core.Style{Width: core.Pt(width.Get()), Height: core.Pt(height.Get())} },
+						StyleFunc: func() core.Style {
+							size := viewerImageSize(im, core.Size{Width: width.Get(), Height: height.Get()})
+							return core.Style{Width: core.Pt(size.Width), Height: core.Pt(size.Height), FlexShrink: 0}
+						},
 						OnPress:     press,
 						OnLongPress: holdToSave(i),
 						OnWheel:     wheel,
@@ -522,6 +525,15 @@ func (a *App) saveImage(im backend.Image) {
 			})
 		})
 	}()
+}
+
+func viewerImageSize(im backend.Image, viewport core.Size) core.Size {
+	if viewport.Width <= 0 || viewport.Height <= 0 {
+		return core.Size{}
+	}
+	ratio := core.Points(mediaRatio(im, float32(viewport.Width/viewport.Height), 0, 1e6))
+	width := min(viewport.Width, viewport.Height*ratio)
+	return core.Size{Width: width, Height: width / ratio}
 }
 
 // zoomPage is a picture of the viewer: its zoom scroll view and where it is.
