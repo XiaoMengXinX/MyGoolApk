@@ -30,6 +30,7 @@ jobs:
       tag: ${{ steps.ver.outputs.tag }}
       version: ${{ steps.ver.outputs.version }}
       prerelease: ${{ steps.ver.outputs.prerelease }}
+      ios_only: ${{ steps.ver.outputs.ios_only }}
     steps:
       - name: Parse version
         id: ver
@@ -52,9 +53,14 @@ jobs:
           case "$version" in
             *-*) prerelease=true ;;
           esac
+          ios_only=false
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-ios\.[1-9][0-9]*$ ]]; then
+            ios_only=true
+          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "ios_only=$ios_only" >> "$GITHUB_OUTPUT"
 
   test:
     name: Test
@@ -81,6 +87,7 @@ jobs:
   build-android:
     name: Build Android (arm64)
     needs: [prepare, test]
+    if: needs.prepare.outputs.ios_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -151,9 +158,15 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: go tool nsgo build -target ios -version "$VERSION" .
+          IOS_ONLY: ${{ needs.prepare.outputs.ios_only }}
+        run: |
+          if [[ "$IOS_ONLY" == true ]]; then
+            VERSION="${VERSION%-ios.*}"
+          fi
+          go tool nsgo build -target ios -version "$VERSION" .
 
       - name: Build macOS Universal DMG (ad-hoc signed)
+        if: needs.prepare.outputs.ios_only != 'true'
         working-directory: ${{ env.APP_DIR }}
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -175,7 +188,9 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    if: github.event_name == 'push'
+    if: >-
+      !cancelled() && github.event_name == 'push' && needs.build-apple.result == 'success' &&
+      (needs.build-android.result == 'success' || needs.prepare.outputs.ios_only == 'true')
     needs: [prepare, build-android, build-apple]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
