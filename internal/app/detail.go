@@ -340,7 +340,7 @@ func (d *detail) postBody(cx *core.Scope) core.Node {
 	media := dynamicShape(cx, func() mediaShape {
 		f := get()
 		s := shapeOfFeed(f, 0)
-		return mediaShape{feedShape{kind: s.kind, images: s.images, video: s.video, link: s.link, vote: s.vote, fw: s.fw}, f.Vote != nil && f.Vote.Counted}
+		return mediaShape{feedShape{kind: s.kind, images: s.images, video: s.video, link: s.link, vote: s.vote, fw: s.fw, bigCover: s.bigCover}, f.Vote != nil && f.Vote.Counted}
 	}, func(cx *core.Scope, ms mediaShape) core.Node {
 		s := ms.feedShape
 		if !s.video && s.images == 0 && !s.link && !s.vote && !s.fw {
@@ -357,7 +357,12 @@ func (d *detail) postBody(cx *core.Scope) core.Node {
 	return column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 20, Left: 16}, Gap: 16}, "bg-background",
 		a.feedHeader(cx, get, 40), cover, title, question,
 		core.Show{When: func() bool { return d.asked.Get() && !d.summaryError.Get() }, Then: d.summaryCard},
-		text, media, target)
+		dynamicShape(cx, func() bool { return get().BigCover }, func(_ *core.Scope, big bool) core.Node {
+			if big {
+				return core.Group{media, text}
+			}
+			return core.Group{text, media}
+		}), target)
 }
 
 func (d *detail) summaryCard(*core.Scope) core.Node {

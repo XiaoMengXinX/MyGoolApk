@@ -38,6 +38,15 @@ func TestDailyNoticeAndTopicDiscussions(t *testing.T) {
 	}
 }
 
+func TestFeedPublishingLayouts(t *testing.T) {
+	for _, mode := range []int{0, 1, 2} {
+		feed := feedFromObject(map[string]any{"id": "75269467", "feedType": "feed", "is_html_article": float64(mode)})
+		if feed.BigCover != (mode == 2) || feed.IsArticle != (mode == 1) {
+			t.Errorf("publishing mode %d = %+v", mode, feed)
+		}
+	}
+}
+
 func TestDailyNewsPresentation(t *testing.T) {
 	objects, err := decodeAPIObjects(json.RawMessage(`[
 		{"entityType":"card","entityTemplate":"imageTextGridCard","entities":[{"entityType":"imageText","title":"芯片开售","url":"/feed/1","pic":"https://image.coolapk.com/a.jpg"},{"entityType":"imageText","title":"手机销量","url":"/feed/2","pic":"https://image.coolapk.com/b.jpg"}]},

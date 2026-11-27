@@ -360,6 +360,7 @@ func feedFromObject(object map[string]any) backend.Feed {
 	content, rich := backend.RichTextFromAPI(firstAPIString(object, "message", "message_raw_output"))
 	feed := backend.Feed{
 		ID:          apiID(object),
+		BigCover:    apiInt(object, "is_html_article") == 2,
 		Title:       firstAPIString(object, "message_title"),
 		Content:     content,
 		Rich:        rich,

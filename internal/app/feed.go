@@ -18,12 +18,14 @@ type feedShape struct {
 	images                       int
 	cover, video, link, vote, fw bool
 	title, text, more            bool
+	bigCover                     bool
 }
 
 func shapeOfFeed(f backend.Feed, lines int) feedShape {
 	return feedShape{
 		kind: f.Kind, images: len(f.Images), cover: f.Cover != nil, video: f.Video != nil,
-		link: f.Link != nil, vote: f.Vote != nil, fw: f.Forward != nil,
+		bigCover: f.BigCover,
+		link:     f.Link != nil, vote: f.Vote != nil, fw: f.Forward != nil,
 		title: f.Title != "", text: strings.TrimSpace(f.Content) != "" || len(f.Rich) > 0, more: feedTextNeedsMore(f.Content, lines),
 	}
 }
@@ -241,6 +243,9 @@ func (a *App) feedBody(cx *core.Scope, get func() backend.Feed, s feedShape) cor
 	if s.cover {
 		media = a.coverImage(cx, get, s)
 	}
+	if s.bigCover {
+		return through(column(core.Style{Gap: 12}, "", media, title(), price, a.feedContent(cx, get, s, 6)))
+	}
 	return through(column(core.Style{Gap: 12}, "", title(), price, a.feedContent(cx, get, s, 6), media))
 }
 
@@ -292,7 +297,13 @@ func (a *App) feedMedia(cx *core.Scope, get func() backend.Feed, s feedShape, de
 	case s.video:
 		kids = append(kids, a.videoCover(cx, func() *backend.Video { return get().Video }, detail, open))
 	case s.images > 0:
-		kids = append(kids, a.imageSet(cx, func() []backend.Image { return get().Images }, s.images, detail))
+		if s.bigCover {
+			kids = append(kids, dynamicShape(cx, func() string { return get().ID }, func(cx *core.Scope, _ string) core.Node {
+				return a.bigCoverImages(cx, func() []backend.Image { return get().Images }, s.images)
+			}))
+		} else {
+			kids = append(kids, a.imageSet(cx, func() []backend.Image { return get().Images }, s.images, detail))
+		}
 	}
 	if s.link {
 		kids = append(kids, a.linkCard(cx, func() *backend.Link { return get().Link }, detail, open))
