@@ -1,0 +1,342 @@
+From bd0d20e47b876a07fb247fd152bdef0c102881be Mon Sep 17 00:00:00 2001
+From: xiaomengxin <xibaole2333@gmail.com>
+Date: Fri, 27 Nov 2026 12:32:29 +0800
+Subject: [PATCH 5/5] feat(ios): hand scrolls that start on a view to its
+ scroll target
+
+---
+ docs/roadmap.md                       |   2 +-
+ internal/platform/ios/gesture.go      |   3 +
+ internal/platform/ios/ios.go          |   6 +
+ internal/platform/ios/scroll.go       |   4 +
+ internal/platform/ios/scrolltarget.go | 238 ++++++++++++++++++++++++++
+ 5 files changed, 252 insertions(+), 1 deletion(-)
+ create mode 100644 internal/platform/ios/scrolltarget.go
+
+diff --git a/docs/roadmap.md b/docs/roadmap.md
+index c6d95e8f..887c3147 100644
+--- a/docs/roadmap.md
++++ b/docs/roadmap.md
+@@ -30,7 +30,7 @@ What NSH added between 0.4.0 and 0.5.0 that NSGo has not, in the order to build
+ | Rich text by touch | `rich-editor.md`, #1368, [#1338](https://github.com/nsgo-dev/nsgo/issues/1338) | A `RichEditor` selects by touch with handles and the system edit menu on iOS and Android. Headless tests cover gestures and edit actions; an iOS 27 simulator checks native long-press selection, handle dragging, visible menu actions changing with editability and Copy through the input responder. Android’s wire protocol and Java runtime compile against API 36. Physical iOS and Android acceptance remains open (2026-11-22). |
+ | Nearest-neighbor sampling | [#1209](https://github.com/nsgo-dev/nsgo/issues/1209) | Verify each host's pixels, HarmonyOS's and mini programs' included |
+ | Pixel buffers everywhere | [Pixel buffers](architecture/images.md#pixel-buffers), [#107](https://github.com/nsgo-dev/nsgo/issues/107), [#1101](https://github.com/nsgo-dev/nsgo/issues/1101) | Measure frame continuity and cost at 960×540 and 1920×1080 at 60 fps on macOS, Windows and Linux, and at 1920×1080 on Android. Skip copies for hidden and minimized windows. Give QQ, Douyin and Alipay a canvas binding for image views. Verify that a `Shader` shows each version of a 960×540 texture rewritten at 60 fps without blank frames on macOS, iOS, Windows, Linux, Android and the web. Android and the web have 960×540 frame captures and timing measurements. Headless checks cover Apple image views, Metal texture uploads and Linux drawing. WeChat Developer Tools verified pixel images and draws of offscreen buffers. A HarmonyOS device showed each version of a buffer rewritten each frame in an image view and a canvas, and its per-frame cost is recorded. Shader frames at 960×540 were checked on macOS, an iOS simulator, Android, Chrome, Linux's llvmpipe and Windows CI (#1115), and the Pixel 3 XL's pipe cost for them is recorded. [Performance](architecture/performance.md#keeping-frames-cheap) |
+-| Scroll targets everywhere | — | `View.ScrollTarget` hands scrolls that start on a view to the scroll view it names on macOS (the wheel and touchpad) and Android (a drag along the scroll view's axis); iOS, Windows, Linux and the web hand nothing yet, where a view over a list scrolls it only through its own pan |
++| Scroll targets everywhere | — | `View.ScrollTarget` hands scrolls that start on a view to the scroll view it names on macOS (the wheel and touchpad), Android and iOS (a drag along the scroll view's axis); Windows, Linux and the web hand nothing yet, where a view over a list scrolls it only through its own pan |
+ | Terminal content and services | [Terminal backend](architecture/terminal.md#backend), [#1345](https://github.com/nsgo-dev/nsgo/issues/1345) | Extend cell views/text/editing with canvas and image rendering, hosted content alternatives, system menus and alerts, animations, scroll snapping/inertia, modal focus trapping, zoom, bidirectional shaping, head/middle ellipsis and a system clipboard bridge; verify mouse input and resizes in a Windows console |
+ | Store uploads | `tooling.md` (Releases), #1052, #1054, [#1202](https://github.com/nsgo-dev/nsgo/issues/1202) | `nsgo publish` uploads the AAB `build -channel store` makes to Play's tracks (#1230); uploads to TestFlight (#1229) and itch.io (#1561) and text-based store listings for App Store Connect and Google Play (#1564) are implemented |
+ | Google Play upload verification | [#1230](https://github.com/nsgo-dev/nsgo/issues/1230), [Google Play publishing](architecture/tool.md#google-play-publishing) | A signed App Bundle uploads to a real app's internal track and the committed release appears in Play Console |
+diff --git a/internal/platform/ios/gesture.go b/internal/platform/ios/gesture.go
+index 4047af86..1aeb92ce 100644
+--- a/internal/platform/ios/gesture.go
++++ b/internal/platform/ios/gesture.go
+@@ -181,6 +181,9 @@ func gestureMethods() []objc.MethodDef {
+ // inside a descendant UIScrollView, which takes its own scrolls first.
+ func wheelShouldBegin(self objc.ID, _ objc.SEL, r objc.ID) bool {
+ 	v := views[self]
++	if v != nil && v.hand != nil && r == v.hand.pan {
++		return handShouldBegin(v, r)
++	}
+ 	if v == nil || (r != v.scrolls && r != v.notches) {
+ 		return true
+ 	}
+diff --git a/internal/platform/ios/ios.go b/internal/platform/ios/ios.go
+index 82133776..eb516209 100644
+--- a/internal/platform/ios/ios.go
++++ b/internal/platform/ios/ios.go
+@@ -105,6 +105,7 @@ type view struct {
+ 	// scrolls and notches are its scroll-only pans while it takes the
+ 	// wheel: a trackpad's two fingers and a mouse wheel's turns.
+ 	scrolls, notches objc.ID
++	hand             *handScroll // its hand off to its ScrollTarget
+ 
+ 	// A text's content, spans and selection, whether a view is an area,
+ 	// and the long press that selects in it.
+@@ -390,6 +391,7 @@ func loadUIKit() {
+ 	common = append(common, accessMethods()...)
+ 	common = append(common, focusMethods()...)
+ 	common = append(common, gestureMethods()...)
++	common = append(common, handScrollMethods()...)
+ 	common = append(common, navMethods()...)
+ 	registerGestures()
+ 	registerTouches()
+@@ -1652,6 +1654,7 @@ func (s *surface) apply(b *driver.MountBatch) {
+ 			}
+ 		case driver.ItemViewProps:
+ 			v.setProps(it.ViewProps)
++			v.setScrollTarget(it.ViewProps.ScrollTarget)
+ 			p := it.ViewProps
+ 			if isTopmostCaptureProps(v.props) {
+ 				if !slices.Contains(s.topmostCaptures, v) {
+@@ -1922,6 +1925,9 @@ func (s *surface) delete(v *view, kept bool) {
+ 	apple.ForgetDecor(v.native.Send(selLayer))
+ 	v.forgetContent()
+ 	forgetGate(v.pan)
++	if v.hand != nil {
++		v.hand.stopGlide()
++	}
+ 	v.layout.Release()
+ 	if v.image != nil {
+ 		v.image.Close()
+diff --git a/internal/platform/ios/scroll.go b/internal/platform/ios/scroll.go
+index 8ee9871f..e344a11d 100644
+--- a/internal/platform/ios/scroll.go
++++ b/internal/platform/ios/scroll.go
+@@ -50,6 +50,10 @@ func scrollPanShouldBegin(self objc.ID, cmd objc.SEL, r objc.ID) bool {
+ 			if objc.Send[bool](p, selIsKindOf, scrollClass) && canScroll(p, d) {
+ 				return false
+ 			}
++			// A view around it hands that drag to its ScrollTarget.
++			if w := views[p]; w != nil && w.hand != nil && w.scrollTarget() != nil && math.Abs(d.Y) > math.Abs(d.X) {
++				return false
++			}
+ 		}
+ 	}
+ 	return apple.SendSuper[bool](self, cmd, r)
+diff --git a/internal/platform/ios/scrolltarget.go b/internal/platform/ios/scrolltarget.go
+new file mode 100644
+index 00000000..ff983638
+--- /dev/null
++++ b/internal/platform/ios/scrolltarget.go
+@@ -0,0 +1,238 @@
++//go:build ios
++
++package ios
++
++import (
++	"math"
++
++	"github.com/ebitengine/purego/objc"
++
++	"github.com/nsgo-dev/nsgo/internal/driver"
++	"github.com/nsgo-dev/nsgo/internal/platform/apple"
++)
++
++// Scroll targets (View.ScrollTarget): a view laid over a scroll view, not
++// in it, gets a vertical pan recognizer of its own that moves the
++// target's content as the finger goes, stretching past its edges as
++// UIScrollView does, and lets it glide on at UIKit's normal deceleration,
++// all on the main thread without a trip through the core. Once the pan
++// begins, UIKit cancels the touches of the views under the finger. A
++// display link asking for the screen's full rate runs from the drag's start
++// to the glide's end: a ProMotion screen otherwise shows the moves at 60 Hz,
++// where a scroll view's own drag goes at 120.
++
++var (
++	selHandScroll = sel("nsgoHandScroll:")
++	selHandGlide  = sel("nsgoHandGlide:")
++)
++
++// decelerationRate is UIScrollViewDecelerationRateNormal, the speed kept
++// per millisecond.
++const decelerationRate = 0.998
++
++// handScroll is a view's hand off of the scrolls that begin on it.
++type handScroll struct {
++	pan    objc.ID // its UIPanGestureRecognizer
++	target *view   // the scroll view the drag or glide moves
++	from   float64 // the target's offset as the drag began
++	link   objc.ID // the CADisplayLink of the drag and glide, retained
++	glides bool    // whether the link steps a glide
++	speed  float64 // the glide's, in points per second
++	last   float64 // the glide's last frame timestamp
++}
++
++func handScrollMethods() []objc.MethodDef {
++	return []objc.MethodDef{
++		{Cmd: selHandScroll, Fn: handScrolled},
++		{Cmd: selHandGlide, Fn: handGlided},
++	}
++}
++
++// setScrollTarget adds or removes v's pan for its ScrollTarget.
++func (v *view) setScrollTarget(target driver.NodeID) {
++	switch {
++	case target != 0 && v.hand == nil:
++		r := objc.ID(apple.Class("UIPanGestureRecognizer")).Send(selAlloc).Send(sel("initWithTarget:action:"), v.native, selHandScroll)
++		r.Send(selSetDeleg, v.native)
++		v.native.Send(sel("addGestureRecognizer:"), r)
++		r.Send(selRelease)
++		v.hand = &handScroll{pan: r}
++	case target == 0 && v.hand != nil:
++		v.hand.stopGlide()
++		v.native.Send(sel("removeGestureRecognizer:"), v.hand.pan)
++		v.hand = nil
++	}
++}
++
++// scrollTarget returns the live scroll view v hands its scrolls to, or nil.
++func (v *view) scrollTarget() *view {
++	t := v.surface.viewOf(v.props.ScrollTarget)
++	if t == nil || t.sc == nil || t.sc.config.Horizontal {
++		return nil
++	}
++	return t
++}
++
++// handShouldBegin lets the pan begin on a drag that goes more up or down
++// than sideways, while v has a target.
++func handShouldBegin(v *view, r objc.ID) bool {
++	if v.scrollTarget() == nil {
++		return false
++	}
++	d := objc.Send[apple.CGPoint](r, selVelocity, v.native)
++	return math.Abs(d.Y) > math.Abs(d.X)
++}
++
++func handScrolled(self objc.ID, _ objc.SEL, r objc.ID) {
++	v := views[self]
++	if v == nil || v.hand == nil {
++		return
++	}
++	h := v.hand
++	switch objc.Send[int](r, selState) {
++	case stateBegan:
++		h.stopGlide()
++		t := v.scrollTarget()
++		if t == nil {
++			return
++		}
++		h.target = t
++		at := objc.Send[apple.CGPoint](t.native, selContentOffset)
++		if objc.Send[bool](t.native, sel("isDecelerating")) {
++			// Caught while gliding: stop where it is.
++			t.native.Send(sel("setContentOffset:animated:"), at, false)
++			t.scrollEvent(driver.EventMomentumEnd)
++		}
++		h.from = at.Y
++		h.run(v)
++		t.scrollEvent(driver.EventScrollDragStart)
++	case stateChanged:
++		if t := h.live(); t != nil {
++			d := objc.Send[apple.CGPoint](r, selTranslation, v.surface.native)
++			h.place(stretched(t.native, h.from-d.Y))
++		}
++	case stateEnded, stateCancelled, stateFailed:
++		t := h.live()
++		if t == nil {
++			h.stopLink()
++			return
++		}
++		t.scrollEvent(driver.EventScrollDragEnd)
++		start, end := scrollLimits(t.native)
++		at := objc.Send[apple.CGPoint](t.native, selContentOffset)
++		if at.Y < start.Y || at.Y > end.Y {
++			// Stretched past an edge: spring back, which UIKit reports as
++			// scrollViewDidEndScrollingAnimation.
++			at.Y = min(max(at.Y, start.Y), end.Y)
++			h.stopLink()
++			t.native.Send(sel("setContentOffset:animated:"), at, true)
++			return
++		}
++		speed := -objc.Send[apple.CGPoint](r, selVelocity, v.surface.native).Y
++		if math.Abs(speed) < 20 {
++			h.stopLink()
++			h.target = nil
++			t.scrollEvent(driver.EventScrollEnd)
++			return
++		}
++		h.glides, h.speed, h.last = true, speed, 0
++		t.scrollEvent(driver.EventMomentumStart)
++	}
++}
++
++// handGlided steps a glide one frame, until it slows to rest, meets an
++// edge or the finger takes the scroll view; during the drag it only keeps
++// the screen at its full rate.
++func handGlided(self objc.ID, _ objc.SEL, link objc.ID) {
++	v := views[self]
++	if v == nil || v.hand == nil {
++		link.Send(sel("invalidate"))
++		return
++	}
++	h := v.hand
++	if !h.glides {
++		return
++	}
++	t := h.live()
++	if t == nil {
++		h.stopGlide()
++		return
++	}
++	if objc.Send[bool](t.native, sel("isTracking")) {
++		// Caught by the finger: the scroll view's own drag goes on from here.
++		h.stopGlide()
++		return
++	}
++	now := objc.Send[float64](link, sel("targetTimestamp"))
++	if h.last == 0 {
++		h.last = objc.Send[float64](link, selTimestamp)
++	}
++	dt := now - h.last
++	h.last = now
++	h.speed *= math.Pow(decelerationRate, dt*1000)
++	start, end := scrollLimits(t.native)
++	at := objc.Send[apple.CGPoint](t.native, selContentOffset)
++	y := at.Y + h.speed*dt
++	edge := y <= start.Y || y >= end.Y
++	h.place(min(max(y, start.Y), end.Y))
++	if edge || math.Abs(h.speed) < 10 {
++		h.stopGlide()
++	}
++}
++
++// place moves the target's content to offset y.
++func (h *handScroll) place(y float64) {
++	at := objc.Send[apple.CGPoint](h.target.native, selContentOffset)
++	at.Y = y
++	h.target.native.Send(sel("setContentOffset:"), at)
++}
++
++// live returns the target of the drag or glide while it is alive.
++func (h *handScroll) live() *view {
++	t := h.target
++	if t == nil || t.surface.viewOf(t.id) != t {
++		h.target = nil
++		return nil
++	}
++	return t
++}
++
++// run starts the display link on v, at the screen's full rate.
++func (h *handScroll) run(v *view) { h.link = v.surface.fullRateLink(v.native, selHandGlide) }
++
++// stopLink stops the display link.
++func (h *handScroll) stopLink() {
++	if h.link != 0 {
++		stopLink(h.link)
++		h.link = 0
++	}
++}
++
++// stopGlide ends a drag or glide, reporting a glide at rest.
++func (h *handScroll) stopGlide() {
++	h.stopLink()
++	if !h.glides {
++		return
++	}
++	h.glides = false
++	if t := h.live(); t != nil {
++		t.scrollEvent(driver.EventMomentumEnd)
++		t.scrollEvent(driver.EventScrollEnd)
++	}
++	h.target = nil
++}
++
++// stretched is where offset y shows scroll view n, past its edges giving
++// way less the further it goes, as UIScrollView's rubber band.
++func stretched(n objc.ID, y float64) float64 {
++	start, end := scrollLimits(n)
++	d := objc.Send[apple.CGRect](n, selBounds).Size.Height
++	band := func(x float64) float64 { return (1 - 1/(x*0.55/d+1)) * d }
++	switch {
++	case y < start.Y:
++		return start.Y - band(start.Y-y)
++	case y > end.Y:
++		return end.Y + band(y-end.Y)
++	}
++	return y
++}
+-- 
+2.54.0 (Apple Git-157)
+

@@ -5,7 +5,9 @@ These patches apply, in order, to the NSGo release named in `go.mod` (`github.co
 1. `0001`: a screen another covers keeps its layout, so its texts, list rows and scroll offsets are there as it shows again.
 2. `0002`: Android's predictive back. A back handler can name the app's own layers a back gesture moves (`core.BackOptions.Preview`, `Previewed`): the page shrinks, rounds its corners and leans away from the gesture's edge as Android's own pages do, over the layer it uncovers, whose scrim fades out. `BackOptions.Takes` says when a handler would leave back alone; when nothing would take back, the view hands it to the system, which previews leaving the app.
 
-3. `0003`: `core.View.ScrollTarget` hands the scrolls that start on a view to a scroll view it names: on macOS the wheel and touchpad over it, on Android a drag along the scroll view's axis, natively and with the platform's glide. A head laid over lists, as on the topic and event pages, scrolls the list shown through it. iOS, Windows, Linux and the web hand nothing yet.
+3. `0003`: `core.View.ScrollTarget` hands the scrolls that start on a view to a scroll view it names: on macOS the wheel and touchpad over it, on Android a drag along the scroll view's axis, natively and with the platform's glide. A head laid over lists, as on the topic and event pages, scrolls the list shown through it. Windows, Linux and the web hand nothing yet.
+4. `0004`: on iOS, screens that slide in, out or under a swipe back run at the screen's full rate. Without it a ProMotion iPhone shows them at 60 Hz unless something else in the app animates.
+5. `0005`: iOS's `ScrollTarget`. A vertical drag on the view moves the target's content natively, stretching past its edges and gliding on at UIKit's normal deceleration, at the screen's full rate.
 
 `0002` and `0003` change the Android runtime's Java, so after applying the patches rebuild `classes.dex` and `classes.jar` with a JDK 17+ and an Android SDK with platform 36 and build-tools 36+ (CI does this through `rebuild-android-runtime`):
 
