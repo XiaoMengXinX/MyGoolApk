@@ -11,20 +11,26 @@ import (
 )
 
 // Root builds the app: its backend, from newBackend, and its pages.
-func Root(newBackend func(dir string) (backend.Backend, error)) func(cx *core.Scope) core.Node {
+func Root(newBackend func(dir string, profile backend.DeviceProfile) (backend.Backend, error)) func(cx *core.Scope) core.Node {
 	return func(cx *core.Scope) core.Node {
 		cx.SetTheme(newTheme())
 		hoverable = cx.Env().Desktop()
-		b, err := newBackend(cx.DataDir())
+		local := loadLocalState(cx.DataDir())
+		var profile backend.DeviceProfile
+		if cx.Env().OS() == core.OSIOS && !local.RandomDeviceModel {
+			profile = physicalDevice(cx.Env())
+		}
+		b, err := newBackend(cx.DataDir(), profile)
 		if err != nil {
 			panic(err)
 		}
 		a := &App{
 			cx: cx, dir: cx.DataDir(), backend: b,
-			images: newImageStore(filepath.Join(cx.CacheDir(), "img"), b.UserAgent()),
-			seeds:  make(map[string]backend.Feed),
-			local:  loadLocalState(cx.DataDir()),
-			toasts: ui.NewToaster(cx),
+			images:        newImageStore(filepath.Join(cx.CacheDir(), "img"), b.UserAgent()),
+			seeds:         make(map[string]backend.Feed),
+			local:         local,
+			toasts:        ui.NewToaster(cx),
+			usesRealModel: profile.HardwareID != "",
 		}
 		a.nav = a.newPageStack(cx)
 		a.size = a.newSize(cx)
@@ -67,6 +73,7 @@ type App struct {
 	history       *core.Signal[[]historyEntry]
 	topics        *topicHome
 	loginOpening  bool
+	usesRealModel bool
 	// lastPress is the bar's last press on a destination, which a second
 	// press soon after makes a double press.
 	lastPress struct {

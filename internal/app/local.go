@@ -22,12 +22,13 @@ type historyEntry struct {
 // localState is what the app keeps on the device: the browsing history, the
 // recent searches, the appearance and the window.
 type localState struct {
-	History        []historyEntry `json:"history,omitempty"`
-	HistoryEnabled bool           `json:"historyEnabled"`
-	ThemeMode      int            `json:"themeMode"` // 0 follows the system, 1 light, 2 dark
-	FollowGroup    int            `json:"followGroup,omitempty"`
-	Searches       []string       `json:"searches,omitempty"`
-	TradeCity      string         `json:"tradeCity,omitempty"` // the city of the second-hand posts nearby
+	History           []historyEntry `json:"history,omitempty"`
+	HistoryEnabled    bool           `json:"historyEnabled"`
+	ThemeMode         int            `json:"themeMode"` // 0 follows the system, 1 light, 2 dark
+	FollowGroup       int            `json:"followGroup,omitempty"`
+	RandomDeviceModel bool           `json:"randomDeviceModel,omitempty"`
+	Searches          []string       `json:"searches,omitempty"`
+	TradeCity         string         `json:"tradeCity,omitempty"` // the city of the second-hand posts nearby
 	// Window is where a desktop's window was, to open there again.
 	Window core.WindowFrame `json:"window,omitzero"`
 }

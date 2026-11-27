@@ -4,6 +4,7 @@ go 1.27.3
 
 require (
 	github.com/XiaoMengXinX/CoolapkApi-Go v0.0.0
+	github.com/ebitengine/purego v0.11.3
 	github.com/nsgo-dev/nsgo v0.3.4
 	github.com/yuin/goldmark v1.8.7
 	golang.org/x/net v0.62.0
@@ -17,7 +18,6 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dlclark/regexp2/v2 v2.11.0 // indirect
-	github.com/ebitengine/purego v0.11.3 // indirect
 	github.com/evanw/esbuild v0.28.2 // indirect
 	github.com/gdamore/encoding v1.0.1 // indirect
 	github.com/gdamore/tcell/v3 v3.6.0 // indirect

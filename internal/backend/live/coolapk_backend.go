@@ -17,9 +17,10 @@ import (
 )
 
 type coolapkBackend struct {
-	client      *coolapk.Coolapk
-	dir         string // where identity.json lives
-	installTime int64
+	client        *coolapk.Coolapk
+	dir           string // where identity.json lives
+	installTime   int64
+	systemProfile bool
 
 	mu          sync.Mutex
 	cursors     map[string]apiCursor
@@ -96,8 +97,8 @@ type apiCursor struct {
 
 // New returns the backend that talks to the Coolapk API with the device and
 // account saved in dir.
-func New(dir string) (backend.Backend, error) {
-	identity, err := loadCoolapkIdentity(dir)
+func New(dir string, profile backend.DeviceProfile) (backend.Backend, error) {
+	identity, err := loadCoolapkIdentity(dir, profile)
 	if err != nil {
 		return nil, fmt.Errorf("初始化设备身份失败: %w", err)
 	}
@@ -107,13 +108,14 @@ func New(dir string) (backend.Backend, error) {
 	client.Device = identity.Device
 	client.SetSession(identity.Session)
 	return &coolapkBackend{
-		client:      client,
-		dir:         dir,
-		installTime: identity.InstallTime,
-		cursors:     make(map[string]apiCursor),
-		productTags: make(map[string]string),
-		configs:     make(map[string][]map[string]any),
-		flexURLs:    make(map[string]string),
+		client:        client,
+		dir:           dir,
+		installTime:   identity.InstallTime,
+		systemProfile: identity.SystemProfile,
+		cursors:       make(map[string]apiCursor),
+		productTags:   make(map[string]string),
+		configs:       make(map[string][]map[string]any),
+		flexURLs:      make(map[string]string),
 	}, nil
 }
 

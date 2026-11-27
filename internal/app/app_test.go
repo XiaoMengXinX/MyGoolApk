@@ -173,7 +173,7 @@ func (b *fakeBackend) FeedSummary(context.Context, string, func(string)) (backen
 // backend for has arrived.
 func start(t *testing.T, b backend.Backend) *nsgotest.App {
 	t.Helper()
-	app := nsgotest.Start(t, Root(func(string) (backend.Backend, error) { return b, nil }))
+	app := nsgotest.Start(t, Root(func(string, backend.DeviceProfile) (backend.Backend, error) { return b, nil }))
 	settle(app)
 	return app
 }

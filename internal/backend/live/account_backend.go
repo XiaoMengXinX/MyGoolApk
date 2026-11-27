@@ -76,9 +76,10 @@ func (b *coolapkBackend) ResetDeviceID(ctx context.Context) error {
 
 func (b *coolapkBackend) saveIdentity() error {
 	return saveCoolapkIdentity(b.dir, coolapkIdentity{
-		Device:      b.client.Device,
-		InstallTime: b.installTime,
-		Session:     b.client.Session(),
+		Device:        b.client.DeviceInfo().Device,
+		InstallTime:   b.installTime,
+		Session:       b.client.Session(),
+		SystemProfile: b.systemProfile,
 	})
 }
 

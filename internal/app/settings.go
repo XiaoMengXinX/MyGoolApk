@@ -80,6 +80,16 @@ func listGroup(items ...core.Node) core.Node {
 func (a *App) settingsPage(cx *core.Scope) core.Node {
 	mode := core.NewSignal(cx, a.local.ThemeMode)
 	history := core.NewSignal(cx, a.local.HistoryEnabled)
+	devices := []core.Node{listItem(&symbols.Settings, "设备信息", nil, a.openDevice)}
+	if cx.Env().OS() == core.OSIOS {
+		random := core.NewSignal(cx, a.local.RandomDeviceModel)
+		devices = append(devices, toggleRow("随机机型", random.Get, func(on bool) {
+			random.Set(on)
+			a.local.RandomDeviceModel = on
+			a.saveLocalState()
+			a.notice("请求机型将在重启后更新")
+		}))
+	}
 	setMode := func(m int) {
 		mode.Set(m)
 		a.local.ThemeMode = m
@@ -110,7 +120,7 @@ func (a *App) settingsPage(cx *core.Scope) core.Node {
 				}),
 			),
 			settingsLabel("设备"),
-			listGroup(listItem(&symbols.Settings, "设备信息", nil, a.openDevice)),
+			listGroup(devices...),
 			settingsLabel("关于"),
 			listGroup(column(core.Style{Padding: core.Symmetric(12, 16), Gap: 2}, "",
 				label("MyGoolApk", textBody, 400, "text-on-surface"),

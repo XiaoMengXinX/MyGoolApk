@@ -670,6 +670,11 @@ type FeedDraft struct {
 	Private bool
 }
 
+// DeviceProfile describes the model and OS reported in requests.
+type DeviceProfile struct {
+	Model, HardwareID, SystemVersion string
+}
+
 // DeviceInfo is the identity the app presents to Coolapk.
 type DeviceInfo struct {
 	ID            string

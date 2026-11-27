@@ -1,10 +1,25 @@
 package app
 
 import (
+	"strings"
+
 	"github.com/nsgo-dev/nsgo/core"
 
 	"app/internal/backend"
 )
+
+func physicalDevice(env *core.Env) backend.DeviceProfile {
+	hardware := strings.Join(strings.Fields(env.DeviceModel()), " ")
+	model := hardware
+	if name := appleModelNames[hardware]; name != "" {
+		model = name
+	}
+	version := systemVersion()
+	if version == "" && env.OS() == core.OSIOS && env.OSVersion().Major != 0 {
+		version = env.OSVersion().String()
+	}
+	return backend.DeviceProfile{Model: model, HardwareID: hardware, SystemVersion: version}
+}
 
 // devicePage edits the identity requests carry: the model fields and the
 // two-step confirmation of a new device ID.
@@ -73,22 +88,24 @@ func (a *App) devicePage(cx *core.Scope) core.Node {
 					return s
 				}()})
 	}
-	wide := func(n core.Node) core.Node { return column(core.Style{}, "", n) }
 	outlined := func(text string, fn func()) core.Node {
 		return tap(text, fn, core.Style{Height: core.Pt(40), CornerRadius: 20, BorderWidth: 1, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Overflow: core.Hidden}, "border-outline",
 			label(text, textSecondary, 500, "text-primary"))
 	}
-	idKind := func() string {
-		d := info.Get()
-		switch {
-		case d.HasCDID:
-			return "设备 ID（CDID）"
-		case a.backend.SessionUID() != "":
-			return "设备 ID（随机 UUID，尚未换取 CDID）"
-		}
-		return "设备 ID（随机 UUID）"
+	var profile core.Node
+	var regenerateAction core.Node = core.Group{}
+	if a.usesRealModel {
+		profile = listGroup(
+			value("机型", func(d backend.DeviceInfo) string { return d.Model }),
+			value("硬件标识", func(d backend.DeviceInfo) string { return d.HardwareID }),
+			value("系统版本", func(d backend.DeviceInfo) string { return d.SystemVersion }),
+		)
+	} else {
+		profile = column(core.Style{Gap: 8}, "",
+			field("机型", model), field("硬件标识", hardware), field("销售型号", sales), field("系统版本", system),
+			filledButton("保存机型", func() bool { return !resetting.Get() }, save))
+		regenerateAction = outlined("重新生成机型", regenerate)
 	}
-	_ = idKind
 	return a.screen(titled("设备信息"), nil,
 		core.Scroll{Style: fill, Children: []core.Node{column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Left: 16}, Gap: 8}, "",
 			settingsLabel("设备标识"),
@@ -98,10 +115,9 @@ func (a *App) devicePage(cx *core.Scope) core.Node {
 				value("X-App-Token", func(d backend.DeviceInfo) string { return d.AppToken }),
 			),
 			settingsLabel("机型"),
-			field("机型", model), field("硬件标识", hardware), field("销售型号", sales), field("系统版本", system),
-			wide(filledButton("保存机型", func() bool { return !resetting.Get() }, save)),
+			profile,
 			settingsLabel("重置"),
-			outlined("重新生成机型", regenerate),
+			regenerateAction,
 			core.Dynamic(func(cx *core.Scope) core.Node {
 				text := "重新生成设备 ID"
 				if confirm.Get() {
