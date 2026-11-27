@@ -80,6 +80,8 @@ type Backend interface {
 	ServiceNotices(ctx context.Context, sender string, page int) (NotificationPage, error)
 	// Topic returns the page of a topic by name, or of a product by id.
 	Topic(ctx context.Context, name, productID string) (TopicDetail, error)
+	TopicRatingTrends(ctx context.Context, id string) (RatingTrends, error)
+	TopicNodeRatings(ctx context.Context, q NodeRatingQuery) (NodeRatingPage, error)
 	// SetTopicFollow follows or leaves the topic, or the product when id is set.
 	SetTopicFollow(ctx context.Context, name, productID string, follow bool) error
 	// Conversations returns one page of private-message threads.

@@ -32,7 +32,7 @@ func (a *App) openTarget(t *backend.Target) {
 // topicPage is the page of a topic or a product: its head with the follow
 // button over the lists the server names, which swipe as the home tabs do.
 // A topic whose page tells no lists shows its posts alone.
-func (a *App) topicPage(cx *core.Scope, param string) core.Node {
+func (a *App) topicPage(cx *core.Scope, param string, ratings bool) core.Node {
 	raw, _ := base64.RawURLEncoding.DecodeString(param)
 	productID, name, _ := strings.Cut(string(raw), "\x00")
 	title := "#" + name + "#"
@@ -47,6 +47,11 @@ func (a *App) topicPage(cx *core.Scope, param string) core.Node {
 				if err != nil {
 					errText.Set(err.Error())
 					return
+				}
+				if ratings {
+					if i := topicReviewTab(d.Tabs); i >= 0 {
+						d.Selected = i
+					}
 				}
 				detail.Set(d)
 				loaded.Set(true)
@@ -92,8 +97,8 @@ func (a *App) topicPage(cx *core.Scope, param string) core.Node {
 			return column(fill.Merge(core.Style{AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}), "", spinner())
 		}
 		d := core.Untracked(cx, detail.Get)
-		head := a.topicHead(cx, detail.Get, follow)
 		if len(d.Tabs) == 0 {
+			head := a.topicHead(cx, detail.Get, follow, nil)
 			feeds := newPager(cx, func(ctx context.Context, page int) ([]backend.Feed, bool, error) {
 				r, err := a.backend.Feed(ctx, backend.FeedQuery{Kind: backend.FeedTopic, Topic: name, ProductID: productID, Page: page})
 				return r.Feeds, r.HasMore, err
@@ -101,11 +106,11 @@ func (a *App) topicPage(cx *core.Scope, param string) core.Node {
 			return pagerList(cx, feeds, listSpec{pushed: true, header: head, empty: "暂无内容", emptyHint: "这里还没有帖子。", bottom: 24, skeleton: skeletonCard},
 				func(cx *core.Scope, get func() backend.Feed, r core.ListRow) core.Node { return a.feedCard(cx, get) })
 		}
-		return a.topicTabs(cx, d, head)
+		return a.topicTabs(cx, d, detail.Get, follow)
 	}))
 }
 
-func (a *App) topicTabs(cx *core.Scope, d backend.TopicDetail, head core.Node) core.Node {
+func (a *App) topicTabs(cx *core.Scope, d backend.TopicDetail, get func() backend.TopicDetail, follow func()) core.Node {
 	tabs := make([]pageTab, len(d.Tabs))
 	hasWeb := false
 	for i, t := range d.Tabs {
@@ -116,6 +121,11 @@ func (a *App) topicTabs(cx *core.Scope, d backend.TopicDetail, head core.Node) c
 	}
 	g := a.newTabGroup(cx, tabs, d.Selected)
 	g.pushed = true
+	var reviews func()
+	if i := topicReviewTab(d.Tabs); i >= 0 {
+		reviews = func() { g.selectTab(i) }
+	}
+	head := a.topicHead(cx, get, follow, reviews)
 	if !hasWeb {
 		g.head = head
 		return g.view(cx, nil)
@@ -166,7 +176,7 @@ const openActivityDrawing = `(function () {
 
 // topicHead shows what a topic is: its logo, name and counts, the button
 // that follows it, and its introduction.
-func (a *App) topicHead(cx *core.Scope, get func() backend.TopicDetail, follow func()) core.Node {
+func (a *App) topicHead(cx *core.Scope, get func() backend.TopicDetail, follow, reviews func()) core.Node {
 	counts := func() string {
 		d := get()
 		return joinNonEmpty([]string{itemActivity(d.Hot, ""), countLabel(d.Comments, "讨论"), countLabel(d.Followers, "关注")}, "  ")
@@ -176,7 +186,11 @@ func (a *App) topicHead(cx *core.Scope, get func() backend.TopicDetail, follow f
 	d := core.Untracked(cx, get)
 	var more []core.Node
 	if d.Rating != nil {
-		more = append(more, ratingCard(d.Rating))
+		var data func()
+		if d.Rating.Stats != nil && d.ID != "" {
+			data = func() { a.nav.Push(route{kind: routeRatingData, topic: &d}) }
+		}
+		more = append(more, ratingCard(d.Rating, data, reviews))
 	}
 	if len(d.Tags) > 0 {
 		chips := make([]core.Node, len(d.Tags))
@@ -210,26 +224,54 @@ func (a *App) topicHead(cx *core.Scope, get func() backend.TopicDetail, follow f
 		core.Group(more))
 }
 
-// ratingCard is a product's score from its owners beside the score of each
-// of its sides, over how many rated it.
-func ratingCard(r *backend.Rating) core.Node {
+func topicReviewTab(tabs []backend.TopicTab) int {
+	for i, tab := range tabs {
+		if tab.Title == "点评" {
+			return i
+		}
+	}
+	return -1
+}
+
+func ratingCard(r *backend.Rating, data, open func()) core.Node {
 	sides := make([]core.Node, len(r.Sides))
 	for i, s := range r.Sides {
 		sides[i] = row(core.Style{Gap: 8, AlignItems: core.AlignCenter}, "",
 			core.Text{Content: s.Name, MaxLines: 1, Class: "text-on-surface-variant",
-				Style: textStyle(textCaption, 400).Merge(core.Style{Width: core.Pt(52), TextAlign: core.TextAlignRight})},
+				Style: textStyle(textCaption, 400).Merge(core.Style{Width: core.Pt(64), TextAlign: core.TextAlignRight})},
 			core.View{Class: "bg-surface-container-highest", Style: fill.Merge(core.Style{Height: core.Pt(6), CornerRadius: 3, Overflow: core.Hidden}),
-				Children: []core.Node{core.View{Class: "bg-primary", Style: core.Style{Width: core.Pct(s.Score * 10), Height: core.Pct(100), CornerRadius: 3}}}},
+				Children: []core.Node{core.View{Class: "bg-star", Style: core.Style{Width: core.Pct(s.Score * 10), Height: core.Pt(6), CornerRadius: 3}}}},
 			core.Text{Content: strconv.FormatFloat(float64(s.Score), 'f', 1, 32), Class: "text-on-surface-variant",
 				Style: textStyle(textCaption, 400).Merge(core.Style{Width: core.Pt(28)})})
 	}
-	return column(core.Style{Padding: core.All(16), Gap: 12, CornerRadius: 16}, "bg-surface-container-low",
-		row(core.Style{Gap: 16, AlignItems: core.AlignCenter}, "",
-			column(core.Style{Width: core.Pt(88), Gap: 2, AlignItems: core.AlignCenter}, "",
-				label(r.Score, textTitle, 600, "text-on-surface"),
-				label("机主评分", textCaption, 400, "text-on-surface-variant")),
-			column(fill.Merge(core.Style{Gap: 6}), "", sides...)),
-		label(joinNonEmpty([]string{countLabel(r.Owners, "机主点评"), countLabel(r.Detailed, "详细点评")}, "  "), textCaption, 400, "text-on-surface-variant"))
+	scorer, count := "用户评分", countLabel(r.Users, "用户点评")
+	if r.Owners > 0 {
+		scorer, count = "机主评分", countLabel(r.Owners, "机主点评")
+	}
+	score, _ := strconv.ParseFloat(r.Score, 64)
+	summary := column(core.Style{Width: core.Pt(88), Gap: 4, AlignItems: core.AlignCenter}, "",
+		label(r.Score, textTitle, 600, "text-on-surface"), stars(score/2, 12),
+		label(scorer, textCaption, 400, "text-on-surface-variant"))
+	body := []core.Node{summary}
+	if len(sides) != 0 {
+		body = append(body, column(fill.Merge(core.Style{Gap: 3}), "", sides...))
+	} else if r.Stats != nil {
+		body = append(body, ratingStarBars(r.Stats.Stars))
+	}
+	footer := []core.Node{core.Text{Content: joinNonEmpty([]string{count, countLabel(r.Detailed, "详细点评")}, "  "),
+		MaxLines: 2, Class: "text-on-surface-variant", Style: fill.Merge(textStyle(textCaption, 400))}}
+	if open != nil {
+		footer = append(footer, textButton("查看点评", open))
+	}
+	heading := []core.Node{core.Text{Content: "酷安评分", Class: "text-on-surface", Style: fill.Merge(textStyle(textBody, 600))}}
+	if data != nil {
+		heading = append(heading, textButton("详细数据", data))
+	}
+	return column(core.Style{Padding: core.All(12), Gap: 10, CornerRadius: 16}, "bg-surface-container-low",
+		row(core.Style{AlignItems: core.AlignCenter}, "", heading...),
+		row(core.Style{Gap: 16, AlignItems: core.AlignCenter}, "", body...),
+		core.View{Class: "bg-outline-variant", Style: core.Style{Height: core.Pt(1)}},
+		row(core.Style{Gap: 6, MinHeight: core.Pt(32), AlignItems: core.AlignCenter}, "", footer...))
 }
 
 // listPage shows a server list that a row opened, such as the products of a

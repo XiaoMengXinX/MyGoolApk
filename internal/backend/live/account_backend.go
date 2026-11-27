@@ -434,6 +434,7 @@ func (b *coolapkBackend) Topic(ctx context.Context, name, productID string) (bac
 		return backend.TopicDetail{}, err
 	}
 	d := backend.TopicDetail{
+		ID:        apiID(object),
 		Title:     firstAPIString(object, "title"),
 		LogoURL:   normalizeCoolapkImage(firstAPIString(object, "logo")),
 		Intro:     strings.TrimSpace(firstAPIString(object, "intro", "description")),
@@ -450,20 +451,59 @@ func (b *coolapkBackend) Topic(ctx context.Context, name, productID string) (bac
 			d.Tags = append(d.Tags, release+"上市")
 		}
 		d.Tags = append(d.Tags, apiStrings(object, "tagArr")...)
-		if n := apiInt(object, "owner_star_total_count"); n > 0 {
-			d.Rating = &backend.Rating{Score: firstAPIString(object, "owner_star_average_score"), Owners: n,
-				Detailed: apiInt(object, "v4_rating_owner_total_count")}
-			for _, side := range apiObjects(object, "rating_item_info") {
-				score, _ := strconv.ParseFloat(firstAPIString(side, "owner_average_score"), 32)
-				d.Rating.Sides = append(d.Rating.Sides, backend.RatingSide{Name: firstAPIString(side, "name"), Score: float32(score)})
-			}
-		}
 		b.mu.Lock()
 		b.configs[productID] = apiObjects(object, "configRows")
 		b.mu.Unlock()
 	}
+	d.Rating = aggregateRating(object, productID != "")
 	d.Tabs, d.Selected = topicTabsFromObject(object)
 	return d, nil
+}
+
+func aggregateRating(o map[string]any, product bool) *backend.Rating {
+	r := backend.Rating{
+		Score: searchScore(o, "star_average_score", "rating_average_score"), Users: apiInt(o, "star_total_count"),
+		Detailed: apiInt(o, "v4_rating_total_count"),
+	}
+	sideField := "average_score"
+	if product {
+		r = backend.Rating{
+			Score: searchScore(o, "owner_star_average_score"), Owners: apiInt(o, "owner_star_total_count"),
+			Detailed: apiInt(o, "v4_rating_owner_total_count"),
+		}
+		sideField = "owner_average_score"
+	}
+	if r.Score == "" {
+		return nil
+	}
+	if !product {
+		r.Stats = topicRatingStats(o)
+	}
+	for _, item := range apiObjects(o, "rating_item_info") {
+		name := firstAPIString(item, "name")
+		score, _ := strconv.ParseFloat(firstAPIString(item, sideField), 32)
+		if name != "" && score > 0 && score <= 10 {
+			r.Sides = append(r.Sides, backend.RatingSide{Name: name, Score: float32(score)})
+		}
+	}
+	return &r
+}
+
+func topicRatingStats(o map[string]any) *backend.TopicRatingStats {
+	// Star counts are the topic's data for the rating breakdown screen.
+	if firstAPIString(o, "star_5_count") == "" {
+		return nil
+	}
+	stats := &backend.TopicRatingStats{
+		RecentScore:    searchScore(o, "recent_30_days_star_average_score"),
+		RecentCount:    apiInt(o, "recent_30_days_star_total_count"),
+		RecentPositive: firstAPIString(o, "recent_30_days_goods_percent"),
+	}
+	for i := range stats.Stars {
+		stats.Stars[i] = apiInt(o, "star_"+strconv.Itoa(i+1)+"_count")
+	}
+	stats.Weekly = ratingTrend(apiObject(o, "ratingChart"))
+	return stats
 }
 
 func topicTabsFromObject(object map[string]any) (tabs []backend.TopicTab, at int) {

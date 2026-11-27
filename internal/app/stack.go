@@ -6,6 +6,8 @@ import (
 
 	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
+
+	"app/internal/backend"
 )
 
 // Pages pushed over the shell are NSGo's native screen stack on an iPhone,
@@ -25,7 +27,10 @@ var pageTransition = core.Transition{Duration: pageMotion, Easing: emphasized, P
 // of its width.
 const shellShift = -22
 
-type route struct{ kind, id string }
+type route struct {
+	kind, id string
+	topic    *backend.TopicDetail
+}
 
 // pageLayer is a pushed page of the app's own stack: it comes in as shown
 // turns true and goes out as leaving does.

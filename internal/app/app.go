@@ -131,8 +131,10 @@ func (a *App) page(cx *core.Scope, r route) core.Node {
 		return a.peoplePage(cx, r.id, backend.UserFollowing)
 	case routeFans:
 		return a.peoplePage(cx, r.id, backend.UserFans)
-	case routeTopic:
-		return a.topicPage(cx, r.id)
+	case routeTopic, routeTopicRatings:
+		return a.topicPage(cx, r.id, r.kind == routeTopicRatings)
+	case routeRatingData:
+		return a.ratingDataPage(cx, r.topic)
 	case routeList:
 		return a.listPage(cx, r.id)
 	case routeCompose:

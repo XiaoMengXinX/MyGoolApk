@@ -350,7 +350,7 @@ func (d *detail) postBody(cx *core.Scope) core.Node {
 		return a.feedMedia(cx, get, s, true, d.castVote)
 	})
 	target := core.Show{
-		When: func() bool { return get().Target != nil },
+		When: func() bool { f := get(); return f.Target != nil && f.Rating == nil },
 		Then: func(cx *core.Scope) core.Node {
 			return row(core.Style{}, "", a.targetChip(cx, func() *backend.Target { return get().Target }))
 		},

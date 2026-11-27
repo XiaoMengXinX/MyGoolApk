@@ -39,12 +39,46 @@ func ratingTag(text string, class string) core.Node {
 // ratingScore is the line of a rating's stars: who gave them, the stars
 // and their word.
 func ratingScore(r *backend.FeedRating, size core.Points) core.Node {
-	kids := []core.Node{}
-	if r.Owner {
-		kids = append(kids, ratingTag("机主评分", "bg-tertiary-container text-on-tertiary-container"))
+	if r.Stars <= 0 {
+		return core.Group{}
 	}
-	kids = append(kids, stars(float64(r.Stars), size), label(r.Word, textCaption, 500, "text-on-surface-variant"))
-	return row(core.Style{Gap: 8, AlignItems: core.AlignCenter}, "", kids...)
+	title, class := "评分", "bg-secondary-container text-on-secondary-container"
+	if r.Owner {
+		title, class = "机主评分", "bg-tertiary-container text-on-tertiary-container"
+	}
+	return row(core.Style{Gap: 8, AlignItems: core.AlignCenter, Wrap: core.Wrap}, "",
+		column(core.Style{}, "", ratingTag(title, class)),
+		stars(float64(r.Stars), size), ratingWord(r.Stars, r.Word))
+}
+
+func ratingWord(n int, word string) core.Node {
+	if n < 1 || n > 5 || word == "" {
+		return core.Group{}
+	}
+	faces := [...]string{"😣", "🙁", "😐", "🙂", "🤩"}
+	return label(faces[n-1]+" "+word, textCaption, 500, "text-on-surface-variant")
+}
+
+func (a *App) ratingTarget(cx *core.Scope, t *backend.Target, owner bool) core.Node {
+	title := []core.Node{core.Text{Content: t.Title, MaxLines: 2, Class: "text-on-surface",
+		Style: textStyle(textSecondary, 600).Merge(core.Style{FlexShrink: 1, MinWidth: core.Pt(0)})}}
+	if owner {
+		title = append(title, column(core.Style{}, "", ratingTag("机主", "bg-tertiary-container text-on-tertiary-container")))
+	}
+	meta := []core.Node{row(core.Style{Gap: 6, AlignItems: core.AlignCenter, Wrap: core.Wrap}, "", title...)}
+	if t.Rating.Count != "" {
+		meta = append(meta, label(t.Rating.Count+"人点评", textCaption, 400, "text-on-surface-variant"))
+	}
+	var kids []core.Node
+	if t.LogoURL != "" {
+		kids = append(kids, a.digitalPicture(cx, func() string { return t.LogoURL }, 48, 48))
+	}
+	kids = append(kids, column(fill.Merge(core.Style{Gap: 2}), "", meta...))
+	if t.Rating.Score != "" {
+		kids = append(kids, itemScore(t.Rating))
+	}
+	return tap(t.Title, func() { a.openTarget(t) }, core.Style{Direction: core.Row, Padding: core.All(10),
+		Gap: 10, AlignItems: core.AlignCenter, CornerRadius: 12}, "bg-surface-container-low", kids...)
 }
 
 // ratingSummary is what a card shows of a rating: its stars, the stars of
@@ -80,26 +114,22 @@ func (d *detail) ratingDetail(cx *core.Scope, f backend.Feed, docs map[int]postD
 	r := f.Rating
 	box := []core.Node{}
 	if t := f.Target; t != nil {
-		head := []core.Node{a.clippedPic(cx, t.LogoURL, 32, 32, 8),
-			core.Text{Content: t.Title, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 500).Merge(core.Style{FlexShrink: 1})}}
-		if r.Owner {
-			head = append(head, ratingTag("机主", "bg-tertiary-container text-on-tertiary-container"))
-		}
-		target := *t
-		box = append(box, tap(t.Title, func() { a.openTarget(&target) }, core.Style{Direction: core.Row, Gap: 10, AlignItems: core.AlignCenter, CornerRadius: 8}, "", head...))
+		box = append(box, a.ratingTarget(cx, t, r.Owner))
 	}
-	line := func(name string, n int, word string, size core.Points) core.Node {
+	line := func(name string, n int, word core.Node, size core.Points) core.Node {
 		return row(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
 			core.Text{Content: name, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textSecondary, 400).Merge(core.Style{Width: core.Pt(64)})},
-			stars(float64(n), size), label(word, textCaption, 400, "text-on-surface-variant"))
+			stars(float64(n), size), word)
 	}
 	scorer := "评分"
 	if r.Owner {
 		scorer = "机主评分"
 	}
-	box = append(box, line(scorer, r.Stars, r.Word, 20))
+	if r.Stars > 0 {
+		box = append(box, line(scorer, r.Stars, ratingWord(r.Stars, r.Word), 20))
+	}
 	for _, s := range r.Sides {
-		box = append(box, line(s.Name, s.Stars, s.Word, 16))
+		box = append(box, line(s.Name, s.Stars, label(s.Word, textCaption, 500, "text-on-surface-variant"), 16))
 	}
 	kids := []core.Node{column(core.Style{Padding: core.All(16), Gap: 10, CornerRadius: 12}, "bg-surface-container-low", box...)}
 	for i, s := range r.Sections {

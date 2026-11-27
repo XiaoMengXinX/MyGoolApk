@@ -63,7 +63,7 @@ func (a *App) feedCard(cx *core.Scope, get func() backend.Feed) core.Node {
 func (a *App) feedFooter(cx *core.Scope, get func() backend.Feed, open func()) core.Node {
 	return dynamicShape(cx, func() [2]bool {
 		f := get()
-		return [2]bool{f.Target != nil, f.Relation != nil}
+		return [2]bool{f.Target != nil && f.Rating == nil, f.Relation != nil}
 	}, func(cx *core.Scope, has [2]bool) core.Node {
 		var chips []core.Node
 		if has[0] {
@@ -229,7 +229,13 @@ func (a *App) feedBody(cx *core.Scope, get func() backend.Feed, s feedShape) cor
 				core.Text{ContentFunc: func() string { return get().Title }, MaxLines: 2, Class: "text-on-surface", Style: textStyle(textSecondary, 600)})
 		}), a.feedContent(cx, get, s, 5), a.feedMedia(cx, get, s, false, nil)))
 	case backend.PostRating:
-		return through(column(core.Style{Gap: 12}, "", a.ratingSummary(cx, get), a.feedMedia(cx, get, s, false, nil)))
+		target := dynamicShape(cx, func() *backend.Target { return get().Target }, func(cx *core.Scope, t *backend.Target) core.Node {
+			if t == nil {
+				return core.Group{}
+			}
+			return a.ratingTarget(cx, t, false)
+		})
+		return through(column(core.Style{Gap: 12}, "", a.ratingSummary(cx, get), a.feedMedia(cx, get, s, false, nil), target))
 	case backend.PostVideo, backend.PostVote:
 		return through(column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), a.feedMedia(cx, get, s, false, nil)))
 	}

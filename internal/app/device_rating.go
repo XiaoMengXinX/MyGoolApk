@@ -136,9 +136,9 @@ func (a *App) deviceRatingTile(cx *core.Scope, item func() backend.CardItem, tit
 						target := backend.ResolveLink(it.URL)
 						switch target.Kind {
 						case backend.LinkProduct:
-							a.push(routeTopic, topicParam(it.Title, target.Param))
+							a.push(routeTopicRatings, topicParam(it.Title, target.Param))
 						case backend.LinkTopic:
-							a.push(routeTopic, topicParam(target.Param, ""))
+							a.push(routeTopicRatings, topicParam(target.Param, ""))
 						}
 					}, core.Style{Direction: core.Row, Height: core.Pt(40), AlignItems: core.AlignCenter, CornerRadius: 8}, "",
 						label("去点评", textCaption, 500, "text-primary"), icon(&symbols.ChevronRight, 14, "text-primary"))

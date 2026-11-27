@@ -153,6 +153,14 @@ func (b *fakeBackend) SetFeedLike(_ context.Context, _ string, liked bool) (int,
 }
 func (b *fakeBackend) SetReplyLike(context.Context, string, bool) (int, error) { return 0, nil }
 func (b *fakeBackend) SetUserFollow(context.Context, string, bool) error       { return nil }
+func (b *fakeBackend) TopicRatingTrends(context.Context, string) (backend.RatingTrends, error) {
+	return backend.RatingTrends{}, nil
+}
+
+func (b *fakeBackend) TopicNodeRatings(context.Context, backend.NodeRatingQuery) (backend.NodeRatingPage, error) {
+	return backend.NodeRatingPage{}, nil
+}
+
 func (b *fakeBackend) Topic(context.Context, string, string) (backend.TopicDetail, error) {
 	return backend.TopicDetail{}, nil
 }

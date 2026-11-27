@@ -13,23 +13,25 @@ import (
 // Routes are pages pushed over the tabs: kind names the page and id what it
 // shows.
 const (
-	routeFeed     = "feed"
-	routeEvent    = "event"
-	routeUser     = "user"
-	routeFollows  = "follows" // the accounts a user follows, by uid
-	routeFans     = "fans"
-	routeTopic    = "topic"
-	routeLogin    = "login"
-	routeWeb      = "web" // a page of the site shown in the app, by base64url of "title\x00url"
-	routeSearch   = "search"
-	routeMessages = "messages"
-	routeNotices  = "notices" // a list of the message center, by its entry
-	routeChat     = "chat"    // a private-message thread, by base64url of "ukey\x00uid\x00name"
-	routeHistory  = "history"
-	routeSettings = "settings"
+	routeFeed         = "feed"
+	routeEvent        = "event"
+	routeUser         = "user"
+	routeFollows      = "follows" // the accounts a user follows, by uid
+	routeFans         = "fans"
+	routeTopic        = "topic"
+	routeTopicRatings = "topic-ratings"
+	routeRatingData   = "rating-data"
+	routeLogin        = "login"
+	routeWeb          = "web" // a page of the site shown in the app, by base64url of "title\x00url"
+	routeSearch       = "search"
+	routeMessages     = "messages"
+	routeNotices      = "notices" // a list of the message center, by its entry
+	routeChat         = "chat"    // a private-message thread, by base64url of "ukey\x00uid\x00name"
+	routeHistory      = "history"
+	routeSettings     = "settings"
 )
 
-func (a *App) push(kind, id string) { a.nav.Push(route{kind, id}) }
+func (a *App) push(kind, id string) { a.nav.Push(route{kind: kind, id: id}) }
 
 // openFeed shows a post, starting from what its card already shows.
 func (a *App) openFeed(f backend.Feed) {

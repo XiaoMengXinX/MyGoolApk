@@ -129,6 +129,7 @@ type Target struct {
 	Title   string
 	LogoURL string
 	Product bool
+	Rating  ItemRating
 }
 
 // EntryKind is what a row of a server page (the tabs of the home, digital and
@@ -551,6 +552,7 @@ func (u UnreadCounts) Total() int {
 // TopicDetail is the page of a topic or a product: its head and the lists
 // under it, which PageEntries reads by their urls.
 type TopicDetail struct {
+	ID        string
 	LottoLogo string
 	Title     string
 	LogoURL   string
@@ -561,19 +563,19 @@ type TopicDetail struct {
 	Followed  bool
 	Tabs      []TopicTab
 	Selected  int // the tab shown first
-	// Rating is what its owners make of a product, nil while it has none,
-	// and Tags what the product is, its release first.
+	// Rating is the aggregate score of the topic or product.
 	Rating *Rating
 	Tags   []string
 }
 
-// Rating is a product's score out of 10 from the accounts that own it, the
-// score of each of its sides, and how many rated it and how many in detail.
+// Rating is the score out of 10, its breakdown, and how many rated it.
 type Rating struct {
 	Score    string
 	Sides    []RatingSide
 	Owners   int
+	Users    int
 	Detailed int
+	Stats    *TopicRatingStats
 }
 
 // RatingSide is one side of a product, as its battery, and its score.
@@ -581,6 +583,75 @@ type RatingSide struct {
 	Name  string
 	Score float32
 }
+
+type TopicRatingStats struct {
+	Stars          [5]int
+	RecentScore    string
+	RecentCount    int
+	RecentPositive string
+	Weekly         RatingTrend
+}
+
+type RatingTrends struct {
+	Day   RatingTrend
+	Week  RatingTrend
+	Month RatingTrend
+}
+
+type RatingTrend struct {
+	Periods                  []RatingPeriod
+	ScoreFloor, ScoreCeiling float32
+	CountCeiling             int
+}
+
+type RatingPeriod struct {
+	Date  string
+	Score float32
+	Count int
+}
+
+type NodeRating struct {
+	ID, FeedID string
+	Author     Author
+	Stars      int
+	Detailed   bool
+}
+
+type NodeRatingPage struct {
+	Items   []NodeRating
+	Cursor  ListCursor
+	HasMore bool
+}
+
+type NodeRatingQuery struct {
+	TopicID string
+	Page    int
+	Cursor  ListCursor
+	Filter  NodeRatingFilter
+}
+
+type NodeRatingFilter struct {
+	Star    int
+	Detail  RatingDetailFilter
+	Comment RatingCommentFilter
+}
+
+type RatingDetailFilter uint8
+
+const (
+	RatingDetailDefault RatingDetailFilter = iota
+	RatingDetailOnly
+	RatingDetailOff
+)
+
+type RatingCommentFilter uint8
+
+const (
+	RatingCommentDefault RatingCommentFilter = iota
+	RatingCommentAll
+	RatingWithComment
+	RatingWithoutComment
+)
 
 type EventDetail struct {
 	Title, CoverURL, ActionURL, WinnersURL string

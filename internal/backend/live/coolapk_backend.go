@@ -753,6 +753,9 @@ func targetFromObject(object map[string]any) *backend.Target {
 			if t.Product {
 				t.ID = apiID(row)
 			}
+			if firstAPIString(object, "feedType") == "rating" {
+				t.Rating = itemRating(row, "star_average_score", "rating_average_score")
+			}
 			return t
 		}
 	}

@@ -374,3 +374,18 @@ func TestVideoChannelEntriesAndPreview(t *testing.T) {
 		}
 	}
 }
+
+func TestTopicRatingAggregates(t *testing.T) {
+	object, err := decodeAPIObject([]byte(`{
+	    "star_average_score":"9.2","star_total_count":1280,"rating_total_num":0,
+	    "v4_rating_total_count":1204,"rating_item_info":[{"name":"美观度","average_score":"9.3"}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := aggregateRating(object, false)
+	if r == nil || r.Score != "9.2" || r.Users != 1280 || r.Detailed != 1204 ||
+		len(r.Sides) != 1 || r.Sides[0] != (backend.RatingSide{Name: "美观度", Score: 9.3}) {
+		t.Fatalf("topic rating = %+v", r)
+	}
+}
