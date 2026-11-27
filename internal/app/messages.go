@@ -208,7 +208,7 @@ func (a *App) serviceNotices(cx *core.Scope) core.Node {
 		}
 		kids := make([]core.Node, len(senders))
 		for i, sender := range senders {
-			kids[i] = filterChip(sender.Name, func() bool { return m.sender.Get() == sender.Kind }, func() {
+			kids[i] = compactChip(sender.Name, func() bool { return m.sender.Get() == sender.Kind }, func() {
 				if m.sender.GetUntracked() != sender.Kind {
 					m.sender.Set(sender.Kind)
 					m.service.reset()

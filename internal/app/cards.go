@@ -697,7 +697,7 @@ func selectorCard(c *backend.Card, l *pageList) core.Node {
 	chips := make([]core.Node, len(c.Items))
 	for i, it := range c.Items {
 		on := func() bool { return l != nil && l.chosen.Get() == i }
-		chips[i] = filterChip(it.Title, on, func() {
+		chips[i] = compactChip(it.Title, on, func() {
 			if l != nil {
 				l.choose(c, i)
 			}

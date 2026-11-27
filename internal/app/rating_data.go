@@ -233,7 +233,7 @@ func ratingHistory(cx *core.Scope, get func() backend.RatingTrends, failed func(
 				if firstAvailable == -1 {
 					firstAvailable = i
 				}
-				tabs = append(tabs, filterChip(name, func() bool { return current == i }, func() {
+				tabs = append(tabs, compactChip(name, func() bool { return current == i }, func() {
 					group.Set(0)
 					selected.Set(i)
 				}))
