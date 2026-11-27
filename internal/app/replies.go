@@ -223,7 +223,7 @@ func dynamicShape[S comparable](cx *core.Scope, shape func() S, body func(cx *co
 }
 
 func (a *App) replyImage(cx *core.Scope, get func() backend.Image, open func()) core.Node {
-	return row(core.Style{}, "", tap("查看图片", open, core.Style{Width: core.Pct(60), CornerRadius: 8, Overflow: core.Hidden}, "bg-surface-container-highest",
+	return row(core.Style{}, "", thumbnailButton("查看图片", open, core.Style{Width: core.Pct(60), CornerRadius: 8}, "bg-surface-container-highest",
 		a.pic(cx, func() string { return thumbURL(get(), thumbSmall) }, core.Cover, "", core.Style{Width: core.Pct(100), AspectRatio: 4.0 / 3})))
 }
 
@@ -642,7 +642,7 @@ func withoutPicturePlaceholder(spans []backend.RichSpan) []backend.RichSpan {
 func (a *App) threadPictures(cx *core.Scope, images []backend.Image) core.Node {
 	cells := make([]core.Node, 0, len(images))
 	for i, im := range images {
-		cells = append(cells, tap("查看图片", func() { a.openImages(images, i) },
+		cells = append(cells, thumbnailButton("查看图片", func() { a.openImages(images, i) },
 			core.Style{Width: core.Pt(72), Height: core.Pt(72), CornerRadius: 8}, "bg-surface-container-highest",
 			a.picOf(cx, thumbURL(im, thumbSmall), core.Cover, "", fillAbs)))
 	}

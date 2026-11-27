@@ -332,18 +332,26 @@ func (a *App) imageGrid(cx *core.Scope, get func() []backend.Image, n, cols int)
 	cells := make([]core.Node, 0, n)
 	for i := 0; i < n; i++ {
 		i := i
-		cells = append(cells, tap(fmt.Sprintf("查看第 %d 张图片", i+1), func() { a.openImages(get(), i) },
-			core.Style{Width: core.Pct(100 / float32(cols)), AspectRatio: 1, Padding: core.All(gap / 2)}, "",
-			core.View{Style: insetAbs(gap / 2).Merge(core.Style{CornerRadius: 8, Overflow: core.Hidden}), Children: []core.Node{
+		cells = append(cells, core.View{
+			Style: core.Style{Width: core.Pct(100 / float32(cols)), AspectRatio: 1},
+			Children: []core.Node{thumbnailButton(fmt.Sprintf("查看第 %d 张图片", i+1), func() { a.openImages(get(), i) },
+				insetAbs(gap/2).Merge(core.Style{CornerRadius: 8}), "",
 				a.pic(cx, func() string {
 					if im := get(); i < len(im) {
 						return thumbURL(im[i], thumbSquare)
 					}
 					return ""
 				}, core.Cover, "bg-surface-container-highest", fillAbs),
-			}}))
+			)},
+		})
 	}
 	return core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, Margin: core.All(-gap / 2)}, Children: cells}
+}
+
+func thumbnailButton(label string, open func(), style core.Style, class string, children ...core.Node) core.View {
+	button := tap(label, open, style, class, children...)
+	button.Android.Ripple.Foreground = true
+	return button
 }
 
 // longImageRatio is the narrowest a single picture's frame goes: 9:22, as
@@ -382,30 +390,25 @@ func (a *App) singleImage(cx *core.Scope, get func() backend.Image, detail bool,
 // the server cuts at that ratio, and is marked 长图.
 func (a *App) pictureButton(cx *core.Scope, get func() backend.Image, size string, open func()) core.Node {
 	long := func() bool { return mediaRatio(get(), 4.0/3, 0, 1e6) < longImageRatio }
-	return pressable(core.View{
-		Role: core.RoleButton, Label: "查看图片", OnPress: func(core.PressEvent) { open() },
-		Class: "bg-surface-container-highest",
-		Style: fillAbs.Merge(core.Style{CornerRadius: 12, Overflow: core.Hidden}),
-		Children: []core.Node{
-			a.pic(cx, func() string {
-				if long() {
-					return thumbURL(get(), thumbSmall)
-				}
-				return thumbURL(get(), size)
-			}, core.Cover, "", fillAbs),
-			core.Dynamic(func(cx *core.Scope) core.Node {
-				if !long() {
-					return core.Group{}
-				}
-				return core.Text{Content: "长图", Class: "bg-black/60 text-white", Style: func() core.Style {
-					s := textStyle(textCaption, 400)
-					s.Position, s.Right, s.Bottom = core.Absolute, core.Pt(6), core.Pt(6)
-					s.Padding, s.CornerRadius = core.Symmetric(2, 8), 8
-					return s
-				}()}
-			}),
-		},
-	})
+	return thumbnailButton("查看图片", open, fillAbs.Merge(core.Style{CornerRadius: 12}), "bg-surface-container-highest",
+		a.pic(cx, func() string {
+			if long() {
+				return thumbURL(get(), thumbSmall)
+			}
+			return thumbURL(get(), size)
+		}, core.Cover, "", fillAbs),
+		core.Dynamic(func(cx *core.Scope) core.Node {
+			if !long() {
+				return core.Group{}
+			}
+			return core.Text{Content: "长图", Class: "bg-black/60 text-white", Style: func() core.Style {
+				s := textStyle(textCaption, 400)
+				s.Position, s.Right, s.Bottom = core.Absolute, core.Pt(6), core.Pt(6)
+				s.Padding, s.CornerRadius = core.Symmetric(2, 8), 8
+				return s
+			}()}
+		}),
+	)
 }
 
 // videoCover shows a video's cover with a play mark and its length. The

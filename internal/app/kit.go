@@ -63,7 +63,8 @@ func hoverGroup(v core.View, group string, place core.Style) core.View {
 	}
 	v.Style.Group = group
 	layer := core.View{Class: "bg-on-surface", PointerEvents: core.PointerEventsNone,
-		Style: place.Merge(core.Style{Opacity: core.Alpha(0), GroupStyle: &core.GroupStyle{Name: group, Hover: &core.Style{Opacity: core.Alpha(0.08)}}})}
+		Style: place.Merge(core.Style{CornerRadius: v.Style.CornerRadius, CornerRadii: v.Style.CornerRadii,
+			Opacity: core.Alpha(0), GroupStyle: &core.GroupStyle{Name: group, Hover: &core.Style{Opacity: core.Alpha(0.08)}}})}
 	v.Children = append(v.Children[:len(v.Children):len(v.Children)], layer)
 	return v
 }
