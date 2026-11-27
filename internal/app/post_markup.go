@@ -135,6 +135,48 @@ func parsePostDocument(raw string) postDocument {
 	return doc
 }
 
+// parseMarkdownDocument parses plain Markdown (such as Coolapk's AI assistant
+// response) into a textview.Document for native Markdown rendering.
+func parseMarkdownDocument(raw string) textview.Document {
+	if strings.TrimSpace(raw) == "" {
+		return textview.Document{}
+	}
+	var rendered bytes.Buffer
+	if err := postMarkdown.Convert([]byte(raw), &rendered); err != nil {
+		return textview.ParseHTML(html.EscapeString(raw))
+	}
+	return textview.ParseHTML(rendered.String())
+}
+
+// markdownView renders reactive Markdown text using the post document styles.
+func (a *App) markdownView(cx *core.Scope, source func() string) core.Node {
+	styles := core.NewMemoFunc(cx, func() textview.Styles { return postDocumentStyles(cx) }, nil)
+	doc := core.NewMemoFunc(cx, func() textview.Document { return parseMarkdownDocument(source()) }, nil)
+	return textview.TextView{
+		DocumentFunc: doc.Get,
+		Selectable:   true,
+		Highlighter:  highlight.New(cx),
+		Classes:      postDocumentClasses,
+		StyleOf:      func(part textview.Part) core.Style { return styles.Get()[part] },
+		OnLinkPress:  func(e textview.LinkPressEvent) { a.openDocumentLink(cx, e) },
+	}
+}
+
+func (a *App) openDocumentLink(cx *core.Scope, e textview.LinkPressEvent) {
+	u, err := url.Parse(e.URL)
+	if err != nil {
+		return
+	}
+	switch u.Scheme {
+	case "mailto":
+		cx.OpenURL(e.URL, nil)
+	case "", "https", "http", "coolmarket", "coolapk", "searchtab":
+		if u.Path != "" || u.Host != "" {
+			a.openURL(e.URL)
+		}
+	}
+}
+
 // A paragraph made of images on consecutive lines is a block gallery.
 // TextView's image-only layout expects just the images and their links.
 func keepPostImagesInFlow(doc *textview.Document) {
@@ -269,19 +311,8 @@ func (a *App) postDocument(cx *core.Scope, doc postDocument, markdown func() boo
 		Highlighter: highlight.New(cx),
 		Classes:     postDocumentClasses,
 		StyleOf:     func(part textview.Part) core.Style { return styles.Get()[part] },
-		OnLinkPress: func(e textview.LinkPressEvent) {
-			if u, err := url.Parse(e.URL); err == nil {
-				switch u.Scheme {
-				case "mailto":
-					cx.OpenURL(e.URL, nil)
-				case "", "https", "http", "coolmarket", "coolapk", "searchtab":
-					if u.Path != "" || u.Host != "" {
-						a.openURL(e.URL)
-					}
-				}
-			}
-		},
-		CustomSpan: postEmojiSpan,
+		OnLinkPress: func(e textview.LinkPressEvent) { a.openDocumentLink(cx, e) },
+		CustomSpan:  postEmojiSpan,
 		RenderImage: func(cx *core.Scope, im textview.Image) core.Node {
 			if src := postImageURL(im.Src); src != "" {
 				if im.Width.IsAuto() && im.Height.IsAuto() {

@@ -19,10 +19,10 @@ type Backend interface {
 	Event(ctx context.Context, id string) (EventDetail, error)
 	// FeedDetail returns one post.
 	FeedDetail(ctx context.Context, id string) (Feed, error)
-	// FeedSummary returns the AI summary coolapk1s.com writes of a post,
-	// passing its pieces to delta as they arrive. ErrNoSummary means the
-	// post has none, or the service cannot write one now.
-	FeedSummary(ctx context.Context, feedID string, delta func(string)) (FeedSummary, error)
+	// FeedSummary returns an AI summary of a post, passing its pieces to delta
+	// as they arrive. ErrNoSummary means the post has none, or the service
+	// cannot write one now.
+	FeedSummary(ctx context.Context, req SummaryRequest, delta func(string)) (FeedSummary, error)
 	// Replies returns comments of a post, or of one comment when
 	// ReplyQuery.ParentID is set, in the order ReplyQuery.Sort names.
 	Replies(ctx context.Context, q ReplyQuery) (ReplyPage, error)
@@ -113,8 +113,29 @@ type Backend interface {
 // it is too short for one, or the service cannot write one now.
 var ErrNoSummary = errors.New("backend: no summary for this post")
 
-// FeedSummary is the AI summary coolapk1s.com writes of a post: its text
-// and the model that wrote it.
+// SummaryMode selects which backend and output format FeedSummary uses.
+type SummaryMode int
+
+const (
+	// SummaryCoolapk1s asks the coolapk1s.com mirror for a short summary.
+	SummaryCoolapk1s SummaryMode = iota
+	// SummaryOfficialConcise asks Coolapk's AI assistant for a short plain-text
+	// summary using its two-turn prompt flow.
+	SummaryOfficialConcise
+	// SummaryOfficialRaw asks Coolapk's AI assistant for its first-turn full
+	// Markdown summary.
+	SummaryOfficialRaw
+)
+
+// SummaryRequest configures a FeedSummary call.
+type SummaryRequest struct {
+	FeedID      string
+	Mode        SummaryMode
+	HasTitle    bool
+	AIAccessKey string
+}
+
+// FeedSummary is the AI summary of a post: its text and the model that wrote it.
 type FeedSummary struct {
 	Text  string
 	Model string

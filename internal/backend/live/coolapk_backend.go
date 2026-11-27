@@ -454,6 +454,8 @@ func feedFromObject(object map[string]any) backend.Feed {
 		reply.Pinned = true
 		feed.Pinned = append(feed.Pinned, reply)
 	}
+	feed.ShowAIAssistant = apiInt(object, "isShowAiAssistant") == 1
+	feed.AIAccessKey = firstAPIString(object, "aiAccessKey")
 	return feed
 }
 

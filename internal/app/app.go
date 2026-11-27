@@ -38,6 +38,9 @@ func Root(newBackend func(dir string, profile backend.DeviceProfile) (backend.Ba
 		a.viewerShown = core.NewSignal(cx, false)
 		a.searchHistory = core.NewSignalFunc(cx, a.local.Searches, nil)
 		a.history = core.NewSignalFunc(cx, a.local.History, nil)
+		a.aiSummaryEnabled = core.NewSignal(cx, a.local.AISummaryEnabled)
+		a.officialAISummary = core.NewSignal(cx, a.local.OfficialAISummary)
+		a.officialAIRawMode = core.NewSignal(cx, a.local.OfficialAIRawMode)
 		a.topics = a.newTopicHome(cx)
 		a.applyAppearance()
 		a.placeWindow(cx)
@@ -54,26 +57,29 @@ func Root(newBackend func(dir string, profile backend.DeviceProfile) (backend.Ba
 
 // App owns the state the pages share.
 type App struct {
-	cx            *core.Scope
-	dir           string
-	backend       backend.Backend
-	images        *imageStore
-	nav           *pageStack
-	tab           *core.Signal[int]
-	size          *core.Memo[sizeClass]
-	lists         []*pageList             // the server lists shown, which a post's page keeps current
-	seeds         map[string]backend.Feed // posts a card shows, until the page loads the full post
-	local         localState
-	toasts        *ui.Toaster
-	account       accountState
-	messages      *messageCenter
-	viewing       *core.Signal[*viewer] // the open viewer's pictures, nil when it is closed
-	viewerShown   *core.Signal[bool]
-	searchHistory *core.Signal[[]string]
-	history       *core.Signal[[]historyEntry]
-	topics        *topicHome
-	loginOpening  bool
-	usesRealModel bool
+	cx                *core.Scope
+	dir               string
+	backend           backend.Backend
+	images            *imageStore
+	nav               *pageStack
+	tab               *core.Signal[int]
+	size              *core.Memo[sizeClass]
+	lists             []*pageList             // the server lists shown, which a post's page keeps current
+	seeds             map[string]backend.Feed // posts a card shows, until the page loads the full post
+	local             localState
+	toasts            *ui.Toaster
+	account           accountState
+	messages          *messageCenter
+	viewing           *core.Signal[*viewer] // the open viewer's pictures, nil when it is closed
+	viewerShown       *core.Signal[bool]
+	searchHistory     *core.Signal[[]string]
+	history           *core.Signal[[]historyEntry]
+	aiSummaryEnabled  *core.Signal[bool]
+	officialAISummary *core.Signal[bool]
+	officialAIRawMode *core.Signal[bool]
+	topics            *topicHome
+	loginOpening      bool
+	usesRealModel     bool
 	// lastPress is the bar's last press on a destination, which a second
 	// press soon after makes a double press.
 	lastPress struct {

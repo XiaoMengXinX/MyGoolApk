@@ -27,6 +27,9 @@ type localState struct {
 	ThemeMode         int            `json:"themeMode"` // 0 follows the system, 1 light, 2 dark
 	FollowGroup       int            `json:"followGroup,omitempty"`
 	RandomDeviceModel bool           `json:"randomDeviceModel,omitempty"`
+	AISummaryEnabled  bool           `json:"aiSummaryEnabled"`
+	OfficialAISummary bool           `json:"officialAISummary"`
+	OfficialAIRawMode bool           `json:"officialAIRawMode,omitempty"`
 	Searches          []string       `json:"searches,omitempty"`
 	TradeCity         string         `json:"tradeCity,omitempty"` // the city of the second-hand posts nearby
 	// Window is where a desktop's window was, to open there again.
@@ -34,13 +37,13 @@ type localState struct {
 }
 
 func loadLocalState(dir string) localState {
-	state := localState{HistoryEnabled: true}
+	state := localState{HistoryEnabled: true, AISummaryEnabled: true, OfficialAISummary: true}
 	data, err := os.ReadFile(filepath.Join(dir, "local-state.json"))
 	if err != nil {
 		return state
 	}
 	if err := json.Unmarshal(data, &state); err != nil {
-		return localState{HistoryEnabled: true}
+		return localState{HistoryEnabled: true, AISummaryEnabled: true, OfficialAISummary: true}
 	}
 	return state
 }

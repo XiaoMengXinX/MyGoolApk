@@ -98,6 +98,32 @@ func toggleRow(title string, on func() bool, set func(bool)) core.Node {
 	)
 }
 
+// toggleOptionRow is a switch row with supporting text and an optional enabled
+// predicate that dims and disables the control when false.
+func toggleOptionRow(title, subtitle string, on, enabled func() bool, set func(bool)) core.Node {
+	isEnabled := func() bool { return enabled == nil || enabled() }
+	sw := m3Switch(on, func(v bool) {
+		if isEnabled() {
+			set(v)
+		}
+	}, title)
+	return core.View{
+		Style: core.Style{Direction: core.Row, MinHeight: core.Pt(64), Padding: core.Symmetric(10, 16), Gap: 16, AlignItems: core.AlignCenter},
+		StyleFunc: func() core.Style {
+			if isEnabled() {
+				return core.Style{}
+			}
+			return core.Style{Opacity: core.Alpha(0.38)}
+		},
+		Children: []core.Node{
+			column(fill.Merge(core.Style{Gap: 2}), "",
+				core.Text{Content: title, Class: "text-on-surface", Style: textStyle(textBody, 400)},
+				core.Text{Content: subtitle, Class: "text-on-surface-variant", MaxLines: 3, Style: textStyle(textSecondary, 400)}),
+			sw,
+		},
+	}
+}
+
 // simpleTabs are Material 3 primary tabs: equal-width labels, the selected
 // one in primary, over a rule. The indicator moves with the pages slide
 // shows, on the platform's main thread.

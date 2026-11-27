@@ -28,13 +28,18 @@ type detail struct {
 	replies  *pager[backend.Reply]
 	comments core.Ref
 
-	// summary is the AI summary coolapk1s.com writes of the post, as far as
-	// it has streamed in; summaryError drops the card when there is none.
-	// asked keeps the one summary request a page makes.
-	summary      *core.Signal[string]
-	summaryModel *core.Signal[string]
-	summaryError *core.Signal[bool]
-	asked        *core.Signal[bool]
+	// summary holds the AI summary as far as it has streamed in; summaryError
+	// hides the card when an automatic summary is unavailable. summaryAction
+	// picks whether the card starts automatically, starts on tap inline, or
+	// opens the Markdown sheet for Coolapk's raw first-turn summary.
+	summary          *core.Signal[string]
+	summaryModel     *core.Signal[string]
+	summaryError     *core.Signal[bool]
+	summaryErrText   *core.Signal[string]
+	summaryAction    *core.Signal[summaryAction]
+	summarySheetOpen *core.Signal[bool]
+	summaryLoading   bool
+	asked            *core.Signal[bool]
 
 	// thread is the comment whose replies the thread sheet lists in nested,
 	// and threadY how far that list is scrolled.
@@ -57,19 +62,22 @@ type detail struct {
 func (a *App) newDetail(cx *core.Scope, id string, seed backend.Feed) *detail {
 	d := &detail{
 		a: a, cx: cx, id: id, depth: a.nav.Depth(),
-		feed:          core.NewSignalFunc(cx, seed, nil),
-		has:           core.NewSignal(cx, seed.Author.ID != "" && seed.Kind != backend.PostArticle),
-		err:           core.NewSignal(cx, ""),
-		sort:          core.NewSignal(cx, 0),
-		thread:        core.NewSignalFunc[*backend.Reply](cx, nil, nil),
-		replyLikeBusy: make(map[string]bool),
-		menu:          core.NewSignalFunc[*backend.Reply](cx, nil, nil),
-		summary:       core.NewSignal(cx, ""),
-		summaryModel:  core.NewSignal(cx, ""),
-		summaryError:  core.NewSignal(cx, false),
-		asked:         core.NewSignal(cx, false),
-		documents:     core.NewSignal(cx, new(postDocuments)),
-		markdown:      core.NewSignal(cx, true),
+		feed:             core.NewSignalFunc(cx, seed, nil),
+		has:              core.NewSignal(cx, seed.Author.ID != "" && seed.Kind != backend.PostArticle),
+		err:              core.NewSignal(cx, ""),
+		sort:             core.NewSignal(cx, 0),
+		thread:           core.NewSignalFunc[*backend.Reply](cx, nil, nil),
+		replyLikeBusy:    make(map[string]bool),
+		menu:             core.NewSignalFunc[*backend.Reply](cx, nil, nil),
+		summary:          core.NewSignal(cx, ""),
+		summaryModel:     core.NewSignal(cx, ""),
+		summaryError:     core.NewSignal(cx, false),
+		summaryErrText:   core.NewSignal(cx, ""),
+		summaryAction:    core.NewSignal(cx, summaryNone),
+		summarySheetOpen: core.NewSignal(cx, false),
+		asked:            core.NewSignal(cx, false),
+		documents:        core.NewSignal(cx, new(postDocuments)),
+		markdown:         core.NewSignal(cx, true),
 	}
 	replyID := func(r backend.Reply) string { return r.ID }
 	d.replies = newQueryPager(cx, func() detailReplyQuery {
@@ -110,25 +118,132 @@ func summaryTextLength(f backend.Feed) int {
 	return len(utf16.Encode([]rune(f.Content)))
 }
 
-// askSummary starts the post's one summary request once it holds enough
-// text. coolapk1s.com summarizes only posts of 800 units or more, so
-// shorter ones are never asked, and their card stays out altogether.
+type summaryAction int
+
+const (
+	summaryNone summaryAction = iota
+	summaryAutoCoolapk1s
+	summaryAutoOfficialConcise
+	summaryTapOfficialConcise
+	summaryTapOfficialRaw
+)
+
+// summaryActionFor decides how a post's AI summary should be presented and
+// fetched from the current login state, summary settings, and post metadata.
+func (a *App) summaryActionFor(feed backend.Feed) summaryAction {
+	if !a.aiSummaryEnabled.GetUntracked() {
+		return summaryNone
+	}
+	loggedIn := a.backend.SessionUID() != ""
+	useOfficial := loggedIn && a.officialAISummary.GetUntracked()
+	rawMode := useOfficial && a.officialAIRawMode.GetUntracked()
+	hasAssistant := feed.ShowAIAssistant && feed.AIAccessKey != ""
+	longEnough := summaryTextLength(feed) >= 800
+
+	if rawMode {
+		if hasAssistant {
+			return summaryTapOfficialRaw
+		}
+		return summaryNone
+	}
+	if useOfficial {
+		switch {
+		case hasAssistant && longEnough:
+			return summaryAutoOfficialConcise
+		case !hasAssistant && longEnough:
+			return summaryAutoCoolapk1s
+		case hasAssistant && !longEnough:
+			return summaryTapOfficialConcise
+		default:
+			return summaryNone
+		}
+	}
+	if longEnough {
+		return summaryAutoCoolapk1s
+	}
+	return summaryNone
+}
+
+// askSummary configures the summary card once the post's detail arrives, and
+// starts the automatic request when the active mode calls for one.
 func (d *detail) askSummary(feed backend.Feed) {
-	if d.asked.GetUntracked() || summaryTextLength(feed) < 800 {
+	if d.asked.GetUntracked() || d.summaryAction.GetUntracked() != summaryNone {
 		return
 	}
+	action := d.a.summaryActionFor(feed)
+	d.summaryAction.Set(action)
+	switch action {
+	case summaryAutoCoolapk1s:
+		d.startSummary(feed, backend.SummaryCoolapk1s, true)
+	case summaryAutoOfficialConcise:
+		d.startSummary(feed, backend.SummaryOfficialConcise, true)
+	}
+}
+
+func (d *detail) tapSummaryCard() {
+	feed := d.feed.GetUntracked()
+	switch d.summaryAction.GetUntracked() {
+	case summaryTapOfficialConcise:
+		if d.asked.GetUntracked() || d.summaryLoading {
+			return
+		}
+		d.startSummary(feed, backend.SummaryOfficialConcise, false)
+	case summaryTapOfficialRaw:
+		d.summarySheetOpen.Set(true)
+		if !d.asked.GetUntracked() && !d.summaryLoading {
+			d.startSummary(feed, backend.SummaryOfficialRaw, false)
+		}
+	}
+}
+
+func (d *detail) retryRawSummary() {
+	if d.summaryLoading {
+		return
+	}
+	d.summary.Set("")
+	d.summaryErrText.Set("")
+	d.asked.Set(false)
+	d.startSummary(d.feed.GetUntracked(), backend.SummaryOfficialRaw, false)
+}
+
+func (d *detail) startSummary(feed backend.Feed, mode backend.SummaryMode, auto bool) {
 	d.asked.Set(true)
+	d.summaryLoading = true
+	d.summaryError.Set(false)
+	d.summaryErrText.Set("")
+	req := backend.SummaryRequest{
+		FeedID:      d.id,
+		Mode:        mode,
+		HasTitle:    feed.Title != "",
+		AIAccessKey: feed.AIAccessKey,
+	}
 	ctx := d.cx.Context()
 	go func() {
-		s, err := d.a.backend.FeedSummary(ctx, d.id, func(piece string) {
+		s, err := d.a.backend.FeedSummary(ctx, req, func(piece string) {
 			d.cx.Post(func() { d.summary.Set(d.summary.GetUntracked() + piece) })
 		})
 		d.cx.Post(func() {
+			d.summaryLoading = false
 			if err == nil {
 				d.summary.Set(s.Text)
 				d.summaryModel.Set(s.Model)
+				d.summaryErrText.Set("")
+				d.summaryError.Set(d.summary.GetUntracked() == "")
+				return
 			}
-			d.summaryError.Set(d.summary.GetUntracked() == "")
+			if d.summary.GetUntracked() != "" {
+				return
+			}
+			if auto {
+				d.summaryError.Set(true)
+				return
+			}
+			d.asked.Set(false)
+			if mode == backend.SummaryOfficialRaw {
+				d.summaryErrText.Set(err.Error())
+				return
+			}
+			d.a.notice("获取 AI 总结失败：" + err.Error())
 		})
 	}()
 }
@@ -266,7 +381,7 @@ func (a *App) detailPage(cx *core.Scope, id string) core.Node {
 			return button
 		},
 	}
-	return a.screen(titled("帖子"), markdown, content, d.threadSheet(cx), d.composer.sheet(d), d.favorites.sheet(), d.replyMenu())
+	return a.screen(titled("帖子"), markdown, content, d.threadSheet(cx), d.summarySheet(cx), d.composer.sheet(d), d.favorites.sheet(), d.replyMenu())
 }
 
 func (d *detail) postBody(cx *core.Scope) core.Node {
@@ -355,14 +470,14 @@ func (d *detail) postBody(cx *core.Scope) core.Node {
 			return row(core.Style{}, "", a.targetChip(cx, func() *backend.Target { return get().Target }))
 		},
 	}
+	summary := core.Show{When: func() bool { return d.summaryAction.Get() != summaryNone && !d.summaryError.Get() }, Then: d.summaryCard}
 	return column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 20, Left: 16}, Gap: 16}, "bg-background",
 		d.authorHeader(cx), cover, title, question,
-		core.Show{When: func() bool { return d.asked.Get() && !d.summaryError.Get() }, Then: d.summaryCard},
 		dynamicShape(cx, func() bool { return get().BigCover }, func(_ *core.Scope, big bool) core.Node {
 			if big {
-				return core.Group{media, text}
+				return core.Group{media, summary, text}
 			}
-			return core.Group{text, media}
+			return core.Group{summary, text, media}
 		}), target)
 }
 
@@ -413,7 +528,38 @@ func (d *detail) toggleAuthorFollow() {
 func (d *detail) summaryCard(*core.Scope) core.Node {
 	bodyStyle := textStyle(textSecondary, 400)
 	bodyStyle.LineHeight = 22
-	return column(core.Style{Padding: core.Symmetric(12, 16), Gap: 6, CornerRadius: 16}, "bg-surface-container-high",
+	bodyText := func() string {
+		switch d.summaryAction.Get() {
+		case summaryTapOfficialRaw:
+			if d.summary.Get() != "" {
+				return "点击查看AI总结"
+			}
+			return "点击获取AI总结"
+		case summaryTapOfficialConcise:
+			if !d.asked.Get() {
+				return "点击获取AI总结"
+			}
+		}
+		if text := d.summary.Get(); text != "" {
+			return text
+		}
+		return "生成中…"
+	}
+	bodyClass := func() string {
+		switch d.summaryAction.Get() {
+		case summaryTapOfficialRaw:
+			return "text-primary"
+		case summaryTapOfficialConcise:
+			if !d.asked.Get() {
+				return "text-primary"
+			}
+		}
+		if d.summary.Get() == "" {
+			return "text-on-surface-variant"
+		}
+		return "text-on-surface"
+	}
+	content := []core.Node{
 		row(core.Style{Gap: 6, AlignItems: core.AlignCenter}, "",
 			icon(&symbols.AutoAwesome, 16, "text-primary"),
 			label("AI 总结", textSecondary, 500, "text-primary"),
@@ -421,22 +567,69 @@ func (d *detail) summaryCard(*core.Scope) core.Node {
 			core.Text{ContentFunc: d.summaryModel.Get, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
 		),
 		core.Text{
-			ContentFunc: func() string {
-				if text := d.summary.Get(); text != "" {
-					return text
-				}
-				return "生成中…"
-			},
-			ClassFunc: func() string {
-				if d.summary.Get() == "" {
-					return "text-on-surface-variant"
-				}
-				return "text-on-surface"
-			},
-			Style: bodyStyle,
+			ContentFunc: bodyText,
+			ClassFunc:   bodyClass,
+			Style:       bodyStyle,
 		},
 		label("摘要由 AI 生成，仅供参考", textCaption, 400, "text-on-surface-variant"),
-	)
+	}
+	style := core.Style{Padding: core.Symmetric(12, 16), Gap: 6, CornerRadius: 16, Overflow: core.Hidden}
+	action := d.summaryAction.GetUntracked()
+	if action == summaryTapOfficialConcise || action == summaryTapOfficialRaw {
+		return tap("获取 AI 总结", d.tapSummaryCard, style, "bg-surface-container-high", content...)
+	}
+	return column(style, "bg-surface-container-high", content...)
+}
+
+// summarySheet streams Coolapk's first-turn AI assistant summary as Markdown
+// in a modal sheet sized like the nested-replies sheet.
+func (d *detail) summarySheet(cx *core.Scope) core.Node {
+	a := d.a
+	type summarySheetShape struct {
+		hasText bool
+		errText string
+	}
+	return a.sheet(func() bool { return d.summarySheetOpen.Get() && !d.covered() }, func() {
+		if !d.covered() {
+			d.summarySheetOpen.Set(false)
+		}
+	}, "bg-background", 0,
+		row(core.Style{Padding: core.Symmetric(0, 16), Gap: 6, AlignItems: core.AlignCenter}, "",
+			icon(&symbols.AutoAwesome, 18, "text-primary"),
+			label("AI 总结", textBody, 500, "text-on-surface"),
+			spacer,
+			core.Text{ContentFunc: d.summaryModel.Get, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)},
+		),
+		core.View{
+			StyleFunc: func() core.Style {
+				w := a.cx.Env().Window()
+				width := w.Width
+				if a.wide() {
+					width = min(dialogWidth, w.Width*0.9)
+				}
+				return core.Style{Width: core.Pt(width), Height: core.Pt(w.Height * 0.7)}
+			},
+			Children: []core.Node{
+				dynamicShape(cx, func() summarySheetShape {
+					return summarySheetShape{hasText: d.summary.Get() != "", errText: d.summaryErrText.Get()}
+				}, func(cx *core.Scope, s summarySheetShape) core.Node {
+					if !s.hasText {
+						if s.errText != "" {
+							return column(fill.Merge(core.Style{AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}), "",
+								statusBlock("获取失败", s.errText, "重试", d.retryRawSummary))
+						}
+						return column(fill.Merge(core.Style{Gap: 12, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}), "",
+							spinner(), label("生成中…", textSecondary, 400, "text-on-surface-variant"))
+					}
+					return core.Scroll{Style: fill, Children: []core.Node{
+						column(core.Style{Padding: core.Edges{Top: 4, Right: 16, Bottom: 20, Left: 16}, Gap: 12}, "",
+							a.markdownView(cx, d.summary.Get),
+							label("摘要由 AI 生成，仅供参考", textCaption, 400, "text-on-surface-variant"),
+						),
+					}}
+				}),
+			},
+		})
 }
 
 // articleBlocks shows an article's body in order: paragraphs, pictures with

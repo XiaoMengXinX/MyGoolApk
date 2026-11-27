@@ -131,7 +131,7 @@ type delayedSummaryBackend struct {
 	summaryReady chan struct{}
 }
 
-func (b *delayedSummaryBackend) FeedSummary(context.Context, string, func(string)) (backend.FeedSummary, error) {
+func (b *delayedSummaryBackend) FeedSummary(context.Context, backend.SummaryRequest, func(string)) (backend.FeedSummary, error) {
 	<-b.summaryReady
 	return backend.FeedSummary{}, backend.ErrNoSummary
 }
@@ -163,15 +163,24 @@ func TestArticleKeepsItsImagesWhenSummaryIsUnavailable(t *testing.T) {
 type streamingSummaryBackend struct {
 	*delayedDetailBackend
 	pieces chan string
+	reqs   []backend.SummaryRequest
+	model  string
 }
 
-func (b *streamingSummaryBackend) FeedSummary(ctx context.Context, _ string, delta func(string)) (backend.FeedSummary, error) {
+func (b *streamingSummaryBackend) FeedSummary(ctx context.Context, req backend.SummaryRequest, delta func(string)) (backend.FeedSummary, error) {
+	b.mu.Lock()
+	b.reqs = append(b.reqs, req)
+	model := b.model
+	if model == "" {
+		model = "test model"
+	}
+	b.mu.Unlock()
 	var text string
 	for {
 		select {
 		case piece, ok := <-b.pieces:
 			if !ok {
-				return backend.FeedSummary{Text: text, Model: "test model"}, nil
+				return backend.FeedSummary{Text: text, Model: model}, nil
 			}
 			text += piece
 			delta(piece)
@@ -245,4 +254,193 @@ func TestPostUsesServerFavoriteCountAfterRemovingFromFolder(t *testing.T) {
 	app.WaitFor("text:2 个内容", time.Second)
 	app.Back()
 	app.WaitFor("role:button 收藏 >> text:21", time.Second)
+}
+
+func newSummaryTestBackend(uid string, longPost, showAI bool) *streamingSummaryBackend {
+	detail := &delayedDetailBackend{fakeBackend: newFakeBackend(), ready: make(chan struct{})}
+	close(detail.ready)
+	detail.uid = uid
+	detail.feed.Kind = backend.PostArticle
+	detail.detail = detail.feed
+	detail.detail.Title = "测试文章"
+	detail.detail.ShowAIAssistant = showAI
+	if showAI {
+		detail.detail.AIAccessKey = "key-test"
+	}
+	if longPost {
+		detail.detail.Blocks = []backend.Block{{Kind: backend.BlockText, Text: strings.Repeat("正文", 400)}}
+	} else {
+		detail.detail.Blocks = []backend.Block{{Kind: backend.BlockText, Text: "短文内容"}}
+	}
+	return &streamingSummaryBackend{delayedDetailBackend: detail, pieces: make(chan string, 4), model: "DeepSeek-R1"}
+}
+
+func TestLoggedInSummaryRoutingAndManualTrigger(t *testing.T) {
+	t.Run("logged in long post with assistant uses official concise", func(t *testing.T) {
+		b := newSummaryTestBackend("42", true, true)
+		b.pieces <- "精简摘要"
+		close(b.pieces)
+		app := start(t, b)
+		openCard(app)
+		app.WaitFor("text:精简摘要", time.Second)
+		app.WaitFor("text:DeepSeek-R1", time.Second)
+		if len(b.reqs) != 1 || b.reqs[0].Mode != backend.SummaryOfficialConcise || !b.reqs[0].HasTitle || b.reqs[0].AIAccessKey != "key-test" {
+			t.Fatalf("unexpected summary requests: %+v", b.reqs)
+		}
+	})
+
+	t.Run("logged in long post without assistant falls back to coolapk1s", func(t *testing.T) {
+		b := newSummaryTestBackend("42", true, false)
+		b.model = "Gemma 4 26B"
+		b.pieces <- "镜像摘要"
+		close(b.pieces)
+		app := start(t, b)
+		openCard(app)
+		app.WaitFor("text:镜像摘要", time.Second)
+		if len(b.reqs) != 1 || b.reqs[0].Mode != backend.SummaryCoolapk1s {
+			t.Fatalf("unexpected summary requests: %+v", b.reqs)
+		}
+	})
+
+	t.Run("logged in short post with assistant waits for tap", func(t *testing.T) {
+		b := newSummaryTestBackend("42", false, true)
+		app := start(t, b)
+		openCard(app)
+		app.WaitFor("text:点击获取AI总结", time.Second)
+		if len(b.reqs) != 0 {
+			t.Fatalf("short post should not auto-request summary, got %+v", b.reqs)
+		}
+		b.pieces <- "手动触发的摘要"
+		close(b.pieces)
+		app.Press("role:button 获取 AI 总结")
+		app.WaitFor("text:手动触发的摘要", time.Second)
+		if len(b.reqs) != 1 || b.reqs[0].Mode != backend.SummaryOfficialConcise {
+			t.Fatalf("unexpected summary requests: %+v", b.reqs)
+		}
+	})
+}
+
+func TestAISummarySettingsMasterRawModeAndBigCoverOrder(t *testing.T) {
+	t.Run("master switch disables sub-switches and suppresses summary", func(t *testing.T) {
+		b := newSummaryTestBackend("42", true, true)
+		app := start(t, b)
+
+		app.Press("role:tab 我的")
+		settle(app)
+		app.Press("role:button 设置")
+		settle(app)
+		app.WaitFor("role:switch 启用 AI 总结", time.Second)
+
+		// Turning off master switch disables both dependent switches.
+		app.Press("role:switch 启用 AI 总结")
+		settle(app)
+		app.Press("role:switch 使用酷安 AI 助手生成总结")
+		settle(app)
+		if !app.Find("role:switch 使用酷安 AI 助手生成总结").Props.Checked {
+			t.Fatal("official AI switch should stay locked while master switch is off")
+		}
+		app.Press("role:switch 弹窗查看酷安 AI 完整总结")
+		settle(app)
+		if app.Find("role:switch 弹窗查看酷安 AI 完整总结").Props.Checked {
+			t.Fatal("raw mode switch should stay off while master switch is off")
+		}
+
+		// Opening a long post with master switch off neither requests nor shows summary.
+		app.Back()
+		settle(app)
+		app.Press("role:tab 首页")
+		settle(app)
+		openCard(app)
+		if len(b.reqs) != 0 {
+			t.Fatalf("master switch off should not request summary, got %+v", b.reqs)
+		}
+		if shows(app, "text:AI 总结") {
+			t.Fatal("summary card should not appear when master switch is off")
+		}
+	})
+
+	t.Run("raw mode opens markdown sheet and official toggle gates it", func(t *testing.T) {
+		b := newSummaryTestBackend("42", false, true)
+		app := start(t, b)
+
+		app.Press("role:tab 我的")
+		settle(app)
+		app.Press("role:button 设置")
+		settle(app)
+		app.WaitFor("role:switch 启用 AI 总结", time.Second)
+
+		// Turning off official AI disables the dependent raw-mode switch.
+		app.Press("role:switch 使用酷安 AI 助手生成总结")
+		settle(app)
+		app.Press("role:switch 弹窗查看酷安 AI 完整总结")
+		settle(app)
+		if app.Find("role:switch 弹窗查看酷安 AI 完整总结").Props.Checked {
+			t.Fatal("raw mode switch should stay disabled when official AI is off")
+		}
+
+		// Re-enable official AI and enable raw mode.
+		app.Press("role:switch 使用酷安 AI 助手生成总结")
+		settle(app)
+		app.Press("role:switch 弹窗查看酷安 AI 完整总结")
+		settle(app)
+		if !app.Find("role:switch 弹窗查看酷安 AI 完整总结").Props.Checked {
+			t.Fatal("raw mode switch did not turn on")
+		}
+
+		// Go back to headline and open the short post: raw mode shows tap card and opens Markdown sheet.
+		app.Back()
+		settle(app)
+		app.Press("role:tab 首页")
+		settle(app)
+		openCard(app)
+		app.WaitFor("text:点击获取AI总结", time.Second)
+		if len(b.reqs) != 0 {
+			t.Fatalf("raw mode should wait for tap, got %+v", b.reqs)
+		}
+
+		app.Press("role:button 获取 AI 总结")
+		app.WaitFor("text:生成中…", time.Second)
+		b.pieces <- "## 核心结论\n\n第一点内容"
+		app.WaitFor("role:dialog >> role:header 核心结论", time.Second)
+		b.pieces <- "，以及补充说明。"
+		close(b.pieces)
+		app.WaitFor("role:dialog >> text:第一点内容，以及补充说明。", time.Second)
+		app.WaitFor("role:dialog >> text:DeepSeek-R1", time.Second)
+		if len(b.reqs) != 1 || b.reqs[0].Mode != backend.SummaryOfficialRaw {
+			t.Fatalf("unexpected summary requests in raw mode: %+v", b.reqs)
+		}
+	})
+
+	t.Run("big cover post places summary below cover images and above body text", func(t *testing.T) {
+		detail := &delayedDetailBackend{fakeBackend: newFakeBackend(), ready: make(chan struct{})}
+		close(detail.ready)
+		detail.uid = "42"
+		detail.feed.BigCover = true
+		detail.feed.Images = []backend.Image{{URL: "big.jpg", Width: 1200, Height: 1600}}
+		detail.feed.Content = "灯箱正文内容" + strings.Repeat("字", 800)
+		detail.detail = detail.feed
+		detail.detail.ShowAIAssistant = true
+		detail.detail.AIAccessKey = "key-big"
+		b := &streamingSummaryBackend{delayedDetailBackend: detail, pieces: make(chan string, 1), model: "DeepSeek-R1"}
+		b.pieces <- "灯箱摘要"
+		close(b.pieces)
+
+		app := start(t, b)
+		openCard(app)
+		summaryView := app.WaitFor("text:灯箱摘要", time.Second)
+		list := detailList(t, summaryView)
+		scope := fmt.Sprintf("view:%d >> ", list.ID)
+		picView := app.Find(scope + "role:button 查看第 1 张图片")
+		bodyView := app.Find(scope + "text:灯箱正文内容")
+		topInList := func(v *nsgotest.View) core.Points {
+			var y core.Points
+			for ; v != nil && v != list; v = v.Parent {
+				y += v.Frame.Origin.Y
+			}
+			return y
+		}
+		if !(topInList(picView) < topInList(summaryView) && topInList(summaryView) < topInList(bodyView)) {
+			t.Fatalf("want image (%v) < summary (%v) < body (%v)", topInList(picView), topInList(summaryView), topInList(bodyView))
+		}
+	})
 }

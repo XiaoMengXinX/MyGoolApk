@@ -121,6 +121,27 @@ func (a *App) settingsPage(cx *core.Scope) core.Node {
 			),
 			settingsLabel("设备"),
 			listGroup(devices...),
+			settingsLabel("AI 总结"),
+			listGroup(
+				toggleOptionRow("启用 AI 总结", "在帖子详情页显示 AI 摘要",
+					a.aiSummaryEnabled.Get, nil, func(on bool) {
+						a.aiSummaryEnabled.Set(on)
+						a.local.AISummaryEnabled = on
+						a.saveLocalState()
+					}),
+				toggleOptionRow("使用酷安 AI 助手生成总结", "登录时优先调用酷安官方 AI 助手；关闭或未登录时使用 coolapk1s 摘要",
+					a.officialAISummary.Get, a.aiSummaryEnabled.Get, func(on bool) {
+						a.officialAISummary.Set(on)
+						a.local.OfficialAISummary = on
+						a.saveLocalState()
+					}),
+				toggleOptionRow("弹窗查看酷安 AI 完整总结", "跳过二次精简与字数限制，点击后以弹窗流式展示原始 Markdown 总结",
+					a.officialAIRawMode.Get, func() bool { return a.aiSummaryEnabled.Get() && a.officialAISummary.Get() }, func(on bool) {
+						a.officialAIRawMode.Set(on)
+						a.local.OfficialAIRawMode = on
+						a.saveLocalState()
+					}),
+			),
 			settingsLabel("关于"),
 			listGroup(column(core.Style{Padding: core.Symmetric(12, 16), Gap: 2}, "",
 				label("MyGoolApk", textBody, 400, "text-on-surface"),

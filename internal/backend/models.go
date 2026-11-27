@@ -424,10 +424,12 @@ type Feed struct {
 	Stats              Stats
 	// Pinned are the comments the author keeps at the top, which the post's
 	// own page tells.
-	Pinned         []Reply
-	Liked          bool
-	Favorited      bool
-	AuthorFollowed bool
+	Pinned          []Reply
+	Liked           bool
+	Favorited       bool
+	AuthorFollowed  bool
+	ShowAIAssistant bool
+	AIAccessKey     string
 }
 
 // Reply is one comment. Children holds the first level of nested replies.
