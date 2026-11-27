@@ -193,6 +193,8 @@ type PageQuery struct {
 type PageEntriesResult struct {
 	Entries []PageEntry
 	HasMore bool
+	// Title is the server page's configured title, when provided.
+	Title string
 }
 
 // FeedQuery names a feed page.

@@ -358,7 +358,7 @@ func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (
 			flexObjects, flexErr2 := listObjects(flexResp, flexErr)
 			if flexErr2 != nil && q.Page == 1 {
 				// The head cards are there; the posts simply do not follow yet.
-				return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: false}, nil
+				return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: false, Title: pageTitle(objects)}, nil
 			}
 			if flexErr2 != nil {
 				return backend.PageEntriesResult{}, flexErr2
@@ -368,7 +368,7 @@ func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (
 			if q.Page == 1 {
 				entries = append(entriesFromObjects(objects), entries...)
 			}
-			return backend.PageEntriesResult{Entries: entries, HasMore: len(flexObjects) > 0}, nil
+			return backend.PageEntriesResult{Entries: entries, HasMore: len(flexObjects) > 0, Title: pageTitle(objects)}, nil
 		}
 	}
 	// The card of a product's versions comes empty: the product's page told them.
@@ -386,7 +386,16 @@ func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (
 			}
 		}
 	}
-	return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: len(objects) > 0 && q.URL != backend.ProductCategoriesURL}, nil
+	return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: len(objects) > 0 && q.URL != backend.ProductCategoriesURL, Title: pageTitle(objects)}, nil
+}
+
+func pageTitle(objects []map[string]any) string {
+	for _, o := range objects {
+		if firstAPIString(o, "entityTemplate") == "configCard" {
+			return firstAPIString(apiObject(o, "extraDataArr"), "pageTitle")
+		}
+	}
+	return ""
 }
 
 // entriesFromObjects reads the rows of a server page: posts, products,
@@ -401,7 +410,14 @@ func entriesFromObjects(objects []map[string]any) []backend.PageEntry {
 		case "feed":
 			if f := feedFromObject(o); f.ID != "" && !seen["feed:"+f.ID] {
 				seen["feed:"+f.ID] = true
-				entries = append(entries, backend.PageEntry{Kind: backend.EntryFeed, ID: f.ID, Feed: &f})
+				e := backend.PageEntry{Kind: backend.EntryFeed, ID: f.ID, Feed: &f}
+				if firstAPIString(o, "entityTemplate") == "articleNews" {
+					e.Kind, e.Title = backend.EntryNews, firstAPIString(o, "editor_title", "message_title")
+					if e.Title == "" {
+						e.Title, _, _ = strings.Cut(f.Content, "\n")
+					}
+				}
+				entries = append(entries, e)
 			}
 			return
 		case "product":
@@ -447,10 +463,19 @@ func entriesFromObjects(objects []map[string]any) []backend.PageEntry {
 		case "topic":
 			if title := firstAPIString(o, "title"); title != "" && !seen["topic:"+title] {
 				seen["topic:"+title] = true
+				hot := firstAPIString(o, "hot_num_txt")
+				discussions := firstAPIString(o, "commentnum_txt", "commentnum")
+				subtitle := ""
+				if hot != "" {
+					subtitle = hot + "热度"
+				}
+				if discussions != "" {
+					subtitle = joinNonEmpty("  ", subtitle, discussions+"讨论")
+				}
 				entries = append(entries, backend.PageEntry{
 					Kind: backend.EntryLink, ID: "topic:" + title, Title: title, LogoURL: normalizeCoolapkImage(firstAPIString(o, "logo")),
-					Subtitle: joinNonEmpty("  ", countText(firstAPIString(o, "hot_num_txt"), "热度"), countText(firstAPIString(o, "follownum"), "关注")),
-					Hot:      firstAPIString(o, "hot_num_txt"), Discussions: firstAPIString(o, "commentnum_txt"), Score: searchScore(o, "star_average_score"),
+					Subtitle: subtitle,
+					Hot:      hot, Discussions: discussions, Score: searchScore(o, "star_average_score"),
 					URL: "/t/" + title,
 				})
 			}

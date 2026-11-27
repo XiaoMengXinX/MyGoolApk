@@ -34,9 +34,11 @@ var cardKinds = map[string]backend.CardKind{
 	"sortSelectCard":          backend.CardSelector,
 	"iconGridHorizonCard":     backend.CardLogos,
 	"iconTabLinkGridCard":     backend.CardTabs,
-	"imageTextGridCard":       backend.CardBanner,
+	"imageTextGridCard":       backend.CardImageGrid,
 	"iconButtonGridCard":      backend.CardButtons,
 	"messageCard":             backend.CardNote,
+	"headCard":                backend.CardNote,
+	"refreshCard":             backend.CardTitle,
 	"listCard":                backend.CardList,
 	"productConfigList":       backend.CardConfigs,
 }
@@ -57,6 +59,7 @@ func cardFromObject(o map[string]any) *backend.Card {
 		return c
 	}
 	if kind == backend.CardNote {
+		c.Subtitle = firstAPIString(o, "subTitle")
 		if _, c.Note = backend.RichTextFromAPI(firstAPIString(o, "description")); len(c.Note) == 0 {
 			return nil
 		}
@@ -115,10 +118,11 @@ func cardFromObject(o map[string]any) *backend.Card {
 	if len(c.Items) == 0 {
 		return nil
 	}
-	// A lone picture with a title of its own (imageTextGridCard) shows under
-	// that title.
-	if c.Title == "" && len(c.Items) == 1 && firstAPIString(o, "entityTemplate") == "imageTextGridCard" {
-		c.Title = c.Items[0].Title
+	if kind == backend.CardImageGrid && len(c.Items) == 1 {
+		c.Kind = backend.CardBanner
+		if c.Title == "" {
+			c.Title = c.Items[0].Title
+		}
 	}
 	return c
 }

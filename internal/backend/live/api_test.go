@@ -2,11 +2,73 @@ package live
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"app/internal/backend"
 )
+
+func TestDailyNoticeAndTopicDiscussions(t *testing.T) {
+	objects, err := decodeAPIObjects(json.RawMessage(`[
+		{"entityType":"card","entityTemplate":"headCard","title":"注意事项","subTitle":"发布资讯前请注意阅读","description":"<a href=\"/t/今日热点\">#今日热点#</a>\n请注明来源。"},
+		{"entityType":"card","entityTemplate":"refreshCard","title":"格式参考"},
+		{"entityType":"topic","title":"资讯","hot_num_txt":"6.6万","commentnum_txt":"4","follownum":5},
+		{"entityType":"topic","title":"新话题","hot_num_txt":"642","commentnum_txt":"0","follownum":0}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := entriesFromObjects(objects)
+	if len(entries) != 4 {
+		t.Fatalf("entries = %+v", entries)
+	}
+	notice := entries[0].Card
+	if notice.Kind != backend.CardNote || notice.Title != "注意事项" || notice.Subtitle != "发布资讯前请注意阅读" || len(notice.Note) == 0 {
+		t.Fatalf("notice = %+v", notice)
+	}
+	if entries[1].Card.Kind != backend.CardTitle || entries[1].Card.Title != "格式参考" {
+		t.Fatalf("reference section = %+v", entries[1])
+	}
+	if got := entries[2].Subtitle; !strings.Contains(got, "6.6万热度") || !strings.Contains(got, "4讨论") || strings.Contains(got, "关注") {
+		t.Errorf("topic counts = %q", got)
+	}
+	if got := entries[3].Subtitle; got != "642热度  0讨论" {
+		t.Errorf("new topic counts = %q", got)
+	}
+}
+
+func TestDailyNewsPresentation(t *testing.T) {
+	objects, err := decodeAPIObjects(json.RawMessage(`[
+		{"entityType":"card","entityTemplate":"imageTextGridCard","entities":[{"entityType":"imageText","title":"芯片开售","url":"/feed/1","pic":"https://image.coolapk.com/a.jpg"},{"entityType":"imageText","title":"手机销量","url":"/feed/2","pic":"https://image.coolapk.com/b.jpg"}]},
+		{"entityType":"card","entityTemplate":"imageTextGridCard","entities":[{"entityType":"imageText","title":"众测","url":"/page?url=A","pic":"https://image.coolapk.com/c.jpg"}]},
+		{"entityType":"feed","entityTemplate":"articleNews","id":3,"editor_title":"编辑选用的标题","message":"帖子完整正文","picArr":["https://image.coolapk.com/c@800x600.jpg"]},
+		{"entityType":"feed","id":4,"message":"普通动态"},
+		{"entityType":"card","entityTemplate":"configCard","extraDataArr":{"pageTitle":"今日酷安:2026年11月27日"}}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := entriesFromObjects(objects)
+	if len(entries) != 4 {
+		t.Fatalf("got %d entries", len(entries))
+	}
+	if c := entries[0].Card; c == nil || c.Kind != backend.CardImageGrid || len(c.Items) != 2 {
+		t.Fatalf("image grid = %+v", c)
+	}
+	if c := entries[1].Card; c == nil || c.Kind != backend.CardBanner || c.Title != "众测" || len(c.Items) != 1 {
+		t.Fatalf("single image = %+v", c)
+	}
+	if e := entries[2]; e.Kind != backend.EntryNews || e.Title != "编辑选用的标题" || e.Feed.Content != "帖子完整正文" || len(e.Feed.Images) != 1 {
+		t.Fatalf("news = %+v", e)
+	}
+	if entries[3].Kind != backend.EntryFeed {
+		t.Error("the ordinary post did not keep its feed presentation")
+	}
+	if title := pageTitle(objects); title != "今日酷安:2026年11月27日" {
+		t.Errorf("page title = %q", title)
+	}
+}
 
 func TestMixedCardsAndFeedFields(t *testing.T) {
 	data := json.RawMessage(`[

@@ -260,7 +260,7 @@ func (a *App) listPage(cx *core.Scope, param string) core.Node {
 	})
 	// A page that ends with tabs swipes between their lists as the home tabs
 	// do, under the cards before them.
-	return a.screen(titled(title), nil, core.Dynamic(func(cx *core.Scope) core.Node {
+	return a.screen(l.pageTitle.Get, nil, core.Dynamic(func(cx *core.Scope) core.Node {
 		n := at.Get()
 		if n < 0 {
 			return a.entryList(cx, l, listSpec{pushed: true})

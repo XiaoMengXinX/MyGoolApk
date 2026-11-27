@@ -15,8 +15,9 @@ import (
 // what the rows after it show: the cards up to the selector stay, and the
 // rest come from the chosen item's url.
 type pageList struct {
-	p      *pager[backend.PageEntry]
-	chosen *core.Signal[int]
+	p         *pager[backend.PageEntry]
+	chosen    *core.Signal[int]
+	pageTitle *core.Signal[string]
 	// openCardTitle handles links that belong to the page holding this list.
 	openCardTitle func(backend.CardItem)
 	// onChoose, when set, hears the chosen item, as the follow tab keeps it.
@@ -34,7 +35,7 @@ type pageList struct {
 // newPageList lists url. head, when given, leads the list as the cards the
 // server would send, and source is the url its chosen item lists.
 func (a *App) newPageList(cx *core.Scope, url, title string, head []backend.PageEntry, chosen int, source string) *pageList {
-	l := &pageList{chosen: core.NewSignal(cx, chosen), head: head, url: source}
+	l := &pageList{chosen: core.NewSignal(cx, chosen), pageTitle: core.NewSignal(cx, title), head: head, url: source}
 	l.p = newQueryPager(cx, l.chosen.GetUntracked, func(ctx context.Context, picked, page int) ([]backend.PageEntry, bool, error) {
 		// chosen lists the chosen item under the rows that lead the list.
 		chosen := func(page int) ([]backend.PageEntry, bool, error) {
@@ -57,6 +58,9 @@ func (a *App) newPageList(cx *core.Scope, url, title string, head []backend.Page
 			return chosen(page)
 		}
 		r, err := a.backend.PageEntries(ctx, backend.PageQuery{URL: url, Title: title, Page: page})
+		if err == nil && page == 1 && r.Title != "" {
+			cx.Post(func() { l.pageTitle.Set(r.Title) })
+		}
 		if err != nil || page != 1 {
 			return r.Entries, r.HasMore, err
 		}
@@ -190,6 +194,8 @@ func (a *App) cardView(cx *core.Scope, get func() backend.PageEntry, l *pageList
 		switch c.Kind {
 		case backend.CardBanner:
 			body = a.bannerCard(cx, c)
+		case backend.CardImageGrid:
+			body = a.imageGridCard(cx, c)
 		case backend.CardIcons:
 			body = a.iconsCard(cx, c)
 		case backend.CardChips:
@@ -228,9 +234,13 @@ func (a *App) cardView(cx *core.Scope, get func() backend.PageEntry, l *pageList
 		case backend.CardConfigs:
 			body = a.configsCard(c)
 		case backend.CardNote:
-			body = core.View{Style: core.Style{Padding: core.Symmetric(12, 16)}, Children: []core.Node{
+			var subtitle core.Node = core.Group{}
+			if c.Subtitle != "" {
+				subtitle = label(c.Subtitle, textSecondary, 400, "text-on-surface-variant")
+			}
+			body = core.View{Style: core.Style{Padding: core.Symmetric(12, 16), Gap: 16}, Children: []core.Node{subtitle,
 				a.richText(cx, func() ([]backend.RichSpan, string) { return c.Note, "" },
-					richOptions{size: textSecondary, class: "text-on-surface-variant"})}}
+					richOptions{size: textBody, lineHeight: feedLineHeight, class: "text-on-surface"})}}
 		}
 		parts := []core.Node{}
 		switch {

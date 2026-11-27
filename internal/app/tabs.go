@@ -434,6 +434,8 @@ func (a *App) entryView(cx *core.Scope, get func() backend.PageEntry, l *pageLis
 		switch kind.Get() {
 		case backend.EntryCard:
 			return a.cardView(cx, get, l)
+		case backend.EntryNews:
+			return a.newsCard(cx, get)
 		case backend.EntryFeed:
 			return a.feedCard(cx, func() backend.Feed {
 				if f := get().Feed; f != nil {

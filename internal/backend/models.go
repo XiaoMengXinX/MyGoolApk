@@ -146,6 +146,8 @@ const (
 	// EntryLink is a row that leads where its URL says, as ResolveLink reads
 	// it: a person of a ranking, an offline event.
 	EntryLink
+	// EntryNews is an editorial headline and pictures (articleNews).
+	EntryNews
 )
 
 // CardKind is how a card of a server page shows.
@@ -197,12 +199,15 @@ const (
 	CardLogos
 	// CardEditorial presents article covers and headlines in a horizontal strip.
 	CardEditorial
+	// CardImageGrid shows titled pictures in two columns (imageTextGridCard).
+	CardImageGrid
 )
 
 // Card is a card of a server page.
 type Card struct {
-	Kind  CardKind
-	Title string
+	Kind     CardKind
+	Title    string
+	Subtitle string
 	// URL, when set, is where the card's title leads, as ResolveLink reads
 	// it, and More what the title says of it.
 	URL   string
