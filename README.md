@@ -1,51 +1,47 @@
 # MyGoolApk
 
-一个使用 Go 与 [NSGo](https://github.com/nsgo-dev/nsgo) 编写的第三方酷安（Coolapk）社区客户端，采用原生组件渲染与 Material Design 3 视觉风格，支持 Android、iOS 和 macOS。
+MyGoolApk是一款独立开发的第三方酷安客户端，支持Android、iOS和macOS。界面采用Material Design 3，使用自有API库[CoolapkApi-Go](https://github.com/XiaoMengXinX/CoolapkApi-Go)连接酷安。页面结构、交互和API均以官方酷安iOS 16.7.4为基准。
 
-> **注意**：本项目处于持续开发阶段，仅专注于社区内容浏览与互动，不包含应用市场（应用/游戏下载）功能。
+[下载最新版](https://github.com/XiaoMengXinX/MyGoolApk/releases/latest)
 
-## 主要特性
+## 下载与安装
 
-- **原生跨平台**：基于 Go + NSGo 原生 UI 渲染，支持 Android (`arm64`)、iOS (`arm64`) 与 macOS (`universal`)。
-- **自适应布局**：手机上是底部导航栏；宽窗口改用侧边导航栏，平板和 Mac 上列表与详情左右并排；macOS 支持菜单栏快捷键、鼠标悬停与右键菜单。
-- **首页与频道**：支持话题、关注、头条、热榜、数码、发现等服务端动态卡片与横滑切换，内置二手交易浏览。
-- **帖子与互动**：支持图文、文章、酷图、问答、投票、点评等帖子类型；支持评论、楼中楼、点赞、收藏夹、发帖与富文本/表情渲染。
-- **消息与账号**：支持网页登录、个人主页、通知中心（评论/回复/点赞/关注/私信/服务通知）、搜索与历史记录、深色模式。
-- **图片查看器**：支持缩放、滑动切换、下拉/上推关闭、原图按需加载与保存。
-
-## 构建产物说明
-
-GitHub Actions 会在每次 CI 与标签发布（`v*`）时自动构建以下安装包：
+Android和macOS支持在应用内检查更新。
 
 | 平台 | 产物 | 说明 |
 | --- | --- | --- |
-| Android | `mygoolapk-<version>-android-arm64.apk` | `arm64-v8a` 安装包（若未配置签名密钥，默认使用调试签名） |
-| iOS | `mygoolapk-<version>-ios.ipa` | 未签名 IPA，需使用 TrollStore、AltStore、SideStore、Sideloadly 或自签工具安装 |
-| macOS | `mygoolapk-<version>-macos-universal.dmg` | Apple Silicon + Intel 通用镜像（Ad-hoc 签名，首次打开可能需要在系统设置中允许运行） |
+| Android | `mygoolapk-<version>-android-arm64.apk` | 适用于`arm64-v8a`。本地构建未指定签名密钥时使用调试签名。 |
+| iOS | `mygoolapk-<version>-ios.ipa` | 未签名IPA，请使用设备支持的侧载工具安装，例如TrollStore、AltStore、SideStore或Sideloadly。 |
+| macOS | `mygoolapk-<version>-macos-universal.dmg` | 支持Apple Silicon和Intel。使用ad-hoc签名，首次打开可能需要在系统设置中允许运行。 |
 
 ## 本地构建与测试
 
 ### 环境要求
 
-- Go（版本见 [`go.mod`](go.mod)）
-- iOS / macOS 构建：macOS 与 Xcode
+- Go版本见[go.mod](go.mod)。
+- 构建iOS和macOS版需要macOS与Xcode。
+- 构建Android版需要JDK 17及以上、Android SDK Platform 36和Build Tools 36及以上。
 
 ### 准备依赖目录
 
-当前 `go.mod` 通过本地 `replace` 指向 [`CoolapkApi-Go`](https://github.com/XiaoMengXinX/CoolapkApi-Go) 与带补丁的 [`nsgo`](https://github.com/nsgo-dev/nsgo)：
+`go.mod`通过本地`replace`引用CoolapkApi-Go的`iOS`分支和打过补丁的NSGo `v0.3.4`。克隆前请确认有权读取API库。[CoolapkApi-Go](https://github.com/XiaoMengXinX/CoolapkApi-Go)和[NSGo补丁说明](patches/nsgo/README.md)
 
 ```sh
-# 假设在工作区根目录执行
+# 从存放项目的父目录开始
 git clone --depth 1 --branch iOS https://github.com/XiaoMengXinX/CoolapkApi-Go.git CoolapkApi-Go
 
 mkdir -p coolapk-mygo && cd coolapk-mygo
 git clone https://github.com/XiaoMengXinX/MyGoolApk.git app-nsgo
 
-# 拉取对应版本的 NSGo 并打上补丁（详见 app-nsgo/patches/nsgo/README.md）
+# 应用NSGo补丁
 git clone --depth 1 --branch v0.3.4 https://github.com/nsgo-dev/nsgo.git nsgo
 git -C nsgo am "$PWD"/app-nsgo/patches/nsgo/*.patch
-# 补丁改了 Android 运行时的 Java，构建 Android 前需重编（JDK 17+，Android SDK platform 36、build-tools 36+）
-ANDROID_HOME=~/Library/Android/sdk sh nsgo/internal/platform/android/runtime/build.sh
+```
+
+构建Android版前需要重编NSGo的Android运行时。先将`ANDROID_HOME`设为本机Android SDK目录，然后从`coolapk-mygo/`执行：
+
+```sh
+sh nsgo/internal/platform/android/runtime/build.sh
 ```
 
 ### 运行测试与构建
@@ -56,7 +52,7 @@ cd app-nsgo
 # 运行无头测试
 go tool nsgo test ./...
 
-# 构建 Android / iOS / macOS（产物输出到 dist/releases/）
+# 按需选择目标平台，安装包输出到dist/releases/
 go tool nsgo build -target android_arm64 .
 go tool nsgo build -target ios .
 go tool nsgo build -target macos_universal .
@@ -64,7 +60,7 @@ go tool nsgo build -target macos_universal .
 
 ## 免责声明与许可协议
 
-- 本项目为非官方第三方客户端，与酷安（Coolapk）官方无任何关联。
-- MyGoolApk 自有源码采用 **Apache License 2.0 (Apache-2.0)**，详见 [`LICENSE`](LICENSE)。
-- `CoolapkApi-Go` 的使用与分发授权由其权利人单独授予。
-- 仓库中的酷安表情图片资源版权归原作者 / 酷安官方所有，仅用于社区内容展示。
+- 本项目与酷安官方无关联。
+- MyGoolApk自有源码采用Apache License 2.0。[LICENSE](LICENSE)
+- CoolapkApi-Go的使用与分发授权由其权利人单独授予。
+- 仓库中的酷安表情图片版权归原作者或酷安官方所有，仅用于社区内容展示。
