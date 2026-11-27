@@ -10,6 +10,7 @@ These patches apply, in order, to the NSGo release named in `go.mod` (`github.co
 5. `0005`: iOS's `ScrollTarget`. A vertical drag on the view moves the target's content natively, stretching past its edges and gliding on at UIKit's normal deceleration, at the screen's full rate.
 6. `0006`: zoomable scroll content follows its children's bounds, so centering a smaller image leaves the margins outside its scrollable area. iOS centers the content again after viewport changes. Android releases a cancelled drag without starting a fling.
 7. `0007`: `mobile.SavePhoto` adds an encoded image to Photos on iOS with add-only authorization, or to Android's MediaStore. Android 28 requests storage permission; newer Android versions need none. The callback reports the library write's completion.
+8. `0008`: `updates.mirrors` gives Android and macOS ordered sources for appcasts and update packages. The original GitHub URL is tried last. Android verifies each downloaded package before handing it to the system installer. On macOS a loopback relay serves the appcast and streams the package to Sparkle, which verifies it and performs the update.
 
 `0002`, `0003`, `0006` and `0007` change the Android runtime's Java, so after applying the patches rebuild `classes.dex` and `classes.jar` with a JDK 17+ and an Android SDK with platform 36 and build-tools 36+ (CI does this through `rebuild-android-runtime`):
 

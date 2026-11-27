@@ -1,0 +1,930 @@
+From 3aebdc422b47e8610d0dc20e6c8b554dfafe30b4 Mon Sep 17 00:00:00 2001
+From: xiaomengxin <xibaole2333@gmail.com>
+Date: Sat, 28 Nov 2026 05:13:41 +0800
+Subject: [PATCH] feat(updates): try ordered HTTPS mirrors
+
+---
+ changelog.d/update-mirrors.md                 |   3 +
+ cmd/nsgo/build.go                             |   9 +
+ cmd/nsgo/plistvalue.go                        |  34 ++++
+ cmd/nsgo/tags.go                              |   3 +
+ cmd/nsgo/updates.go                           |  17 ++
+ cmd/nsgo/updates_test.go                      |  23 +++
+ core/updates.go                               |   4 +-
+ docs/architecture/updates.md                  |   1 +
+ docs/public/en/building.md                    |   3 +
+ internal/backend/updates.go                   |   4 +-
+ internal/driver/services.go                   |   1 +
+ internal/platform/macos/macos.go              |   4 +-
+ internal/platform/macos/update_mirrors.go     |  12 ++
+ internal/platform/macos/updates.go            |  45 ++++-
+ internal/platform/macos/updates_steam.go      |   2 +-
+ internal/platform/updates/download.go         |  37 +++-
+ internal/platform/updates/download_test.go    |  32 ++++
+ internal/platform/updates/mirrors.go          |  70 +++++++
+ internal/platform/updates/sparkle_sources.go  | 171 ++++++++++++++++++
+ .../platform/updates/sparkle_sources_test.go  |  37 ++++
+ internal/platform/updates/updates.go          |  34 ++--
+ internal/platform/updates/updates_test.go     |  30 +++
+ skills/nsgo/references/shipping.md            |   2 +
+ 23 files changed, 549 insertions(+), 29 deletions(-)
+ create mode 100644 changelog.d/update-mirrors.md
+ create mode 100644 internal/platform/macos/update_mirrors.go
+ create mode 100644 internal/platform/updates/mirrors.go
+ create mode 100644 internal/platform/updates/sparkle_sources.go
+ create mode 100644 internal/platform/updates/sparkle_sources_test.go
+
+diff --git a/changelog.d/update-mirrors.md b/changelog.d/update-mirrors.md
+new file mode 100644
+index 000000000..4569c88b8
+--- /dev/null
++++ b/changelog.d/update-mirrors.md
+@@ -0,0 +1,3 @@
++### Added
++
++- Try configured HTTPS mirrors for direct updates on Android, macOS and Linux.
+diff --git a/cmd/nsgo/build.go b/cmd/nsgo/build.go
+index 718475a04..3d35e81de 100644
+--- a/cmd/nsgo/build.go
++++ b/cmd/nsgo/build.go
+@@ -1607,6 +1607,15 @@ func writePlist(path string, p *project, t *template.Template, extra string) err
+ 	if err := p.validatePlistMinimum(t); err != nil {
+ 		return err
+ 	}
++	if t == macPlist && p.updates() && len(p.Updates.Mirrors) != 0 {
++		mac := *p
++		info, err := p.sparkleMirrorInfo()
++		if err != nil {
++			return err
++		}
++		mac.Apple.Info = info
++		p = &mac
++	}
+ 	var out bytes.Buffer
+ 	if err := t.Execute(&out, p); err != nil {
+ 		return err
+diff --git a/cmd/nsgo/plistvalue.go b/cmd/nsgo/plistvalue.go
+index b38c8a16f..06c15ccab 100644
+--- a/cmd/nsgo/plistvalue.go
++++ b/cmd/nsgo/plistvalue.go
+@@ -40,6 +40,40 @@ func (p *project) InfoPlist() (map[string]any, error) {
+ 	return info, nil
+ }
+ 
++// sparkleMirrorInfo allows Sparkle's HTTP requests to the loopback relay
++// without relaxing ATS for remote hosts.
++func (p *project) sparkleMirrorInfo() (map[string]any, error) {
++	dict := func(parent map[string]any, key string) (map[string]any, error) {
++		value, exists := parent[key]
++		if existing, ok := value.(map[string]any); ok {
++			return maps.Clone(existing), nil
++		}
++		if exists {
++			return nil, fmt.Errorf("apple.info: %s must be a dictionary", key)
++		}
++		return make(map[string]any), nil
++	}
++	info := make(map[string]any, len(p.Apple.Info)+1)
++	maps.Copy(info, p.Apple.Info)
++	ats, err := dict(info, "NSAppTransportSecurity")
++	if err != nil {
++		return nil, err
++	}
++	domains, err := dict(ats, "NSExceptionDomains")
++	if err != nil {
++		return nil, err
++	}
++	loopback, err := dict(domains, "127.0.0.1")
++	if err != nil {
++		return nil, err
++	}
++	loopback["NSExceptionAllowsInsecureHTTPLoads"] = true
++	domains["127.0.0.1"] = loopback
++	ats["NSExceptionDomains"] = domains
++	info["NSAppTransportSecurity"] = ats
++	return info, nil
++}
++
+ // InfoValue writes the types apple.info can express in an Info.plist.
+ // Keep strings as strings: YAML booleans and numbers have their own
+ // native types. Reject unsupported values rather than stringify them.
+diff --git a/cmd/nsgo/tags.go b/cmd/nsgo/tags.go
+index dff2f9d5c..ba9b7c1d7 100644
+--- a/cmd/nsgo/tags.go
++++ b/cmd/nsgo/tags.go
+@@ -17,6 +17,9 @@ func goTags(ctx context.Context, p *project, env []string, extra ...string) ([]s
+ 	if p.steamBuild(envTarget(env)) {
+ 		tags = append(tags, steamBuildTag)
+ 	}
++	if strings.HasPrefix(envTarget(env), "macos_") && p.updates() && len(p.Updates.Mirrors) != 0 {
++		tags = append(tags, "nsgo_update_mirrors")
++	}
+ 	tags = append(tags, extra...)
+ 	return uniqueTags(tags), nil
+ }
+diff --git a/cmd/nsgo/updates.go b/cmd/nsgo/updates.go
+index 544947c31..6390826f3 100644
+--- a/cmd/nsgo/updates.go
++++ b/cmd/nsgo/updates.go
+@@ -53,6 +53,8 @@ type updatesConfig struct {
+ 	// Feed is the URL the release's appcasts and installers are under; by
+ 	// default the GitHub repository's latest release (release.github).
+ 	Feed string `yaml:"feed"`
++	// Mirrors are HTTPS URL prefixes tried in order before Feed and its packages.
++	Mirrors []string `yaml:"mirrors"`
+ 	// Automatic has the app check on its own, daily: on Sparkle's and
+ 	// WinSparkle's schedule, and as it starts elsewhere; true by default.
+ 	// The user's choice in Sparkle's and WinSparkle's settings wins.
+@@ -202,6 +204,18 @@ func (p *project) checkUpdateFeed(target string) error {
+ 	if p.updates() && feedTarget(target) && p.feedBase() == "" {
+ 		return errors.New("updates: no feed for the appcasts: set updates.feed, or release.github to the repository whose releases hold them")
+ 	}
++	if p.updates() && feedTarget(target) && len(p.Updates.Mirrors) != 0 {
++		if !strings.HasPrefix(p.feedBase(), "https://") {
++			return errors.New("updates: mirrors require an HTTPS feed")
++		}
++		for _, prefix := range p.Updates.Mirrors {
++			u, err := url.Parse(prefix)
++			if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
++				strings.ContainsAny(prefix, ",?# \t\r\n'\"") || !strings.HasSuffix(prefix, "/") {
++				return fmt.Errorf("updates: mirror %q must be an HTTPS URL prefix ending in /", prefix)
++			}
++		}
++	}
+ 	return nil
+ }
+ 
+@@ -255,6 +269,9 @@ func (p *project) updateLdflags(env []string) []string {
+ 	if feed := p.appcastURL(envTarget(env)); feed != "" && p.updates() {
+ 		flags = append(flags, fmt.Sprintf("-X '%s.updateFeed=%s'", pkgPath, feed),
+ 			fmt.Sprintf("-X %s.updateKey=%s", pkgPath, pkg.EncodePublicKey(p.Updates.public)))
++		if len(p.Updates.Mirrors) != 0 {
++			flags = append(flags, fmt.Sprintf("-X %s.updateMirrors=%s", pkgPath, strings.Join(p.Updates.Mirrors, ",")))
++		}
+ 	}
+ 	if p.updatesAutomatic() {
+ 		flags = append(flags, fmt.Sprintf("-X %s.updateAutomatic=1", pkgPath))
+diff --git a/cmd/nsgo/updates_test.go b/cmd/nsgo/updates_test.go
+index 16a0f1297..ba44e79a4 100644
+--- a/cmd/nsgo/updates_test.go
++++ b/cmd/nsgo/updates_test.go
+@@ -80,6 +80,29 @@ func TestUpdatesConfig(t *testing.T) {
+ 	}
+ }
+ 
++func TestUpdateMirrorConfig(t *testing.T) {
++	p, _ := updatingProject(t, ", mirrors: ['https://one.example/', 'https://two.example/']")
++	if err := p.checkUpdateFeed("macos_arm64"); err != nil {
++		t.Fatal(err)
++	}
++	flags := strings.Join(p.updateLdflags([]string{"GOOS=android", "GOARCH=arm64"}), " ")
++	if !strings.Contains(flags, "updateMirrors=https://one.example/,https://two.example/") {
++		t.Fatalf("build flags: %s", flags)
++	}
++	info, err := p.sparkleMirrorInfo()
++	if err != nil {
++		t.Fatal(err)
++	}
++	ats, err := p.InfoValue(info["NSAppTransportSecurity"])
++	if err != nil || !strings.Contains(ats, "<key>127.0.0.1</key><dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/>") {
++		t.Fatalf("loopback ATS exception = %s, %v", ats, err)
++	}
++	p.Updates.Mirrors = []string{"http://one.example/"}
++	if err := p.checkUpdateFeed("macos_arm64"); err == nil {
++		t.Fatal("unencrypted mirror accepted")
++	}
++}
++
+ // The channel the builds are handed out through decides what they carry
+ // and check.
+ func TestUpdateChannels(t *testing.T) {
+diff --git a/core/updates.go b/core/updates.go
+index 51fd83194..e68324471 100644
+--- a/core/updates.go
++++ b/core/updates.go
+@@ -32,6 +32,7 @@ type UpdateCheck struct {
+ 	// the public Ed25519 key from the app's update configuration.
+ 	Download, Signature, SHA256, Key string
+ 	Size                             int64
++	mirrors                          string
+ 	// Err says why the updater could not check.
+ 	Err error
+ }
+@@ -72,7 +73,7 @@ func DownloadUpdate(ctx context.Context, update UpdateCheck, dir string, progres
+ 		return "", errors.New("core: update download is unavailable")
+ 	}
+ 	d := driver.Update{App: update.App, Current: update.Current, Version: update.Version, URL: update.URL, Notes: update.Notes,
+-		Download: update.Download, Signature: update.Signature, SHA256: update.SHA256, Key: update.Key, Size: update.Size}
++		Download: update.Download, Signature: update.Signature, SHA256: update.SHA256, Key: update.Key, Size: update.Size, Mirrors: update.mirrors}
+ 	path, err := driver.UpdateDownload(ctx, d, dir, func(p driver.UpdateDownloadProgress) {
+ 		if progress != nil {
+ 			progress(UpdateDownloadProgress(p))
+@@ -196,6 +197,7 @@ func (cx *Scope) CheckForUpdates(background bool, done func(UpdateCheck)) {
+ 			c.Managed, c.Store = UpdaterManaged(u.Managed), u.Store
+ 			c.App, c.Current, c.Version, c.URL, c.Notes = u.App, u.Current, u.Version, u.URL, u.Notes
+ 			c.Download, c.Signature, c.SHA256, c.Key, c.Size = u.Download, u.Signature, u.SHA256, u.Key, u.Size
++			c.mirrors = u.Mirrors
+ 			if u.Err != "" {
+ 				c.Err = errors.New(u.Err)
+ 			}
+diff --git a/docs/architecture/updates.md b/docs/architecture/updates.md
+index 69fd24dec..28558ac24 100644
+--- a/docs/architecture/updates.md
++++ b/docs/architecture/updates.md
+@@ -89,6 +89,7 @@ Linux cannot tell a distribution's package from a downloaded one, so its package
+ 
+ - Play checks support the immediate flow only, preserve user cancellation, and resume a consented flow when its activity returns. Standalone runtime builds include the checksum-pinned Play In-App Updates SDK; embedding hosts supply it and retain its reflected entry points ([embedding](../public/en/embedding.md#android)).
+ - The direct channel reads `releases/latest/download/` by default, so every release must carry the appcast of each target it updates: a target a release leaves out answers 404 until one carries it again.
++- Direct Android, macOS and Linux builds can embed ordered HTTPS mirror prefixes. The appcast reader tries the origin last, sharing the check deadline across attempts. Android and Linux stage each download separately and verify it before accepting the source. On macOS, Sparkle's delegate uses a loopback relay that serves the original appcast bytes and the selected same-origin package. After a partial transfer the relay requires a matching byte range from the next source. Sparkle verifies the complete package and handles installation.
+ - WinSparkle saves `updates.automatic` as the user's choice on the first start, so a later change in `nsgo.yaml` reaches only new installs.
+ - Linux asks `OnQuitRequest` before restarting after its package manager finishes. Cancellation keeps the current process running; a deferred answer can finish saving first. The package is already installed on disk. On Windows, WinSparkle waits on its worker thread for the same decision, leaving the app's main thread free; denial prevents installer launch, and cleanup releases an unanswered callback before joining the updater's workers. The approved shutdown bypasses a second close request, so a tray or window-close handler cannot strand an installer beside the old process.
+ - The Linux appcast lists signed items for the release's Debian package (`.deb`), Arch package (`.pkg.tar.gz`) and AppImage (`.AppImage`). The Linux backend selects the matching item—installing `.deb` through `pkexec dpkg`, `.pkg.tar.gz`/`.pkg.tar.zst` through `pkexec pacman`, or atomically replacing `$APPIMAGE` with executable permissions before restarting—and falls back to the release's page for installs outside those formats; the backend resolves ownership once at launch, before any appcast request. Android hands its APK to the system installer, which asks the user and keeps store installs out of the direct channel.
+diff --git a/docs/public/en/building.md b/docs/public/en/building.md
+index 2e73f25f5..d3f8f968c 100644
+--- a/docs/public/en/building.md
++++ b/docs/public/en/building.md
+@@ -463,12 +463,15 @@ updates:
+   key: zE0hx2FZwwHy6X7LbEP3GjTTE3KWfCAp5gsaBysC+vg=  # the public key nsgo keygen prints
+   # channel: store                    # direct, store, steam or none; direct by default with a key, none without
+   # feed: https://example.com/hello/  # where the appcasts and installers are; by default the latest GitHub release
++  # mirrors: [https://proxy.example.com/] # HTTPS URL prefixes, tried before the origin
+   # automatic: false                  # check only when asked; true by default
+   # automatic_downloads: true          # Sparkle downloads automatically; false by default, macOS only
+ ```
+ 
+ `nsgo keygen` prints a key pair and writes no file: put the public key in `updates.key` and commit it, and keep the secret one out of the repository, in a password manager and in `NSGO_UPDATES_KEY` where releases build, such as a GitHub Actions secret. Each direct build signs the installers with the secret key and writes `appcast-<target>.xml` beside them, a feed in [Sparkle](https://sparkle-project.org)'s format that the app reads under `feed`: upload the appcasts with the installers. Without the secret key, `build` writes no macOS or Windows appcast, as those install only signed installers, and Linux and Android apps reading an unsigned appcast open the release's page instead of installing its package.
+ 
++On Android, macOS and Linux direct builds with an HTTPS feed, `updates.mirrors` lists reverse proxies in priority order. Each proxy URL is the prefix, including its trailing slash, followed by the full original HTTPS URL. Appcasts and packages hosted on the same origin use this order, with the original URL last. The proxies serve update metadata and packages, and the updater still verifies package signatures before installing. On macOS Sparkle reads through a loopback relay; to resume an interrupted transfer the next source must support byte ranges.
++
+ `-release-notes notes.md` puts a Markdown file of the release's notes, such as its changelog section, into each appcast, rendered as HTML without the file's own raw HTML. Sparkle and WinSparkle show it in their update dialogs, and the prompt on Linux and Android shows it as text below the version, up to 1,500 characters; apps read it as `core.UpdateCheck.Notes`.
+ 
+ | Target | How a direct build updates |
+diff --git a/internal/backend/updates.go b/internal/backend/updates.go
+index 99af199a9..94df2851e 100644
+--- a/internal/backend/updates.go
++++ b/internal/backend/updates.go
+@@ -6,12 +6,12 @@ import (
+ )
+ 
+ // Set by the nsgo tool with -ldflags -X: updateFeed is this target's appcast, updateKey the public key its downloads are signed with, and updateAutomatic "1" when the app checks on its own.
+-var updateFeed, updateKey, updateAutomatic, updateChannel = "", "", "", ""
++var updateFeed, updateKey, updateAutomatic, updateChannel, updateMirrors string
+ 
+ // updateConfig is how the app updates, as the nsgo tool set it from
+ // nsgo.yaml's updates; macOS's Sparkle reads its own from Info.plist.
+ func updateConfig() updates.Config {
+ 	info := core.App()
+ 	return updates.Config{App: name, ID: id, Version: info.Version, Build: info.Build,
+-		Feed: updateFeed, Key: updateKey, Automatic: updateAutomatic == "1", Channel: updateChannel, Development: info.Development}
++		Feed: updateFeed, Key: updateKey, Mirrors: updateMirrors, Automatic: updateAutomatic == "1", Channel: updateChannel, Development: info.Development}
+ }
+diff --git a/internal/driver/services.go b/internal/driver/services.go
+index e09453c12..f7ea44150 100644
+--- a/internal/driver/services.go
++++ b/internal/driver/services.go
+@@ -21,6 +21,7 @@ type Update struct {
+ 	Version, URL, Notes              string
+ 	Download, Signature, SHA256, Key string
+ 	Size                             int64
++	Mirrors                          string
+ 	Managed                          UpdateManaged
+ 	Store                            string
+ 	Err                              string
+diff --git a/internal/platform/macos/macos.go b/internal/platform/macos/macos.go
+index 5e194546d..3e6586cdd 100644
+--- a/internal/platform/macos/macos.go
++++ b/internal/platform/macos/macos.go
+@@ -721,7 +721,9 @@ func Run(app engine.App, opts Options) {
+ 		opts.LaunchedAtLogin = login
+ 		s = startOwn(app, opts)
+ 	})
+-	startSparkle(opts.Updates)
++	if closeSources := startSparkle(opts.Updates); closeSources != nil {
++		defer closeSources()
++	}
+ 	if sparkleEnabled && sparkle != 0 {
+ 		// The default menu was made before Sparkle ran, without Check for Updates….
+ 		rebuildDefaultMenu(defaultLanguage)
+diff --git a/internal/platform/macos/update_mirrors.go b/internal/platform/macos/update_mirrors.go
+new file mode 100644
+index 000000000..bcdf18821
+--- /dev/null
++++ b/internal/platform/macos/update_mirrors.go
+@@ -0,0 +1,12 @@
++//go:build darwin && !ios && nsgo_update_mirrors && !nsgo_steam
++
++package macos
++
++import "github.com/nsgo-dev/nsgo/internal/platform/updates"
++
++func init() {
++	openSparkleSources = func(c updates.Config) (sparkleSources, error) {
++		feed, download, close, err := updates.ServeSparkleSources(c)
++		return sparkleSources{feed: feed, download: download, close: close}, err
++	}
++}
+diff --git a/internal/platform/macos/updates.go b/internal/platform/macos/updates.go
+index 9b4fb458b..d90d4c6de 100644
+--- a/internal/platform/macos/updates.go
++++ b/internal/platform/macos/updates.go
+@@ -20,13 +20,21 @@ var sparkleFailure string
+ var sparkleDelegate objc.ID
+ var sparkleFound, sparkleNotes string
+ 
++type sparkleSources struct {
++	feed     string
++	download func(string, int64) string
++	close    func()
++}
++
++var openSparkleSources func(updates.Config) (sparkleSources, error)
++
+ // startSparkle starts the platform updater before the engine's first view.
+-func startSparkle(c updates.Config) {
++func startSparkle(c updates.Config) func() {
+ 	sparkleConfig = c
+ 	sparkleFailure = ""
+ 	sparkleFound, sparkleNotes = "", ""
+ 	if !c.Checks(false) {
+-		return
++		return nil
+ 	}
+ 	main := objc.ID(apple.Class("NSBundle")).Send(sel("mainBundle"))
+ 	path := apple.GoString(main.Send(sel("privateFrameworksPath"))) + "/Sparkle.framework"
+@@ -38,9 +46,9 @@ func startSparkle(c updates.Config) {
+ 	if controller == 0 {
+ 		sparkleFailure = "updates: this direct build's Sparkle.framework could not be loaded"
+ 		log.Printf("nsgo: %s: %s", sparkleFailure, path)
+-		return
++		return nil
+ 	}
+-	cls := register("NsgoUpdaterDelegate", apple.Class("NSObject"), []*objc.Protocol{objc.GetProtocol("SPUUpdaterDelegate")}, []objc.MethodDef{
++	methods := []objc.MethodDef{
+ 		{Cmd: sel("updater:didFindValidUpdate:"), Fn: func(_ objc.ID, _ objc.SEL, _ objc.ID, item objc.ID) {
+ 			sparkleFound = apple.GoString(item.Send(sel("displayVersionString")))
+ 			sparkleNotes = updates.NotesText(apple.GoString(item.Send(sel("itemDescription"))))
+@@ -49,11 +57,38 @@ func startSparkle(c updates.Config) {
+ 		{Cmd: sel("updaterDidNotFindUpdate:"), Fn: func(_ objc.ID, _ objc.SEL, _ objc.ID) { sparkleFound, sparkleNotes = "", ""; reportSparkle() }},
+ 		{Cmd: sel("updater:didAbortWithError:"), Fn: func(_ objc.ID, _ objc.SEL, _ objc.ID, _ objc.ID) { apple.OnMain(reportSparkle) }},
+ 		{Cmd: sel("updaterSettingsChanged:"), Fn: func(_ objc.ID, _ objc.SEL, _ objc.ID) { apple.OnMain(reportSparkle) }},
+-	})
++	}
++	var sources sparkleSources
++	if openSparkleSources != nil && c.Mirrors != "" {
++		// The universal package sets the final feed in Info.plist after lipo.
++		c.Feed = apple.GoString(main.Send(sel("objectForInfoDictionaryKey:"), apple.NSString("SUFeedURL")))
++		var err error
++		sources, err = openSparkleSources(c)
++		if err != nil {
++			log.Printf("nsgo: updates: %v", err)
++		} else {
++			methods = append(methods,
++				objc.MethodDef{Cmd: sel("feedURLStringForUpdater:"), Fn: func(_ objc.ID, _ objc.SEL, _ objc.ID) objc.ID {
++					return apple.NSString(sources.feed)
++				}},
++				objc.MethodDef{Cmd: sel("updater:willDownloadUpdate:withRequest:"), Fn: func(_ objc.ID, _ objc.SEL, _ objc.ID, item, request objc.ID) {
++					original := apple.GoString(request.Send(sel("URL")).Send(sel("absoluteString")))
++					if local := sources.download(original, int64(objc.Send[uint64](item, sel("contentLength")))); local != "" {
++						request.Send(sel("setURL:"), objc.ID(apple.Class("NSURL")).Send(sel("URLWithString:"), apple.NSString(local)))
++						// The relay may wait for several stalled upstreams before returning bytes.
++						wait := objc.Send[float64](request, sel("timeoutInterval"))
++						request.Send(sel("setTimeoutInterval:"), wait+c.MirrorDownloadWait().Seconds())
++					}
++				}},
++			)
++		}
++	}
++	cls := register("NsgoUpdaterDelegate", apple.Class("NSObject"), []*objc.Protocol{objc.GetProtocol("SPUUpdaterDelegate")}, methods)
+ 	sparkleDelegate = objc.ID(cls).Send(selAlloc).Send(sel("init"))
+ 	sparkle = objc.ID(controller).Send(selAlloc).Send(sel("initWithStartingUpdater:updaterDelegate:userDriverDelegate:"), true, sparkleDelegate, objc.ID(0))
+ 	center := objc.ID(apple.Class("NSNotificationCenter")).Send(sel("defaultCenter"))
+ 	center.Send(sel("addObserver:selector:name:object:"), sparkleDelegate, sel("updaterSettingsChanged:"), apple.NSString("NSUserDefaultsDidChangeNotification"), objc.ID(0))
++	return sources.close
+ }
+ 
+ func sparkleStatus() driver.UpdaterState {
+diff --git a/internal/platform/macos/updates_steam.go b/internal/platform/macos/updates_steam.go
+index 803beab53..59a490979 100644
+--- a/internal/platform/macos/updates_steam.go
++++ b/internal/platform/macos/updates_steam.go
+@@ -9,7 +9,7 @@ import (
+ 
+ const sparkleEnabled = false
+ 
+-func startSparkle(updates.Config) {}
++func startSparkle(updates.Config) func() { return nil }
+ func sparkleStatus() driver.UpdaterState {
+ 	return driver.UpdaterState{Managed: driver.UpdateManagedChannel}
+ }
+diff --git a/internal/platform/updates/download.go b/internal/platform/updates/download.go
+index e0aa2a6d4..613955583 100644
+--- a/internal/platform/updates/download.go
++++ b/internal/platform/updates/download.go
+@@ -12,6 +12,7 @@ import (
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
++	"time"
+ 
+ 	"github.com/nsgo-dev/nsgo/internal/driver"
+ 	"github.com/nsgo-dev/nsgo/internal/platform/imageload"
+@@ -46,6 +47,38 @@ func Download(ctx context.Context, update driver.Update, dir string, progress fu
+ 	if name == "" || name == "." || name == string(filepath.Separator) {
+ 		name = "update-" + strings.ReplaceAll(update.Version, "/", "-")
+ 	}
++	urls := sources(update.Download, update.Mirrors)
++	var last error
++	for i, source := range urls {
++		if err := ctx.Err(); err != nil {
++			return "", err
++		}
++		if i != 0 && progress != nil {
++			progress(driver.UpdateDownloadProgress{Total: update.Size})
++		}
++		var path string
++		if i < len(urls)-1 {
++			attempt, cancel := context.WithCancel(ctx)
++			timer := time.AfterFunc(mirrorIdleTimeout, cancel)
++			path, last = downloadSource(attempt, source, update, dir, name, key, sig, func(p driver.UpdateDownloadProgress) {
++				timer.Reset(mirrorIdleTimeout)
++				if progress != nil {
++					progress(p)
++				}
++			})
++			cancel()
++			timer.Stop()
++		} else {
++			path, last = downloadSource(ctx, source, update, dir, name, key, sig, progress)
++		}
++		if last == nil {
++			return path, nil
++		}
++	}
++	return "", last
++}
++
++func downloadSource(ctx context.Context, source string, update driver.Update, dir, name string, key ed25519.PublicKey, sig []byte, progress func(driver.UpdateDownloadProgress)) (string, error) {
+ 	part, err := os.CreateTemp(dir, ".nsgo-update-*")
+ 	if err != nil {
+ 		return "", fmt.Errorf("updater: create staging file: %w", err)
+@@ -66,13 +99,13 @@ func Download(ctx context.Context, update driver.Update, dir string, progress fu
+ 	headers := imageload.Header{"Cache-Control": {"no-cache"}}
+ 	var status int
+ 	if imageload.HTTPToFile != nil {
+-		resp, err := imageload.HTTPToFile(ctx, update.Download, headers, partName, report)
++		resp, err := imageload.HTTPToFile(ctx, source, headers, partName, report)
+ 		if err != nil {
+ 			return "", fmt.Errorf("updater: download: %w", err)
+ 		}
+ 		status = resp.Status
+ 	} else {
+-		resp, err := imageload.HTTP(ctx, update.Download, headers, report)
++		resp, err := imageload.HTTP(ctx, source, headers, report)
+ 		if err != nil {
+ 			return "", fmt.Errorf("updater: download: %w", err)
+ 		}
+diff --git a/internal/platform/updates/download_test.go b/internal/platform/updates/download_test.go
+index f83f27b06..ca7898272 100644
+--- a/internal/platform/updates/download_test.go
++++ b/internal/platform/updates/download_test.go
+@@ -33,6 +33,38 @@ func signedUpdateFixture(t *testing.T, url string, body []byte) driver.Update {
+ 	}
+ }
+ 
++func TestDownloadRetriesBadSignatureFromMirror(t *testing.T) {
++	body := []byte("signed update")
++	u := signedUpdateFixture(t, "https://example.com/update.apk", body)
++	u.SHA256 = "" // Isolate package-signature rejection.
++	u.Mirrors = "https://one.example/,https://two.example/"
++	was := imageload.HTTPToFile
++	var asked []string
++	imageload.HTTPToFile = func(_ context.Context, address string, _ imageload.Header, dst string, _ imageload.Progress) (*imageload.Response, error) {
++		asked = append(asked, address)
++		data := bytes.Clone(body)
++		if len(asked) == 1 {
++			data[0] ^= 1
++		}
++		return &imageload.Response{Status: 200}, os.WriteFile(dst, data, 0o600)
++	}
++	t.Cleanup(func() { imageload.HTTPToFile = was })
++	dir := t.TempDir()
++	file, err := Download(t.Context(), u, dir, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(asked) != 2 || asked[0] != "https://one.example/"+u.Download || asked[1] != "https://two.example/"+u.Download {
++		t.Fatalf("tried %v", asked)
++	}
++	if data, err := os.ReadFile(file); err != nil || !bytes.Equal(data, body) {
++		t.Fatalf("staged data %q, %v", data, err)
++	}
++	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
++		t.Fatalf("staging directory contains %v, %v", entries, err)
++	}
++}
++
+ func TestDownloadVerifiesAndStagesPackage(t *testing.T) {
+ 	body := []byte("signed update")
+ 	u := signedUpdateFixture(t, "https://example.com/hello-2.0.apk", body)
+diff --git a/internal/platform/updates/mirrors.go b/internal/platform/updates/mirrors.go
+new file mode 100644
+index 000000000..b65f13df4
+--- /dev/null
++++ b/internal/platform/updates/mirrors.go
+@@ -0,0 +1,70 @@
++package updates
++
++import (
++	"context"
++	"net/url"
++	"strings"
++	"time"
++)
++
++// A stalled mirror should give the next source a turn, while a download
++// making progress keeps the existing overall download deadline.
++const mirrorIdleTimeout = 15 * time.Second
++
++// MirrorDownloadWait is the extra idle time a local Sparkle request needs while
++// the relay tries the configured upstreams.
++func (c Config) MirrorDownloadWait() time.Duration {
++	return time.Duration(strings.Count(c.Mirrors, ",")+1) * mirrorIdleTimeout
++}
++
++func sources(original, mirrors string) []string {
++	if mirrors == "" || !strings.HasPrefix(original, "https://") {
++		return []string{original}
++	}
++	prefixes := strings.Split(mirrors, ",")
++	for i, prefix := range prefixes {
++		prefixes[i] = prefix + original
++	}
++	return append(prefixes, original)
++}
++
++// An appcast can link to a download on another server. Leave those URLs on
++// their own origin instead of passing them to the configured mirrors.
++func (c Config) packageMirrors(download string) string {
++	if c.Mirrors == "" {
++		return ""
++	}
++	feed, _ := url.Parse(c.Feed)
++	asset, err := url.Parse(download)
++	if err != nil || asset.Scheme != "https" || asset.User != nil || feed == nil ||
++		!strings.EqualFold(asset.Host, feed.Host) {
++		return ""
++	}
++	return c.Mirrors
++}
++
++func fetchAppcast(ctx context.Context, c Config) ([]byte, []Item, error) {
++	urls := sources(c.Feed, c.Mirrors)
++	var last error
++	for i, source := range urls {
++		if err := ctx.Err(); err != nil {
++			return nil, nil, err
++		}
++		attempt, cancel := ctx, func() {}
++		if i < len(urls)-1 {
++			// Leave part of the check's budget for each later source.
++			attempt, cancel = context.WithTimeout(ctx, timeout/time.Duration(len(urls)))
++		}
++		body, err := get(attempt, source)
++		cancel()
++		if err == nil {
++			var items []Item
++			items, err = ParseAppcastItems(body)
++			if err == nil {
++				return body, items, nil
++			}
++		}
++		last = err
++	}
++	return nil, nil, last
++}
+diff --git a/internal/platform/updates/sparkle_sources.go b/internal/platform/updates/sparkle_sources.go
+new file mode 100644
+index 000000000..4d8eebeee
+--- /dev/null
++++ b/internal/platform/updates/sparkle_sources.go
+@@ -0,0 +1,171 @@
++//go:build darwin && !ios && nsgo_update_mirrors && !nsgo_steam
++
++package updates
++
++import (
++	"context"
++	"crypto/rand"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"net/url"
++	"path"
++	"strconv"
++	"strings"
++	"sync"
++	"time"
++)
++
++// ServeSparkleSources gives the native updater one local URL for each
++// resource. The appcast reaches Sparkle byte for byte, and Sparkle checks
++// the package's signature as usual.
++func ServeSparkleSources(c Config) (feed string, download func(string, int64) string, close func(), err error) {
++	if !strings.HasPrefix(c.Feed, "https://") {
++		return "", nil, nil, fmt.Errorf("the Sparkle mirror feed must use HTTPS")
++	}
++	listener, err := net.Listen("tcp4", "127.0.0.1:0")
++	if err != nil {
++		return "", nil, nil, err
++	}
++	prefix := "/" + rand.Text() + "/"
++	base := "http://" + listener.Addr().String()
++	transport := &http.Transport{Proxy: http.ProxyFromEnvironment}
++	client := &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
++		if req.URL.Scheme != "https" || len(via) >= 10 {
++			return http.ErrUseLastResponse
++		}
++		return nil
++	}}
++	type asset struct {
++		path, url string
++		size      int64
++	}
++	var mu sync.Mutex
++	var selected asset
++	mux := http.NewServeMux()
++	mux.HandleFunc("GET "+prefix+"appcast.xml", func(w http.ResponseWriter, r *http.Request) {
++		ctx, cancel := context.WithTimeout(r.Context(), timeout)
++		defer cancel()
++		body, _, err := fetchAppcast(ctx, c)
++		if err != nil {
++			http.Error(w, "could not read the appcast", http.StatusBadGateway)
++			return
++		}
++		w.Header().Set("Content-Type", "application/rss+xml")
++		w.Header().Set("Cache-Control", "no-store")
++		_, _ = w.Write(body)
++	})
++	mux.HandleFunc("GET "+prefix+"package/", func(w http.ResponseWriter, r *http.Request) {
++		mu.Lock()
++		pkg := selected
++		mu.Unlock()
++		if r.URL.EscapedPath() != pkg.path {
++			http.NotFound(w, r)
++			return
++		}
++		streamPackage(w, r, client, sources(pkg.url, c.Mirrors), pkg.size)
++	})
++	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
++	go func() { _ = server.Serve(listener) }()
++	download = func(original string, size int64) string {
++		if c.packageMirrors(original) == "" {
++			return ""
++		}
++		u, _ := url.Parse(original)
++		localPath := prefix + "package/" + rand.Text() + "/" + url.PathEscape(path.Base(u.Path))
++		mu.Lock()
++		selected = asset{path: localPath, url: original, size: size}
++		mu.Unlock()
++		return base + localPath
++	}
++	return base + prefix + "appcast.xml", download, func() {
++		_ = server.Close()
++		transport.CloseIdleConnections()
++	}, nil
++}
++
++func streamPackage(w http.ResponseWriter, r *http.Request, client *http.Client, urls []string, size int64) {
++	var sent int64
++	started := false
++	for _, source := range urls {
++		if r.Context().Err() != nil {
++			return
++		}
++		ctx, cancel := context.WithCancel(r.Context())
++		timer := time.AfterFunc(mirrorIdleTimeout, cancel)
++		n, complete := streamPackageSource(ctx, w, client, source, sent, &size, &started, timer)
++		cancel()
++		timer.Stop()
++		if complete {
++			return
++		}
++		sent += n
++		// Only a source that can supply the remaining bytes can resume a
++		// partial response. Sparkle verifies the final bytes before install.
++		if sent > 0 && size <= 0 {
++			break
++		}
++	}
++	if started {
++		panic(http.ErrAbortHandler)
++	}
++	http.Error(w, "could not download the update", http.StatusBadGateway)
++}
++
++func streamPackageSource(ctx context.Context, w http.ResponseWriter, client *http.Client, source string, offset int64, size *int64, started *bool, timer *time.Timer) (int64, bool) {
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
++	if err != nil {
++		return 0, false
++	}
++	req.Header.Set("Accept-Encoding", "identity")
++	req.Header.Set("Cache-Control", "no-cache")
++	if offset > 0 {
++		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
++	}
++	resp, err := client.Do(req)
++	if err != nil {
++		return 0, false
++	}
++	defer resp.Body.Close()
++	if offset == 0 {
++		if resp.StatusCode != http.StatusOK || strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") ||
++			(*size > 0 && resp.ContentLength >= 0 && *size != resp.ContentLength) {
++			return 0, false
++		}
++		if *size <= 0 {
++			*size = resp.ContentLength
++		}
++	} else if resp.StatusCode != http.StatusPartialContent ||
++		resp.Header.Get("Content-Range") != fmt.Sprintf("bytes %d-%d/%d", offset, *size-1, *size) {
++		return 0, false
++	}
++	if !*started {
++		w.Header().Set("Content-Type", "application/octet-stream")
++		w.Header().Set("Cache-Control", "no-store")
++		if *size >= 0 {
++			w.Header().Set("Content-Length", strconv.FormatInt(*size, 10))
++		}
++		*started = true
++	}
++	body := progressingBody{resp.Body, timer}
++	if *size >= 0 {
++		n, err := io.CopyN(w, body, *size-offset)
++		return n, err == nil
++	}
++	n, err := io.Copy(w, body)
++	return n, err == nil
++}
++
++type progressingBody struct {
++	io.Reader
++	timer *time.Timer
++}
++
++func (b progressingBody) Read(p []byte) (int, error) {
++	n, err := b.Reader.Read(p)
++	if n > 0 {
++		b.timer.Reset(mirrorIdleTimeout)
++	}
++	return n, err
++}
+diff --git a/internal/platform/updates/sparkle_sources_test.go b/internal/platform/updates/sparkle_sources_test.go
+new file mode 100644
+index 000000000..13cc026d8
+--- /dev/null
++++ b/internal/platform/updates/sparkle_sources_test.go
+@@ -0,0 +1,37 @@
++//go:build darwin && !ios && nsgo_update_mirrors && !nsgo_steam
++
++package updates
++
++import (
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++)
++
++func TestSparkleRelayResumesAfterTruncatedSource(t *testing.T) {
++	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch r.URL.Path {
++		case "/unavailable":
++			w.WriteHeader(http.StatusServiceUnavailable)
++		case "/partial":
++			w.Header().Set("Content-Length", "10")
++			fmt.Fprint(w, "1234")
++		case "/complete":
++			if r.Header.Get("Range") != "bytes=4-" {
++				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
++				return
++			}
++			w.Header().Set("Content-Range", "bytes 4-9/10")
++			w.WriteHeader(http.StatusPartialContent)
++			fmt.Fprint(w, "567890")
++		}
++	}))
++	t.Cleanup(origin.Close)
++	router := httptest.NewRecorder()
++	streamPackage(router, httptest.NewRequest(http.MethodGet, "/", nil), origin.Client(),
++		[]string{origin.URL + "/unavailable", origin.URL + "/partial", origin.URL + "/complete"}, 10)
++	if router.Code != 200 || router.Body.String() != "1234567890" {
++		t.Fatalf("relay sent status %d, body %q", router.Code, router.Body.String())
++	}
++}
+diff --git a/internal/platform/updates/updates.go b/internal/platform/updates/updates.go
+index 87a89909c..9c785f76b 100644
+--- a/internal/platform/updates/updates.go
++++ b/internal/platform/updates/updates.go
+@@ -31,6 +31,8 @@ type Config struct {
+ 	// Feed is this target's appcast, and Key the public EdDSA key its
+ 	// downloads are signed with, in base64.
+ 	Feed, Key string
++	// Mirrors is the ordered, comma-separated list of HTTPS reverse proxy prefixes.
++	Mirrors string
+ 	// Automatic has the app check on its own: WinSparkle on its schedule,
+ 	// and nsgo.Run once a day as the app starts elsewhere.
+ 	Automatic bool
+@@ -116,23 +118,21 @@ func FindMatching(ctx context.Context, c Config, match func(Item) bool) driver.U
+ 	if !c.Checks(false) {
+ 		return u
+ 	}
+-	body, err := get(ctx, c.Feed)
+-	if err == nil {
+-		var items []Item
+-		if items, err = ParseAppcastItems(body); err == nil && Newer(items[0].Build, c.build()) {
+-			chosen := items[0]
+-			u.Version, u.URL, u.Notes = chosen.Version, chosen.Link, chosen.Notes
+-			// Only a package signed with the app's key is installed; an unsigned appcast, which a release built without NSGO_UPDATES_KEY writes, offers the release's page instead.
+-			if c.Key != "" && !c.PageOnly {
+-				for _, item := range items {
+-					if item.Signature == "" || item.Download == "" {
+-						continue
+-					}
+-					if match == nil || match(item) {
+-						u.Version, u.URL, u.Notes = item.Version, item.Link, item.Notes
+-						u.Download, u.Signature, u.SHA256, u.Key, u.Size = item.Download, item.Signature, item.SHA256, c.Key, item.Size
+-						break
+-					}
++	_, items, err := fetchAppcast(ctx, c)
++	if err == nil && Newer(items[0].Build, c.build()) {
++		chosen := items[0]
++		u.Version, u.URL, u.Notes = chosen.Version, chosen.Link, chosen.Notes
++		// Only a package signed with the app's key is installed; an unsigned appcast, which a release built without NSGO_UPDATES_KEY writes, offers the release's page instead.
++		if c.Key != "" && !c.PageOnly {
++			for _, item := range items {
++				if item.Signature == "" || item.Download == "" {
++					continue
++				}
++				if match == nil || match(item) {
++					u.Version, u.URL, u.Notes = item.Version, item.Link, item.Notes
++					u.Download, u.Signature, u.SHA256, u.Key, u.Size = item.Download, item.Signature, item.SHA256, c.Key, item.Size
++					u.Mirrors = c.packageMirrors(item.Download)
++					break
+ 				}
+ 			}
+ 		}
+diff --git a/internal/platform/updates/updates_test.go b/internal/platform/updates/updates_test.go
+index cb39555dd..5d3faab71 100644
+--- a/internal/platform/updates/updates_test.go
++++ b/internal/platform/updates/updates_test.go
+@@ -115,6 +115,36 @@ func TestFind(t *testing.T) {
+ 	}
+ }
+ 
++func TestFindWithMirrors(t *testing.T) {
++	c := Config{Version: "1.1", Build: "11", Feed: "https://example.com/appcast.xml",
++		Mirrors: "https://one.example/,https://two.example/,https://three.example/"}
++	var asked []string
++	was := imageload.HTTP
++	imageload.HTTP = func(_ context.Context, address string, _ imageload.Header, _ imageload.Progress) (*imageload.Response, error) {
++		asked = append(asked, address)
++		switch len(asked) {
++		case 1:
++			return &imageload.Response{Status: 503}, nil
++		case 2, 3:
++			return &imageload.Response{Status: 200, Body: []byte("not an appcast")}, nil
++		default:
++			return &imageload.Response{Status: 200, Body: []byte(feed)}, nil
++		}
++	}
++	t.Cleanup(func() { imageload.HTTP = was })
++	got := Find(t.Context(), c)
++	if got.Err != "" || got.Version != "1.2" {
++		t.Fatalf("Find = %+v", got)
++	}
++	want := "https://one.example/" + c.Feed + "|https://two.example/" + c.Feed + "|https://three.example/" + c.Feed + "|" + c.Feed
++	if strings.Join(asked, "|") != want {
++		t.Fatalf("tried %v, want %s", asked, want)
++	}
++	if c.packageMirrors("https://other.example/update.apk") != "" || c.packageMirrors("https://example.com/update.apk") != c.Mirrors {
++		t.Fatal("package mirrors must apply only to the HTTPS feed host")
++	}
++}
++
+ func TestFindOffersOnlySignedPackages(t *testing.T) {
+ 	signed := strings.Replace(feed, `sparkle:version="12"`, `sparkle:version="12" sparkle:edSignature="c2ln" sparkle:sha256="abc"`, 1)
+ 	serve(t, 200, signed)
+diff --git a/skills/nsgo/references/shipping.md b/skills/nsgo/references/shipping.md
+index 98d0676c7..23c8ad86c 100644
+--- a/skills/nsgo/references/shipping.md
++++ b/skills/nsgo/references/shipping.md
+@@ -51,6 +51,8 @@ Set `launch_screen.background` to a quoted `"#RRGGBB"` color and/or `launch_scre
+ 
+ ## Build
+ 
++For HTTPS appcasts on Android, macOS and Linux direct builds, `updates.mirrors` accepts HTTPS reverse-proxy prefixes ending in `/`. The updater tries them in order before the original URL. The package must still pass signature verification.
++
+ ```sh
+ nsgo build                       # every target nsgo.yaml lists
+ nsgo build -target web           # or all, macos, windows, macos_arm64, ios, android_arm64, miniprogram_wechat, ...

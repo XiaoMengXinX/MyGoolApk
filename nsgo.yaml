@@ -19,11 +19,15 @@ apple:
 android:
   permissions: [android.permission.WRITE_EXTERNAL_STORAGE]
 
-# In-app updates on Android and macOS read the latest GitHub release's appcast,
-# signed with the secret key releases build with (NSGO_UPDATES_KEY).
+# Android and macOS read the latest GitHub release's appcast. The release
+# build signs the packages with NSGO_UPDATES_KEY.
 updates:
   key: jaDUPWWYhv7lOUBGqTxy94hVpV8IvdmzmpAud0QH0eM=
   automatic: true
+  mirrors:
+    - https://gh-proxy.org/
+    - https://cdn.gh-proxy.org/
+    - https://ghproxy.net/
 
 build:
   output: dist
