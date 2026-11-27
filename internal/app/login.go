@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -105,11 +106,29 @@ func (a *App) loginPage(cx *core.Scope) core.Node {
 		// Laid over the page: a row of its own would resize the web view.
 		return core.View{Class: "bg-primary", Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0), Height: core.Pt(3)}}
 	})
+	ua, suffix := loginWebViewAgent(cx.Env().Desktop(), a.backend.UserAgent())
 	return a.screen(titled("登录酷安"), nil,
 		column(fill, "", banner, core.WebView{
-			Source:    core.WebSource{Src: coolapk.LoginURL},
-			UserAgent: a.backend.UserAgent(),
-			OnLoad:    func(core.WebNavigation) { check() },
-			Style:     fill,
+			Source:          core.WebSource{Src: coolapk.LoginURL},
+			UserAgent:       ua,
+			UserAgentSuffix: suffix,
+			OnLoad:          func(core.WebNavigation) { check() },
+			Style:           fill,
 		}, progress))
+}
+
+// loginWebViewAgent chooses the login WebView's user agent. Desktop keeps the
+// platform's desktop user agent with Coolapk's client tag appended so mouse
+// interactions such as slider CAPTCHAs do not switch to touch-only mode.
+func loginWebViewAgent(desktop bool, backendUA string) (userAgent, suffix string) {
+	if !desktop {
+		return backendUA, ""
+	}
+	for _, token := range []string{"+iCoolMarket/", "+CoolMarket/"} {
+		if i := strings.Index(backendUA, token); i >= 0 {
+			appTag := strings.Fields(backendUA[i:])[0]
+			return "", "Version/18.7 Safari/605.1.15 " + appTag
+		}
+	}
+	return "", "Version/18.7 Safari/605.1.15"
 }
