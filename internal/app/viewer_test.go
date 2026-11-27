@@ -5,12 +5,36 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/nsgotest"
 
 	"app/internal/backend"
 )
+
+func TestViewerBackdropTapCloses(t *testing.T) {
+	b := newFakeBackend()
+	b.feed.Images = []backend.Image{{Width: 120, Height: 650}, {Width: 120, Height: 650}}
+	app := start(t, b)
+	app.Press("role:button 查看第 1 张图片 >> nth=1")
+	app.FastForward(time.Second)
+	view := app.Find("image-viewer")
+	at := core.Point{X: 10, Y: view.Frame.Size.Height / 2}
+	drag := app.Touch("image-viewer", at)
+	drag.Move(core.Point{X: 42, Y: at.Y})
+	drag.Move(at)
+	drag.Lift()
+	app.FastForward(time.Second)
+	if !shows(app, "image-viewer") {
+		t.Fatal("dragging in the margin dismissed the viewer")
+	}
+	app.Touch("image-viewer", at).Lift()
+	app.FastForward(time.Second)
+	if shows(app, "image-viewer") {
+		t.Fatal("tapping the margin left the viewer open")
+	}
+}
 
 func TestViewerShowsLongOriginalAtDifferentWidths(t *testing.T) {
 	for _, width := range []int{798, 1206} {

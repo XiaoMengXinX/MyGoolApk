@@ -121,8 +121,8 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	// building or decoding during one made it stutter.
 	current := core.NewSignal(cx, v.index)
 	settle := func(e core.ScrollEvent) {
-		if e.Size.Width > 0 && e.Size.Width == laidOut {
-			page = int(e.Offset.X/e.Size.Width + 0.5)
+		if !e.Stale && e.Size.Width > 0 && e.Size.Width == laidOut {
+			page = max(0, min(int(e.Offset.X/e.Size.Width+0.5), len(v.images)-1))
 			current.Set(page)
 		}
 	}
@@ -172,19 +172,18 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 			When: func() bool { return width.Get() > 0 && max(i-current.Get(), current.Get()-i) <= 1 },
 			Then: func(cx *core.Scope) core.Node {
 				var zoom core.Ref
-				zp := &zoomPage{ref: &zoom}
+				zp := &zoomPage{ref: &zoom, scale: 1}
 				zooms[i] = zp
 				cx.Cleanup(func() {
 					if zooms[i] == zp {
 						delete(zooms, i)
 					}
 				})
-				scale := float32(1)
 				var closing func() bool
 				// A picture left zoomed comes back whole.
 				cx.Effect(func() {
-					if current.Get() != i && scale > 1.05 {
-						scale = 1
+					if current.Get() != i && zp.scale > 1.05 {
+						zp.scale = 1
 						zoom.ZoomTo(1, nil, false)
 					}
 				})
@@ -197,7 +196,7 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 					if closing != nil {
 						closing()
 						closing = nil
-						if scale > 1.05 {
+						if zp.scale > 1.05 {
 							zoom.ZoomTo(1, nil, true)
 						} else {
 							zoom.ZoomTo(2.5, &e.Position, true)
@@ -242,10 +241,10 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 					Ref: &zoom, MinZoomScale: 1, MaxZoomScale: 4, CenterContent: true, HideIndicator: true,
 					OnScroll: func(e core.ScrollEvent) {
 						zp.off, zp.content, zp.size = e.Offset, e.ContentSize, e.Size
-						if e.ZoomScale != scale {
+						if e.ZoomScale != zp.scale {
 							pinched = time.Now()
 						}
-						scale = e.ZoomScale
+						zp.scale = e.ZoomScale
 						zoomedHere.Set(e.ZoomScale > 1.05)
 						if current.GetUntracked() == i {
 							zoomed.Set(e.ZoomScale > 1.05)
@@ -457,10 +456,48 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	if hoverable {
 		panActivation = core.PanActivation{}
 	}
+	var backdropTap bool
+	var tapAt core.Point
+	// Observe completed taps without taking a drag or pinch away from the scroll views.
+	onBackdrop := func(e core.TouchEvent) {
+		if len(e.Touches) != 1 || e.Phase == core.TouchCancel {
+			backdropTap = false
+			return
+		}
+		p := e.Touches[0].Position
+		if e.Phase == core.TouchStart {
+			tapAt = p
+			backdropTap = false
+			viewport := core.Size{Width: width.GetUntracked(), Height: height.GetUntracked()}
+			if viewport.Width <= 0 {
+				return
+			}
+			// The pager can be between pictures while its animation is running.
+			pageX := p.X + core.Points(pos.GetUntracked())*viewport.Width
+			i := max(0, min(int(pageX/viewport.Width), len(v.images)-1))
+			if zp := zooms[i]; zp != nil {
+				size := viewerImageSize(v.images[i], viewport)
+				x := max(0, (viewport.Width-size.Width*core.Points(zp.scale))/2)
+				y := max(0, (viewport.Height-size.Height*core.Points(zp.scale))/2)
+				localX := pageX - core.Points(i)*viewport.Width
+				backdropTap = localX < x || localX >= viewport.Width-x || p.Y < y || p.Y >= viewport.Height-y
+			}
+			return
+		}
+		dx, dy := p.X-tapAt.X, p.Y-tapAt.Y
+		if dx*dx+dy*dy >= 10*10 {
+			backdropTap = false
+		}
+		if e.Phase == core.TouchEnd && backdropTap {
+			backdropTap = false
+			a.closeViewer()
+		}
+	}
 	content := core.View{
 		// A zoomed picture's own scroll view takes a drag first, and only
 		// what goes on past its edge moves the pictures away.
-		Style: fill, OnPan: onPan, PanActivation: panActivation, PanScrollHandoff: true,
+		TestID: "image-viewer", Style: fill, OnPan: onPan, PanActivation: panActivation, PanScrollHandoff: true,
+		OnTouchCapture: onBackdrop,
 		StyleFunc: func() core.Style {
 			s := core.Style{Transform: core.Transform{TranslateY: dragY.Get()}}
 			if !dragging.Get() {
@@ -545,6 +582,7 @@ func viewerImageSize(im backend.Image, viewport core.Size) core.Size {
 // zoomPage is a picture of the viewer: its zoom scroll view and where it is.
 type zoomPage struct {
 	ref           *core.Ref
+	scale         float32
 	off           core.Point
 	content, size core.Size
 }
