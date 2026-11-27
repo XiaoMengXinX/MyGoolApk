@@ -107,7 +107,7 @@ func (b *fakeBackend) PageEntries(ctx context.Context, q backend.PageQuery) (bac
 func (b *fakeBackend) TopicCategories(context.Context) ([]backend.TopicCategory, error) {
 	return []backend.TopicCategory{{Title: "推荐", URL: "u1"}, {Title: "摄影", URL: "u2"}}, nil
 }
-func (b *fakeBackend) TopicList(_ context.Context, c backend.TopicCategory, _ int) (backend.TopicPage, error) {
+func (b *fakeBackend) TopicList(_ context.Context, c backend.TopicCategory, _ int, _ backend.ListCursor) (backend.TopicPage, error) {
 	return backend.TopicPage{Items: []backend.TopicItem{{ID: "1", Title: c.Title + "话题", Subtitle: "1万热度"}}}, nil
 }
 func (b *fakeBackend) SessionUID() string { return b.uid }

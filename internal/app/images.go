@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,6 +91,10 @@ func (s *imageStore) download(url string) (string, error) {
 		return "", err
 	}
 	req.Header.Set("User-Agent", s.userAgent)
+	// Weibo's image CDN validates the source site of the preview request.
+	if strings.HasSuffix(req.URL.Hostname(), ".sinaimg.cn") {
+		req.Header.Set("Referer", "https://weibo.com/")
+	}
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return "", err
@@ -124,6 +129,10 @@ func (s *imageStore) download(url string) (string, error) {
 // another item. Until it is on disk the view shows the placeholder color
 // its class names.
 func (a *App) pic(cx *core.Scope, url func() string, fit core.ResizeMode, class string, style core.Style) core.Node {
+	return cachedPicture(a.imageFile(cx, url), fit, class, style)
+}
+
+func (a *App) imageFile(cx *core.Scope, url func() string) func() string {
 	src := core.NewSignal(cx, "")
 	cx.Effect(func() {
 		u := url()
@@ -149,6 +158,10 @@ func (a *App) pic(cx *core.Scope, url func() string, fit core.ResizeMode, class 
 			})
 		}()
 	})
+	return src.Get
+}
+
+func cachedPicture(path func() string, fit core.ResizeMode, class string, style core.Style) core.Image {
 	return core.Image{
 		Class:      class,
 		Style:      style,
@@ -156,7 +169,7 @@ func (a *App) pic(cx *core.Scope, url func() string, fit core.ResizeMode, class 
 		// A picture that is already on disk should not fade in: Android fades over 300 ms
 		// by default, and a view that is rebound mid-fade can be left transparent.
 		FadeDuration: time.Millisecond,
-		SourceFunc:   func() core.ImageSource { return core.Src(src.Get()) },
+		SourceFunc:   func() core.ImageSource { return core.Src(path()) },
 	}
 }
 

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"slices"
 	"strconv"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -41,11 +42,11 @@ var homeTabs = []pageTab{
 	page("热榜", "V9_HOME_TAB_RANKING"),
 	page("快讯", "V11_HOME_TAB_NEWS"),
 	page("新机", "V11_HOME_NEW"),
+	page("汽车", "V11_HOME_CAR"),
 	page("开箱", "V13_IOSHOME_OPENSHOW"),
 	page("摄影", "V13_HOME_SHEYING"),
 	page("游戏", "V15_YOUXI"),
 	page("教程", "V11_HOME_TAB_JC"),
-	page("汽车", "V11_HOME_CAR"),
 	page("外设", "V14_WAISHE"),
 	page("视频", "V9_HOME_TAB_SHIPIN"),
 	page("美化", "V11_HOME_MEIHUA"),
@@ -54,9 +55,9 @@ var homeTabs = []pageTab{
 
 var digitalTabs = []pageTab{
 	{Title: "数码库", Kind: tabPage, URL: backend.ProductCategoriesURL},
-	page("数码", "V10_DIGITAL_HOME"),
-	page("手机", "V10_CHANNEL_SJB"),
-	page("排行榜", "V10_CHANNEL_SMB_TOP"),
+	{Title: "数码", Kind: tabPage, URL: backend.DigitalHomeURL},
+	{Title: "手机", Kind: tabPage, URL: backend.DigitalPhoneURL},
+	{Title: "排行榜", Kind: tabPage, URL: backend.DigitalRankURL},
 	page("系统", "V13_DIGITAL_ROM"),
 	page("平板", "V15_PAD"),
 	page("电脑", "V8_ZHUANTI_COMPUTER_20230413"),
@@ -108,6 +109,9 @@ func (g *tabGroup) scrollToTop() {
 		return
 	}
 	if l := g.lists[i]; l != nil {
+		if l.catalogSelection != nil {
+			l = l.catalogSelection
+		}
 		l.p.list.ScrollTo(core.Point{}, true)
 	}
 }
@@ -119,6 +123,9 @@ func (g *tabGroup) refresh() {
 		return
 	}
 	if l := g.lists[i]; l != nil {
+		if l.catalogSelection != nil {
+			l = l.catalogSelection
+		}
 		l.p.refreshing.Set(true)
 		l.p.reload()
 	}
@@ -190,8 +197,11 @@ func (g *tabGroup) list(cx *core.Scope, i int) *pageList {
 func (g *tabGroup) reload(kinds ...tabKind) {
 	for i, tab := range g.tabs {
 		for _, kind := range kinds {
-			if tab.Kind == kind && g.lists[i] != nil {
-				g.lists[i].p.reload()
+			if l := g.lists[i]; tab.Kind == kind && l != nil {
+				l.url, l.title, l.contentURL = "", "", ""
+				l.cursor = backend.ListCursor{}
+				l.head, l.inlineTab = nil, -1
+				l.p.reset()
 			}
 		}
 	}
@@ -240,6 +250,13 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 					}
 					if over != nil {
 						spec = over.under(cx, i, spec, func() { l.p.items.Get(); l.p.loaded.Get() })
+					}
+					switch g.tabs[i].URL {
+					case backend.ProductCategoriesURL:
+						return g.a.productCatalog(cx, l, spec)
+					}
+					if l.deviceEnvironment != nil {
+						spec.header = g.a.currentDeviceRating(cx, l, func() bool { return g.selected.Get() == i })
 					}
 					if g.listView != nil {
 						return g.listView(cx, i, spec)
@@ -419,19 +436,47 @@ func abs32(x float32) float32 {
 // entryList lists the rows of a server page.
 // spec tells where the list is and what is around it.
 func (a *App) entryList(cx *core.Scope, l *pageList, spec listSpec) core.Node {
+	if l.deviceEnvironment != nil && spec.header == nil {
+		spec.header = a.currentDeviceRating(cx, l, func() bool { return true })
+	}
 	spec.empty, spec.emptyHint, spec.bottom, spec.skeleton = "暂无内容", "这里还没有可显示的内容。", 24, skeletonCard
+	firstRank := core.NewMemo(cx, func() int {
+		return slices.IndexFunc(l.p.items.Get(), func(e backend.PageEntry) bool { return e.Ranked })
+	})
 	return pagerList(cx, l.p, spec,
 		func(cx *core.Scope, get func() backend.PageEntry, r core.ListRow) core.Node {
-			return a.entryView(cx, get, l)
+			return a.entryView(cx, get, l, func(cx *core.Scope) core.Node {
+				item := func() backend.CardItem { return catalogItem(get()) }
+				if get().Timeline {
+					return a.timelineRow(cx, item, r.First, func() bool { return r.Index() == len(l.p.items.Get())-1 })
+				}
+				return a.ratedItemRow(cx, item, func() int {
+					if !get().Ranked {
+						return 0
+					}
+					return r.Index() - firstRank.Get() + 1
+				})
+			})
 		})
 }
 
 // entryView shows a row of a server page, rebuilt as it moves to a row of
 // another kind.
-func (a *App) entryView(cx *core.Scope, get func() backend.PageEntry, l *pageList) core.Node {
-	kind := core.NewMemo(cx, func() backend.EntryKind { return get().Kind })
+func (a *App) entryView(cx *core.Scope, get func() backend.PageEntry, l *pageList, rated func(*core.Scope) core.Node) core.Node {
+	type presentation struct {
+		kind            backend.EntryKind
+		rated, timeline bool
+	}
+	kind := core.NewMemo(cx, func() presentation {
+		e := get()
+		return presentation{e.Kind, e.RatingRow, e.Timeline}
+	})
 	return core.Dynamic(func(cx *core.Scope) core.Node {
-		switch kind.Get() {
+		style := kind.Get()
+		if rated != nil && (style.rated || style.timeline) {
+			return rated(cx)
+		}
+		switch style.kind {
 		case backend.EntryCard:
 			return a.cardView(cx, get, l)
 		case backend.EntryNews:
@@ -461,7 +506,7 @@ func (a *App) entryRow(cx *core.Scope, get func() backend.PageEntry) core.Node {
 			a.openList(e.Title, e.URL)
 		}
 	}, core.Style{Direction: core.Row, Padding: core.Symmetric(12, 16), Gap: 16, AlignItems: core.AlignCenter}, "bg-background",
-		core.View{Class: "bg-surface-container-highest",
+		core.View{
 			Style: core.Style{Width: core.Pt(48), Height: core.Pt(48), Overflow: core.Hidden, FlexShrink: 0},
 			StyleFunc: func() core.Style {
 				if get().Round {
@@ -472,7 +517,13 @@ func (a *App) entryRow(cx *core.Scope, get func() backend.PageEntry) core.Node {
 			Children: []core.Node{a.pic(cx, func() string { return get().LogoURL }, core.Cover, "", fillAbs)}},
 		column(fill.Merge(core.Style{Gap: 2}), "",
 			core.Text{ContentFunc: func() string { return get().Title }, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 500)},
-			core.Text{ContentFunc: func() string { return get().Subtitle }, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textSecondary, 400)},
+			heatLine(func() string { return get().Hot }, func() string {
+				e := get()
+				if e.Hot != "" && e.Kind == backend.EntryLink {
+					return itemActivity(e.Hot, e.Discussions)
+				}
+				return e.Subtitle
+			}, "text-on-surface-variant"),
 		),
 		icon(&symbols.ChevronRight, 24, "text-on-surface-variant"),
 	)

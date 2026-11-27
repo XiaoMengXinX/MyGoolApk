@@ -27,12 +27,19 @@ type pager[T any] struct {
 	gen     int
 	// start reads, on the graph's goroutine, what page asks for, and returns
 	// the fetch of it, which runs on another.
-	start   func(page int) func(ctx context.Context) ([]T, bool, error)
+	start   func(page int) func(ctx context.Context) (pageBatch[T], error)
 	id      func(T) string
 	list    core.Ref
 	started bool
 	// blank counts the pages on end that brought nothing new.
 	blank int
+}
+
+type pageBatch[T any] struct {
+	items     []T
+	hasMore   bool
+	unchanged bool
+	apply     func()
 }
 
 func newPager[T any](cx *core.Scope, fetch func(context.Context, int) ([]T, bool, error), id func(T) string) *pager[T] {
@@ -43,6 +50,16 @@ func newPager[T any](cx *core.Scope, fetch func(context.Context, int) ([]T, bool
 // newQueryPager is a pager whose fetch depends on signals: query reads them
 // as a page is asked for, on the graph's goroutine, and fetch gets what it read.
 func newQueryPager[T, Q any](cx *core.Scope, query func() Q, fetch func(context.Context, Q, int) ([]T, bool, error), id func(T) string) *pager[T] {
+	return newBatchPager(cx, func(page int) func(context.Context) (pageBatch[T], error) {
+		q := query()
+		return func(ctx context.Context) (pageBatch[T], error) {
+			items, more, err := fetch(ctx, q, page)
+			return pageBatch[T]{items: items, hasMore: more}, err
+		}
+	}, id)
+}
+
+func newBatchPager[T any](cx *core.Scope, start func(int) func(context.Context) (pageBatch[T], error), id func(T) string) *pager[T] {
 	return &pager[T]{
 		cx:         cx,
 		items:      core.NewSignalFunc(cx, []T(nil), nil),
@@ -51,11 +68,8 @@ func newQueryPager[T, Q any](cx *core.Scope, query func() Q, fetch func(context.
 		refreshing: core.NewSignal(cx, false),
 		err:        core.NewSignal(cx, ""),
 		moreErr:    core.NewSignal(cx, ""),
-		start: func(page int) func(context.Context) ([]T, bool, error) {
-			q := query()
-			return func(ctx context.Context) ([]T, bool, error) { return fetch(ctx, q, page) }
-		},
-		id: id,
+		start:      start,
+		id:         id,
 	}
 }
 
@@ -124,7 +138,7 @@ func (p *pager[T]) load(more bool) {
 	gen := p.gen
 	fetch := p.start(page)
 	go func() {
-		items, hasMore, err := fetch(context.Background())
+		batch, err := fetch(context.Background())
 		p.cx.Post(func() {
 			if gen != p.gen {
 				return
@@ -139,6 +153,15 @@ func (p *pager[T]) load(more bool) {
 			case err != nil:
 				p.err.Set(err.Error())
 			default:
+				if batch.apply != nil {
+					batch.apply()
+				}
+				p.err.Set("")
+				p.moreErr.Set("")
+				if batch.unchanged {
+					return
+				}
+				items, hasMore := batch.items, batch.hasMore
 				var base []T
 				if more {
 					base = p.items.GetUntracked()
@@ -148,8 +171,6 @@ func (p *pager[T]) load(more bool) {
 				p.page = page
 				p.hasMore.Set(hasMore)
 				p.loaded.Set(true)
-				p.err.Set("")
-				p.moreErr.Set("")
 				// A page that adds no row leaves nothing to scroll to that would
 				// ask for the next. Rows the list shows already mean the server
 				// is repeating itself, and the list ends. A page with no rows,

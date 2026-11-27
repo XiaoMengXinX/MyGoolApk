@@ -69,7 +69,7 @@ func (a *App) tradeBrandsPage(cx *core.Scope, title string) core.Node {
 								return *e
 							}
 							return backend.PageEntry{}
-						}, l)
+						}, l, nil)
 					}
 					return a.tileRow(cx, func() []tradeTile { return get().tiles })
 				})
@@ -144,13 +144,13 @@ func (a *App) tileRow(cx *core.Scope, get func() []tradeTile) core.Node {
 					a.pic(cx, func() string { return tile().pic }, core.Contain, "", fillAbs)}},
 				core.Text{ContentFunc: func() string { return tile().title }, MaxLines: 2, Class: "text-black",
 					Style: textStyle(textCaption, 500).Merge(core.Style{TextAlign: core.TextAlignCenter})},
-				dynamicShape(cx, func() bool { return tile().hot != "" }, func(cx *core.Scope, hot bool) core.Node {
-					if !hot {
-						return core.Group{}
-					}
-					return core.Text{ContentFunc: func() string { return "热度 " + tile().hot }, MaxLines: 1, Class: "text-black/60",
-						Style: textStyle(textCaption, 400).Merge(core.Style{TextAlign: core.TextAlignCenter})}
-				}))
+				core.Show{
+					When: func() bool { return tile().hot != "" },
+					Then: func(cx *core.Scope) core.Node {
+						hot := func() string { return tile().hot }
+						return heatLine(hot, hot, "text-black/60")
+					},
+				})
 		})
 	}
 	return row(core.Style{Gap: 8, Padding: core.Edges{Top: 4, Right: 8, Bottom: 4, Left: 8}, AlignItems: core.AlignStretch}, "", cells...)

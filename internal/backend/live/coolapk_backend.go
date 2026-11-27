@@ -27,10 +27,7 @@ type coolapkBackend struct {
 	productTags map[string]string // product id -> the tag its feed is listed under
 	// configs are the versions of the products shown, by product id: the
 	// product's page tells them, and the card of its list shows them.
-	configs map[string][]map[string]any
-	// flexURLs are the content-list urls of the pages whose configCard
-	// names one, by the page's url.
-	flexURLs    map[string]string
+	configs     map[string][]map[string]any
 	followURL   string
 	followTitle string
 }
@@ -115,7 +112,6 @@ func New(dir string, profile backend.DeviceProfile) (backend.Backend, error) {
 		cursors:       make(map[string]apiCursor),
 		productTags:   make(map[string]string),
 		configs:       make(map[string][]map[string]any),
-		flexURLs:      make(map[string]string),
 	}, nil
 }
 
@@ -540,7 +536,7 @@ func videoFromObject(object map[string]any) *backend.Video {
 	}
 	if raw := firstAPIString(object, "media_info"); raw != "" && json.Unmarshal([]byte(raw), &info) == nil {
 		if v.CoverURL == "" {
-			v.CoverURL = info.Cover
+			v.CoverURL = normalizeCoolapkImage(info.Cover)
 		}
 		if ms, err := info.Duration.Int64(); err == nil {
 			v.Duration = time.Duration(ms) * time.Millisecond
@@ -549,6 +545,11 @@ func videoFromObject(object map[string]any) *backend.Video {
 	}
 	if v.CoverURL == "" {
 		v.CoverURL = normalizeCoolapkImage(firstAPIString(object, "pic"))
+	}
+	if v.CoverURL == "" {
+		if pics := apiStrings(object, "picArr"); len(pics) > 0 {
+			v.CoverURL = normalizeCoolapkImage(pics[0])
+		}
 	}
 	return v
 }

@@ -226,7 +226,7 @@ func (b *coolapkBackend) UserConnections(ctx context.Context, uid string, kind b
 }
 
 // topicHomeURL is the page of the topic tab: its card lists the categories.
-const topicHomeURL = "/page?url=V11_VERTICAL_TOPIC"
+const topicHomeURL = "V11_VERTICAL_TOPIC"
 
 func (b *coolapkBackend) TopicCategories(ctx context.Context) ([]backend.TopicCategory, error) {
 	objects, err := listObjects(b.client.GetPageDataListWithCtx(ctx, coolapk.PageDataListRequest{URL: topicHomeURL, Title: "话题", Page: 1}))
@@ -235,10 +235,11 @@ func (b *coolapkBackend) TopicCategories(ctx context.Context) ([]backend.TopicCa
 	}
 	var out []backend.TopicCategory
 	for _, card := range objects {
+		selected := firstAPIString(cardExtra(card), "selectedTab")
 		for _, e := range apiObjects(card, "entities") {
 			title, url := firstAPIString(e, "title"), firstAPIString(e, "url")
 			if title != "" && url != "" {
-				out = append(out, backend.TopicCategory{Title: title, URL: url})
+				out = append(out, backend.TopicCategory{Title: title, URL: url, Default: title == selected})
 			}
 		}
 	}
@@ -248,46 +249,41 @@ func (b *coolapkBackend) TopicCategories(ctx context.Context) ([]backend.TopicCa
 	return out, nil
 }
 
-func (b *coolapkBackend) TopicList(ctx context.Context, category backend.TopicCategory, page int) (backend.TopicPage, error) {
-	key := "topics:" + category.URL
-	cursor := b.cursor(key, page)
+func (b *coolapkBackend) TopicList(ctx context.Context, category backend.TopicCategory, page int, cursor backend.ListCursor) (backend.TopicPage, error) {
 	objects, err := listObjects(b.client.GetPageDataListWithCtx(ctx, coolapk.PageDataListRequest{
-		URL: category.URL, Title: category.Title, Page: page, LastItem: cursor.last,
+		URL: category.URL, Title: category.Title, Page: page, FirstItem: cursor.FirstItem, LastItem: cursor.LastItem,
 	}))
 	if err != nil {
 		return backend.TopicPage{}, err
 	}
 	var items []backend.TopicItem
-	last := ""
 	for _, o := range objects {
 		// The first entry is a configuration card, not a topic.
 		if firstAPIString(o, "entityType") != "topic" {
 			continue
 		}
-		last = apiID(o)
 		items = append(items, backend.TopicItem{
-			ID:       last,
+			ID:       apiID(o),
 			Title:    firstAPIString(o, "title"),
 			LogoURL:  normalizeCoolapkImage(firstAPIString(o, "logo")),
 			Subtitle: firstAPIString(o, "subTitle"),
 		})
 	}
-	b.storeCursor(key, page, apiCursor{last: last})
-	return backend.TopicPage{Items: items, HasMore: len(items) > 0}, nil
+	return backend.TopicPage{Items: items, HasMore: len(items) > 0, Cursor: pageCursor(objects, cursor, page)}, nil
 }
 
 func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (backend.PageEntriesResult, error) {
 	switch q.URL {
-	case backend.HeadlineURL, backend.FollowURL:
-		kind := backend.FeedRecommend
-		if q.URL == backend.FollowURL {
-			kind = backend.FeedFollow
-		}
-		objects, err := b.feedObjects(ctx, backend.FeedQuery{Kind: kind, Page: q.Page})
+	case backend.HeadlineURL:
+		objects, err := listObjects(b.client.GetHomeFeedWithCtx(ctx, coolapk.HomeFeedRequest{
+			Page: q.Page, FirstItem: q.Cursor.FirstItem, LastItem: q.Cursor.LastItem,
+		}))
 		if err != nil {
 			return backend.PageEntriesResult{}, err
 		}
-		return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: len(objects) > 0}, nil
+		return backend.PageEntriesResult{
+			Entries: entriesFromObjects(objects), HasMore: len(objects) > 0, Cursor: pageCursor(objects, q.Cursor, q.Page),
+		}, nil
 	case backend.MyLikesURL, backend.MyRepliesURL, backend.MyFootprintsURL, backend.MyBlocksURL, backend.MyCollectionsURL:
 		return b.myList(ctx, q)
 	}
@@ -311,64 +307,51 @@ func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (
 	if q.URL == backend.TradeBrandsURL {
 		return b.tradeBrands(ctx, q.Page)
 	}
-	key := "pageEntries:" + q.URL
-	cursor := b.cursor(key, q.Page)
-	var response *coolapk.RawResponse
-	var err error
-	if q.URL == backend.ProductCategoriesURL {
-		response, err = b.client.GetProductCategoriesWithCtx(ctx)
-	} else {
-		response, err = b.client.GetPageDataListWithCtx(ctx, coolapk.PageDataListRequest{
-			URL: q.URL, Title: q.Title, Page: q.Page, LastItem: cursor.last,
-		})
+	listURL := q.URL
+	if q.Page > 1 && q.ContentURL != "" {
+		listURL = q.ContentURL
 	}
-	objects, err := listObjects(response, err)
+	fetch := func(url string, cursor backend.ListCursor) ([]map[string]any, error) {
+		return listObjects(b.client.GetPageDataListWithCtx(ctx, coolapk.PageDataListRequest{
+			URL: url, Title: q.Title, Page: q.Page, FirstItem: cursor.FirstItem, LastItem: cursor.LastItem,
+		}))
+	}
+	var objects []map[string]any
+	var err error
+	cursor := q.Cursor
+	if q.URL == backend.ProductCategoriesURL {
+		objects, err = listObjects(b.client.GetProductCategoriesWithCtx(ctx))
+	} else {
+		if listURL != q.ContentURL && q.ContentURL != "" {
+			cursor = backend.ListCursor{}
+		}
+		objects, err = fetch(listURL, cursor)
+	}
 	if err != nil {
 		return backend.PageEntriesResult{}, err
 	}
-	if q.URL != backend.ProductCategoriesURL {
-		b.storeCursor(key, q.Page, feedCursor(objects))
-	}
-	// A page whose configCard names a flexList url lists nothing of its own:
-	// the posts come from that url, as the current clients load them apart.
+	contentURL := q.ContentURL
+	title := pageTitle(objects)
+	var head []backend.PageEntry
 	if q.Page == 1 {
-		if u := flexListURL(objects); u != "" {
-			b.mu.Lock()
-			b.flexURLs[q.URL] = u
-			b.mu.Unlock()
-		}
-	}
-	b.mu.Lock()
-	flexURL := b.flexURLs[q.URL]
-	b.mu.Unlock()
-	if flexURL != "" {
-		inlineHasFeeds := false
-		for _, o := range objects {
-			if firstAPIString(o, "entityType") == "feed" {
-				inlineHasFeeds = true
-				break
+		contentURL = flexListURL(objects)
+		if contentURL != "" && !slices.ContainsFunc(objects, func(o map[string]any) bool {
+			return firstAPIString(o, "entityType") == "feed"
+		}) {
+			head = entriesFromObjects(objects)
+			cursor = backend.ListCursor{}
+			if contentURL == q.ContentURL {
+				cursor = q.Cursor
 			}
-		}
-		if !inlineHasFeeds {
-			flexKey := key + "#flex"
-			flexCursor := b.cursor(flexKey, q.Page)
-			flexResp, flexErr := b.client.GetPageDataListWithCtx(ctx, coolapk.PageDataListRequest{
-				URL: flexURL, Title: q.Title, Page: q.Page, LastItem: flexCursor.last,
-			})
-			flexObjects, flexErr2 := listObjects(flexResp, flexErr)
-			if flexErr2 != nil && q.Page == 1 {
-				// The head cards are there; the posts simply do not follow yet.
-				return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: false, Title: pageTitle(objects)}, nil
+			objects, err = fetch(contentURL, cursor)
+			if err != nil {
+				return backend.PageEntriesResult{Title: title}, err
 			}
-			if flexErr2 != nil {
-				return backend.PageEntriesResult{}, flexErr2
+			if len(objects) == 0 && cursor.FirstItem != "" {
+				return backend.PageEntriesResult{}, nil
 			}
-			b.storeCursor(flexKey, q.Page, feedCursor(flexObjects))
-			entries := entriesFromObjects(flexObjects)
-			if q.Page == 1 {
-				entries = append(entriesFromObjects(objects), entries...)
-			}
-			return backend.PageEntriesResult{Entries: entries, HasMore: len(flexObjects) > 0, Title: pageTitle(objects)}, nil
+		} else {
+			contentURL = ""
 		}
 	}
 	// The card of a product's versions comes empty: the product's page told them.
@@ -386,13 +369,101 @@ func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (
 			}
 		}
 	}
-	return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: len(objects) > 0 && q.URL != backend.ProductCategoriesURL, Title: pageTitle(objects)}, nil
+	entries := entriesFromObjects(objects)
+	if q.URL == backend.DigitalHomeURL && q.Page == 1 {
+		entries = b.digitalFollowedProducts(ctx, entries)
+	}
+	ranked := q.URL == backend.DigitalRankURL
+	for _, o := range objects {
+		if firstAPIString(o, "entityTemplate") == "configCard" {
+			ranked = apiInt(cardExtra(o), "withRanking") == 1
+			break
+		}
+	}
+	// The request keeps the rank style even when a later page has no config card.
+	if link, err := url.Parse(strings.TrimPrefix(q.URL, "#")); err == nil {
+		query := link.Query()
+		extra, _ := decodeAPIObject([]byte(query.Get("configCardExtraData")))
+		ranked = ranked || apiInt(extra, "withRanking") == 1
+		for i := range entries {
+			e := &entries[i]
+			if e.Kind == backend.EntryProduct || (query.Get("ratingUI") == "1" && strings.HasPrefix(e.ID, "topic:")) {
+				e.RatingRow, e.Ranked = true, ranked
+			}
+		}
+	}
+	return backend.PageEntriesResult{
+		Entries: append(head, entries...), HasMore: len(objects) > 0 && q.URL != backend.ProductCategoriesURL,
+		Title: title, ContentURL: contentURL, Cursor: pageCursor(objects, cursor, q.Page),
+	}, nil
+}
+
+// Pinned cards and client instructions are outside the scrollable list.
+func pageCursor(objects []map[string]any, previous backend.ListCursor, page int) backend.ListCursor {
+	var cursor backend.ListCursor
+	for _, o := range objects {
+		switch firstAPIString(o, "entityTemplate") {
+		case "configCard", "refreshCard":
+			continue
+		}
+		if apiInt(o, "entityFixed") == 1 {
+			continue
+		}
+		if id := apiID(o); id != "" {
+			if cursor.FirstItem == "" {
+				cursor.FirstItem = id
+			}
+			cursor.LastItem = id
+		}
+	}
+	if cursor.FirstItem == "" {
+		return previous
+	}
+	if page > 1 && previous.FirstItem != "" {
+		cursor.FirstItem = previous.FirstItem
+	}
+	return cursor
+}
+
+func isDeviceEnvironmentCard(e backend.PageEntry) bool {
+	return e.Card != nil && e.Card.Kind == backend.CardDeviceEnvironment
+}
+
+// digitalFollowedProducts replaces the environment recommendations with the signed-in account's products.
+func (b *coolapkBackend) digitalFollowedProducts(ctx context.Context, entries []backend.PageEntry) []backend.PageEntry {
+	i := slices.IndexFunc(entries, isDeviceEnvironmentCard)
+	if i < 0 {
+		return entries
+	}
+	if b.SessionUID() != "" {
+		objects, err := listObjects(b.client.GetPageDataListWithCtx(ctx, coolapk.PageDataListRequest{
+			URL: backend.MyProductsURL, Title: "关注的数码", Page: 1,
+		}))
+		if err == nil {
+			c := &backend.Card{Kind: backend.CardFollowedProducts, Title: "我的关注", URL: backend.MyProductsURL, More: "更多"}
+			for _, o := range objects {
+				if firstAPIString(o, "entityType") == "product" {
+					if item, ok := cardItem(o); ok {
+						c.Items = append(c.Items, item)
+					}
+				}
+				if len(c.Items) == 4 {
+					break
+				}
+			}
+			if len(c.Items) > 0 {
+				entries[i].Card = c
+				return entries
+			}
+		}
+	}
+	return slices.Delete(entries, i, i+1)
 }
 
 func pageTitle(objects []map[string]any) string {
 	for _, o := range objects {
 		if firstAPIString(o, "entityTemplate") == "configCard" {
-			return firstAPIString(apiObject(o, "extraDataArr"), "pageTitle")
+			return firstAPIString(cardExtra(o), "pageTitle")
 		}
 	}
 	return ""
@@ -427,7 +498,10 @@ func entriesFromObjects(objects []map[string]any) []backend.PageEntry {
 					Kind: backend.EntryProduct, ID: id, Title: firstAPIString(o, "title"),
 					LogoURL:  normalizeCoolapkImage(firstAPIString(o, "logo")),
 					Subtitle: productSubtitle(o), Hot: firstAPIString(o, "hot_num_txt"),
-					Discussions: firstAPIString(o, "feed_comment_num_txt"), Score: searchScore(o, "owner_star_average_score", "star_average_score"),
+					Discussions: firstAPIString(o, "feed_comment_num_txt", "feed_comment_num"), Score: searchScore(o, "owner_star_average_score", "star_average_score"),
+					Rating:   productRating(o),
+					Followed: apiInt(apiObject(o, "userAction"), "follow") == 1,
+					Timeline: strings.HasPrefix(firstAPIString(o, "entityTemplate"), "productTimeline"),
 				})
 			}
 			return
@@ -476,7 +550,8 @@ func entriesFromObjects(objects []map[string]any) []backend.PageEntry {
 					Kind: backend.EntryLink, ID: "topic:" + title, Title: title, LogoURL: normalizeCoolapkImage(firstAPIString(o, "logo")),
 					Subtitle: subtitle,
 					Hot:      hot, Discussions: discussions, Score: searchScore(o, "star_average_score"),
-					URL: "/t/" + title,
+					Rating: itemRating(o, "star_average_score", "rating_average_score"),
+					URL:    "/t/" + title,
 				})
 			}
 			return

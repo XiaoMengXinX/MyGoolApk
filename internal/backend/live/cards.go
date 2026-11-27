@@ -25,9 +25,12 @@ var cardKinds = map[string]backend.CardKind{
 	"iconMiniLinkGridCard":    backend.CardChips,
 	"capsuleListCard":         backend.CardChips,
 	"iconListCard":            backend.CardList,
-	"productTimelineListCard": backend.CardList,
+	"productTimelineListCard": backend.CardTimeline,
+	"colorfulScrollCard":      backend.CardProductHighlights,
+	"ratingNodeUserEnv":       backend.CardDeviceEnvironment,
 	"imageTextScrollCard":     backend.CardEditorial,
 	"imageSquareScrollCard":   backend.CardTiles,
+	"imageScrollCard":         backend.CardTiles,
 	"feedScrollCard":          backend.CardScroll,
 	"titleCard":               backend.CardTitle,
 	"selectorLinkCard":        backend.CardSelector,
@@ -37,6 +40,7 @@ var cardKinds = map[string]backend.CardKind{
 	"imageTextGridCard":       backend.CardImageGrid,
 	"iconButtonGridCard":      backend.CardButtons,
 	"messageCard":             backend.CardNote,
+	"textCard":                backend.CardNote,
 	"headCard":                backend.CardNote,
 	"refreshCard":             backend.CardTitle,
 	"listCard":                backend.CardList,
@@ -46,14 +50,65 @@ var cardKinds = map[string]backend.CardKind{
 // cardFromObject reads a server card, or nil when the app does not show it
 // as a card.
 func cardFromObject(o map[string]any) *backend.Card {
-	kind, ok := cardKinds[firstAPIString(o, "entityTemplate")]
+	template := firstAPIString(o, "entityTemplate")
+	kind, ok := cardKinds[template]
+	entities := apiObjects(o, "entities")
+	if template == "feedListCard" && len(entities) > 0 && firstAPIString(o, "title") != "" {
+		kind, ok = backend.CardEntries, true
+	}
 	if !ok {
 		return nil
 	}
 	c := &backend.Card{Kind: kind, Title: firstAPIString(o, "title")}
+	extra := cardExtra(o)
+	page := firstAPIString(extra, "cardPageName")
+	c.Ranked = apiInt(extra, "withRanking") == 1
+	c.Continues = firstAPIString(extra, "viewBackgroundStyle") == "roundTop"
+	isCategoryGrid := template == "iconLinkGridCard" && firstAPIString(o, "url") == "#/product/categoryList?listType=grid"
+	if isCategoryGrid {
+		c.Columns = 5
+	} else if template == "iconLinkGridCard" && (page == "V9_HOME_TAB_WENDA" || page == "IOS_find_ERSHOU") {
+		c.Columns, c.Inset = 4, true
+	}
+	if kind == backend.CardList && len(entities) > 0 {
+		switch firstAPIString(entities[0], "entityType") {
+		case "product":
+			kind = backend.CardProductList
+		case "topic":
+			if template == "listCard" || strings.Contains(firstAPIString(o, "url"), "ratingUI=1") {
+				kind = backend.CardProductList
+			}
+		}
+	}
+	if template == "iconMiniLinkGridCard" && page == "V9_HOME_TAB_SHIPIN" {
+		kind, c.Inset = backend.CardMiniLinks, true
+	} else if template == "iconMiniLinkGridCard" && firstAPIString(extra, "viewBackgroundStyle") == "roundBottom" {
+		kind = backend.CardMiniLinks
+	}
+	if template == "iconScrollCard" && len(entities) > 0 && firstAPIString(entities[0], "entityType") == "topic" {
+		kind, c.Inset = backend.CardTopicStrip, true
+	}
+	if page == "V15_YOUXI" && template == "imageScrollCard" {
+		c.Inset = true
+	}
+	if kind == backend.CardIcons && c.Ranked {
+		kind = backend.CardRanking
+	}
+	c.Kind = kind
+	switch kind {
+	case backend.CardList, backend.CardConfigs, backend.CardAvatars, backend.CardPairs, backend.CardRanking,
+		backend.CardEditorial, backend.CardTimeline, backend.CardProductList, backend.CardProductHighlights,
+		backend.CardEntries, backend.CardDeviceEnvironment, backend.CardTitle, backend.CardTiles, backend.CardTopicStrip:
+		c.URL, c.More = firstAPIString(o, "url"), firstAPIString(o, "subTitle")
+	case backend.CardIcons:
+		if c.Title != "" && len(entities) > 0 && (firstAPIString(entities[0], "entityType") == "topic" ||
+			firstAPIString(entities[0], "entityType") == "product") {
+			c.URL, c.More = firstAPIString(o, "url"), firstAPIString(o, "subTitle")
+		}
+	}
 	if kind == backend.CardTitle {
 		// The entities of a title card configure the server's own layout.
-		if c.Title == "" {
+		if c.Title == "" || apiInt(extra, "showToast") != 0 || apiInt(extra, "breakLine") != 0 {
 			return nil
 		}
 		return c
@@ -72,19 +127,14 @@ func cardFromObject(o map[string]any) *backend.Card {
 			c.Ratio = float32(w) / float32(h)
 		}
 	}
-	// A grid of products the server ranks shows their ranks.
-	if kind == backend.CardIcons && strings.Contains(firstAPIString(o, "extraData"), `"withRanking":"1"`) {
-		kind, c.Kind = backend.CardRanking, backend.CardRanking
+	if template == "imageScrollCard" && c.Ratio == 0 {
+		c.Ratio = 5.0 / 3
 	}
-	switch kind {
-	case backend.CardList, backend.CardConfigs, backend.CardAvatars, backend.CardPairs, backend.CardRanking, backend.CardEditorial:
-		c.URL, c.More = firstAPIString(o, "url"), firstAPIString(o, "subTitle")
-		if strings.HasPrefix(c.URL, "tab://") {
-			c.More = firstAPIString(o, "description", "subTitle")
-		}
+	if c.URL == "tab://product" || c.URL == "tab://feedTopic" {
+		c.Kind = backend.CardList
+		c.More = firstAPIString(o, "description", "subTitle")
 	}
-	entities := apiObjects(o, "entities")
-	if kind == backend.CardList && (c.URL == "tab://product" || c.URL == "tab://feedTopic") {
+	if kind == backend.CardEntries || c.URL == "tab://product" || c.URL == "tab://feedTopic" {
 		c.Results = entriesFromObjects(entities)
 		if len(c.Results) == 0 {
 			return nil
@@ -96,22 +146,15 @@ func cardFromObject(o map[string]any) *backend.Card {
 		case kind == backend.CardConfigs:
 			// A version has no entity type: its name, price and page.
 			c.Items = append(c.Items, backend.CardItem{Title: firstAPIString(e, "title"), Subtitle: price(e, "price"), URL: firstAPIString(e, "url")})
-		case ok && kind == backend.CardList && firstAPIString(e, "entityType") == "product":
-			// A product in a list has a line for its price and what it is made of.
-			specs, _ := e["product_specs"].([]any)
-			parts := []string{price(e, "price_min")}
-			for _, s := range specs {
-				if s, ok := s.(string); ok {
-					parts = append(parts, s)
-				}
-			}
-			if line := joinNonEmpty("  ", parts...); line != "" {
-				item.Subtitle = line
-			}
-			c.Items = append(c.Items, item)
 		case ok && kind == backend.CardSelector && item.Title == "应用关注":
 			// The apps an account follows belong to the market, which the app leaves out.
+		case ok && page == "V9_HOME_TAB_SHIPIN" && item.URL == "/feed/writer?type=share":
+			// The video channel only links to browsing pages.
 		case ok:
+			item.Round = item.Round || isCategoryGrid
+			if c.Chooses() && item.Title == firstAPIString(extra, "selectedTab") {
+				c.DefaultTab = len(c.Items)
+			}
 			c.Items = append(c.Items, item)
 		}
 	}
@@ -163,6 +206,9 @@ func cardItem(e map[string]any) (backend.CardItem, bool) {
 	case "topic":
 		it.Title = firstAPIString(e, "title")
 		it.Pic = firstAPIString(e, "logo")
+		it.Hot = firstAPIString(e, "hot_num_txt")
+		it.Discussions = firstAPIString(e, "commentnum_txt", "commentnum")
+		it.Rating = itemRating(e, "star_average_score", "rating_average_score")
 		it.URL = "/t/" + url.PathEscape(strings.Trim(it.Title, "#"))
 		if n := firstAPIString(e, "hot_num_txt"); n != "" && n != "0" {
 			it.Subtitle = n + "热度"
@@ -175,13 +221,10 @@ func cardItem(e map[string]any) (backend.CardItem, bool) {
 		if id := apiID(e); id != "" {
 			it.URL = "/product/" + id
 		}
-		// One figure fits under a product in a grid: its score, else its
-		// followers.
-		if score := firstAPIString(e, "star_average_score"); score != "" && score != "0" && score != "0.0" {
-			it.Subtitle = score + "分"
-		} else if n := firstAPIString(e, "follow_num_txt"); n != "" && n != "0" {
-			it.Subtitle = n + "人关注"
-		}
+		it.Hot = firstAPIString(e, "hot_num_txt")
+		it.Discussions = firstAPIString(e, "feed_comment_num_txt", "feed_comment_num")
+		it.Rating = productRating(e)
+		it.Subtitle = firstAPIString(e, "subTitle")
 	case "user", "contacts":
 		it.Title = firstAPIString(e, "displayUsername", "username")
 		it.Pic = firstAPIString(e, "userAvatar", "avatar")
@@ -205,10 +248,15 @@ func cardItem(e map[string]any) (backend.CardItem, bool) {
 		if it.Title == "" {
 			it.Title = f.Content
 		}
+		if it.Title == "" {
+			it.Title = firstAPIString(e, "title")
+		}
 		if f.Cover != nil && f.Cover.URL != "" {
 			it.Pic = f.Cover.URL
 		} else if len(f.Images) > 0 {
 			it.Pic = f.Images[0].URL
+		} else if f.Rating != nil && f.Target != nil {
+			it.Pic = f.Target.LogoURL
 		}
 		it.Subtitle = f.Author.Name
 		if f.ID != "" {
@@ -229,4 +277,35 @@ func cardItem(e map[string]any) (backend.CardItem, bool) {
 	it.Pic = normalizeCoolapkImage(it.Pic)
 	it.Ratio = picRatio(it.Pic)
 	return it, it.Title != "" || it.Pic != ""
+}
+
+func cardExtra(o map[string]any) map[string]any {
+	if extra := apiObject(o, "extraDataArr"); extra != nil {
+		return extra
+	}
+	if raw := firstAPIString(o, "extraData"); raw != "" {
+		extra, _ := decodeAPIObject([]byte(raw))
+		return extra
+	}
+	return nil
+}
+
+func productRating(o map[string]any) backend.ItemRating {
+	rating := itemRating(o, "owner_star_average_score", "star_average_score")
+	rating.OwnerCount = firstAPIString(o, "owner_star_total_count")
+	return rating
+}
+
+func itemRating(o map[string]any, scoreFields ...string) backend.ItemRating {
+	r := backend.ItemRating{
+		Score:       searchScore(o, scoreFields...),
+		Count:       firstAPIString(o, "rating_total_num_txt", "rating_total_num", "star_total_count"),
+		ReleaseDate: firstAPIString(o, "release_time"),
+		Unreleased:  firstAPIString(o, "release_status") == "0",
+	}
+	if extra := cardExtra(o); firstAPIString(extra, "rightStyle") == "text" {
+		r.Score = firstAPIString(extra, "rightTopText")
+		r.Label = firstAPIString(extra, "rightBottomText")
+	}
+	return r
 }

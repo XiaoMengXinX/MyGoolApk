@@ -164,7 +164,7 @@ const (
 	// capsuleListCard).
 	CardChips
 	// CardList is a few rows under a title (iconListCard,
-	// productTimelineListCard, iconMiniGridCard).
+	// listCard).
 	CardList
 	// CardScroll is a horizontal strip of posts (feedScrollCard).
 	CardScroll
@@ -201,6 +201,14 @@ const (
 	CardEditorial
 	// CardImageGrid shows titled pictures in two columns (imageTextGridCard).
 	CardImageGrid
+	CardTimeline
+	CardProductList
+	CardProductHighlights
+	CardEntries
+	CardMiniLinks
+	CardFollowedProducts
+	CardDeviceEnvironment
+	CardTopicStrip
 )
 
 // Card is a card of a server page.
@@ -210,9 +218,14 @@ type Card struct {
 	Subtitle string
 	// URL, when set, is where the card's title leads, as ResolveLink reads
 	// it, and More what the title says of it.
-	URL   string
-	More  string
-	Items []CardItem
+	URL        string
+	More       string
+	Items      []CardItem
+	Columns    int
+	Ranked     bool
+	Continues  bool
+	DefaultTab int
+	Inset      bool
 	// Results holds the typed rows of a combined search preview.
 	Results []PageEntry
 	// Note is the text of a CardNote.
@@ -228,9 +241,11 @@ func (c *Card) Chooses() bool { return c.Kind == CardSelector || c.Kind == CardT
 
 // CardItem is one entry of a card.
 type CardItem struct {
-	Title    string
-	Subtitle string
-	Pic      string
+	Title            string
+	Subtitle         string
+	Pic              string
+	Hot, Discussions string
+	Rating           ItemRating
 	// URL is where the item leads, as ResolveLink reads it; for a selector,
 	// the page url of the list it shows.
 	URL string
@@ -239,6 +254,15 @@ type CardItem struct {
 	// Ratio is the picture's width over its height when the server says,
 	// else 0.
 	Ratio float32
+}
+
+// ItemRating is the score or release status shown on a device or topic row.
+type ItemRating struct {
+	Score, Label string
+	Count        string
+	OwnerCount   string
+	ReleaseDate  string
+	Unreleased   bool
 }
 
 // PageEntry is one row of a server page: a post, a product, a category, a
@@ -257,6 +281,11 @@ type PageEntry struct {
 	Hot         string
 	Discussions string
 	Score       string
+	Rating      ItemRating
+	Followed    bool
+	Ranked      bool
+	Timeline    bool
+	RatingRow   bool
 	// URL is the page url of the list a category opens, or where a link
 	// leads.
 	URL  string

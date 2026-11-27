@@ -305,3 +305,72 @@ func TestVoteCounts(t *testing.T) {
 		t.Errorf("counted vote = %+v", done)
 	}
 }
+
+func TestDigitalCardMetadata(t *testing.T) {
+	objects, err := decodeAPIObjects([]byte(`[
+	    {"entityType":"card","entityTemplate":"iconLinkGridCard","url":"#/product/categoryList?listType=grid","entities":[{"entityType":"iconLink","title":"手机","pic":"https://image.coolapk.com/phone.png"}]},
+	    {"entityType":"card","entityTemplate":"iconLongTitleGridCard","title":"今日热门","extraDataArr":{"withRanking":"1"},"entities":[{"entityType":"product","id":11,"title":"手机甲","hot_num_txt":"61.0万","star_average_score":"9.3","rating_total_num_txt":"5828","owner_star_total_count":4873}]},
+	    {"entityType":"card","entityTemplate":"productTimelineListCard","title":"发布日历","entities":[{"entityType":"product","id":12,"title":"手机乙","release_status":0,"release_time":"2026年12月"}]},
+	    {"entityType":"card","entityTemplate":"iconListCard","title":"屏幕榜","entities":[{"entityType":"product","id":13,"title":"平板","feed_comment_num_txt":"599","owner_star_average_score":"9.6","extraData":"{\"rightStyle\":\"text\",\"rightTopText\":\"9.8\",\"rightBottomText\":\"屏幕分\"}"}]},
+	    {"entityType":"card","entityTemplate":"feedListCard","title":"爆料站","url":"/page?url=V8_JINRI_NEWPHONE666","entities":[{"entityType":"feed","entityTemplate":"articleNews","id":14,"editor_title":"编辑标题"}]},
+	    {"entityType":"card","entityTemplate":"iconListCard","title":"酷友点评","entities":[{"entityType":"feed","entityTemplate":"feed","id":15,"title":"千城一心的点评","feedType":"rating","picArr":[],"targetRow":{"title":"vivo S18 Pro","logo":"http://image.coolapk.com/device.png","star_average_score":"8.8","star_total_count":200}}]}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := entriesFromObjects(objects)
+	kinds := []backend.CardKind{backend.CardIcons, backend.CardRanking, backend.CardTimeline, backend.CardProductList, backend.CardEntries, backend.CardList}
+	if len(entries) != len(kinds) {
+		t.Fatalf("got %d cards, want %d", len(entries), len(kinds))
+	}
+	for i, want := range kinds {
+		if c := entries[i].Card; c == nil || c.Kind != want {
+			t.Fatalf("card %d = %+v, want kind %d", i, c, want)
+		}
+	}
+	if c := entries[0].Card; c.Columns != 5 || !c.Items[0].Round {
+		t.Errorf("category layout = %+v", c)
+	}
+	if item := entries[1].Card.Items[0]; item.Hot != "61.0万" || item.Rating.Count != "5828" || item.Rating.OwnerCount != "4873" {
+		t.Errorf("ranked item metadata = %+v", item)
+	}
+	if rating := entries[2].Card.Items[0].Rating; rating.ReleaseDate != "2026年12月" || !rating.Unreleased {
+		t.Errorf("timeline = %+v", rating)
+	}
+	if item := entries[3].Card.Items[0]; item.Discussions != "599" || item.Rating.Score != "9.8" || item.Rating.Label != "屏幕分" {
+		t.Errorf("screen rating row = %+v", item)
+	}
+	if c := entries[4].Card; c.URL == "" || c.Results[0].Title != "编辑标题" || c.Results[0].Kind != backend.EntryNews {
+		t.Errorf("news section = %+v", c)
+	}
+	if item := entries[5].Card.Items[0]; item.Pic != "https://image.coolapk.com/device.png" || item.Title != "千城一心的点评" || item.URL != "/feed/15" {
+		t.Errorf("text review = %+v", item)
+	}
+}
+
+func TestVideoChannelEntriesAndPreview(t *testing.T) {
+	objects, err := decodeAPIObjects([]byte(`[
+	    {"entityType":"card","entityTemplate":"iconMiniLinkGridCard","extraDataArr":{"cardPageName":"V9_HOME_TAB_SHIPIN"},"entities":[
+	        {"entityType":"iconMiniLink","title":"最新发布","url":"#/feed/mediaList?filterRepeatUser=1&cacheExpires=60"},
+	        {"entityType":"iconMiniLink","title":"热门视频","url":"#/feed/mediaList?filterRepeatUser=1&orderBy=rank_score&cacheExpires=60"},
+	        {"entityType":"iconMiniLink","title":"发视频","url":"/feed/writer?type=share"}
+	    ]},
+	    {"entityType":"feed","entityTemplate":"feed","id":1,"feedType":"video","media_info":"{\"cover\":\"https://wx3.sinaimg.cn/orj480/example.jpg\"}"},
+	    {"entityType":"feed","entityTemplate":"feed","id":2,"feedType":"video","picArr":["http://image.coolapk.com/preview.jpg"]}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := entriesFromObjects(objects)
+	card := entries[0].Card
+	if card.Kind != backend.CardMiniLinks || len(card.Items) != 2 ||
+		card.Items[0].URL != "#/feed/mediaList?filterRepeatUser=1&cacheExpires=60" ||
+		card.Items[1].URL != "#/feed/mediaList?filterRepeatUser=1&orderBy=rank_score&cacheExpires=60" {
+		t.Fatalf("video channel links = %+v", card)
+	}
+	for i, cover := range []string{"https://wx3.sinaimg.cn/orj480/example.jpg", "https://image.coolapk.com/preview.jpg"} {
+		if v := entries[i+1].Feed.Video; v == nil || v.CoverURL != cover {
+			t.Errorf("preview %d = %+v", i, v)
+		}
+	}
+}

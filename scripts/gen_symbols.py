@@ -29,6 +29,7 @@ ICONS = [
     ("More", "more_vert", False), ("Delete", "delete", False), ("PlayArrow", "play_arrow", True), ("Download", "download", False),
     ("Article", "article", False), ("Copy", "content_copy", False), ("Flag", "flag", False), ("Block", "block", False), ("Footprint", "footprint", False),
     ("ThumbUp", "thumb_up", True), ("Campaign", "campaign", True), ("MailFill", "mail", True), ("Link", "link", False), ("Star", "star", True), ("AutoAwesome", "auto_awesome", False),
+    ("Flame", "local_fire_department", False),
 ]
 
 

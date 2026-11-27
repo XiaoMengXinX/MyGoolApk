@@ -30,8 +30,17 @@ func (a *App) imageGridCard(cx *core.Scope, c *backend.Card) core.Node {
 
 // newsCard keeps the server's editorial headline separate from the post's body.
 func (a *App) newsCard(cx *core.Scope, get func() backend.PageEntry) core.Node {
+	return column(core.Style{Padding: core.Edges{Top: 4, Right: 8, Bottom: 4, Left: 8}}, "bg-surface-container-low",
+		a.newsRow(cx, get, false))
+}
+
+func (a *App) newsRow(cx *core.Scope, get func() backend.PageEntry, compact bool) core.Node {
 	feed := func() backend.Feed { return *get().Feed }
-	return dynamicShape(cx, func() int { return min(len(feed().Images), 3) }, func(cx *core.Scope, count int) core.Node {
+	limit := 3
+	if compact {
+		limit = 1
+	}
+	return dynamicShape(cx, func() int { return min(len(feed().Images), limit) }, func(cx *core.Scope, count int) core.Node {
 		headline := core.Text{ContentFunc: func() string { return get().Title }, MaxLines: 3, Class: "text-on-surface",
 			Style: textStyle(textBody, 400)}
 		meta := core.Text{ContentFunc: func() string {
@@ -57,7 +66,6 @@ func (a *App) newsCard(cx *core.Scope, get func() backend.PageEntry) core.Node {
 			}
 			body = column(core.Style{Gap: 12}, "", headline, row(core.Style{}, "", images...), meta)
 		}
-		return column(core.Style{Padding: core.Edges{Top: 4, Right: 8, Bottom: 4, Left: 8}}, "bg-surface-container-low",
-			tap("查看帖子", func() { a.openFeed(feed()) }, core.Style{Padding: core.All(12), CornerRadius: 16}, "bg-background", body))
+		return tap("查看帖子", func() { a.openFeed(feed()) }, core.Style{Padding: core.All(12), CornerRadius: 16}, "bg-background", body)
 	})
 }

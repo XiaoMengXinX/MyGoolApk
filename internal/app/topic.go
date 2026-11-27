@@ -169,11 +169,7 @@ const openActivityDrawing = `(function () {
 func (a *App) topicHead(cx *core.Scope, get func() backend.TopicDetail, follow func()) core.Node {
 	counts := func() string {
 		d := get()
-		hot := ""
-		if d.Hot != "" {
-			hot = d.Hot + " 热度"
-		}
-		return joinNonEmpty([]string{hot, countLabel(d.Comments, "讨论"), countLabel(d.Followers, "关注")}, "  ")
+		return joinNonEmpty([]string{itemActivity(d.Hot, ""), countLabel(d.Comments, "讨论"), countLabel(d.Followers, "关注")}, "  ")
 	}
 	followed := core.NewMemo(cx, func() bool { return get().Followed })
 	// The rating and the tags are the page's own, which a follow leaves alone.
@@ -194,11 +190,10 @@ func (a *App) topicHead(cx *core.Scope, get func() backend.TopicDetail, follow f
 	}
 	return column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 12, Left: 16}, Gap: 12}, "bg-background",
 		row(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
-			a.pic(cx, func() string { return get().LogoURL }, core.Cover, "bg-surface-container-highest",
-				core.Style{Width: core.Pt(56), Height: core.Pt(56), CornerRadius: 16, Overflow: core.Hidden, FlexShrink: 0}),
+			a.clippedPicFrom(cx, func() string { return get().LogoURL }, 56, 56, 16),
 			column(fill.Merge(core.Style{Gap: 4}), "",
 				core.Text{ContentFunc: func() string { return get().Title }, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textBody, 600)},
-				core.Text{ContentFunc: counts, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)}),
+				core.Text{ContentFunc: counts, MaxLines: 2, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)}),
 			core.Dynamic(func(cx *core.Scope) core.Node {
 				if followed.Get() {
 					return tonalButton("已关注", follow)
@@ -243,6 +238,8 @@ func (a *App) listPage(cx *core.Scope, param string) core.Node {
 	raw, _ := base64.RawURLEncoding.DecodeString(param)
 	title, url, _ := strings.Cut(string(raw), "\x00")
 	switch url {
+	case backend.ProductCategoriesURL:
+		return a.screen(titled(title), nil, a.productCatalog(cx, a.newPageList(cx, url, title, nil, 0, ""), listSpec{pushed: true}))
 	case backend.TradeBrandsURL:
 		return a.tradeBrandsPage(cx, title)
 	case backend.TradeCityURL:
@@ -271,12 +268,12 @@ func (a *App) listPage(cx *core.Scope, param string) core.Node {
 		for i, it := range c.Items {
 			pages[i] = pageTab{Title: it.Title, Kind: tabPage, URL: it.URL}
 		}
-		g := a.newTabGroup(cx, pages, 0)
+		g := a.newTabGroup(cx, pages, c.DefaultTab)
 		g.pushed = true
 		if n > 0 {
 			head := make([]core.Node, n)
 			for i := range head {
-				head[i] = a.entryView(cx, func() backend.PageEntry { return rows[i] }, nil)
+				head[i] = a.entryView(cx, func() backend.PageEntry { return rows[i] }, nil, nil)
 			}
 			g.head = column(core.Style{}, "bg-background", head...)
 		}
@@ -327,6 +324,12 @@ func (t *topicHome) load() {
 			t.err.Set(err.Error())
 			return
 		}
+		for i, cat := range cats {
+			if cat.Default {
+				t.selected.Set(i)
+				break
+			}
+		}
 		t.cats.Set(cats)
 		t.err.Set("")
 	})
@@ -338,15 +341,22 @@ func (t *topicHome) pager(i int) *pager[topicRow] {
 		return p
 	}
 	cat := t.cats.GetUntracked()[i]
-	p := newPager(t.a.cx, func(ctx context.Context, page int) ([]topicRow, bool, error) {
-		r, err := t.a.backend.TopicList(ctx, cat, page)
-		var rows []topicRow
-		for j := 0; j < len(r.Items); j += topicColumns {
-			row := topicRow{Items: r.Items[j:min(j+topicColumns, len(r.Items))]}
-			row.ID = row.Items[0].ID
-			rows = append(rows, row)
+	var cursor backend.ListCursor
+	p := newBatchPager(t.a.cx, func(page int) func(context.Context) (pageBatch[topicRow], error) {
+		current := cursor
+		return func(ctx context.Context) (pageBatch[topicRow], error) {
+			r, err := t.a.backend.TopicList(ctx, cat, page, current)
+			var rows []topicRow
+			for j := 0; j < len(r.Items); j += topicColumns {
+				items := r.Items[j:min(j+topicColumns, len(r.Items))]
+				rows = append(rows, topicRow{ID: items[0].ID, Items: items})
+			}
+			return pageBatch[topicRow]{
+				items: rows, hasMore: r.HasMore,
+				unchanged: page == 1 && len(rows) == 0 && current.FirstItem != "",
+				apply:     func() { cursor = r.Cursor },
+			}, err
 		}
-		return rows, r.HasMore, err
 	}, func(r topicRow) string { return r.ID })
 	t.pagers[i] = p
 	return p
@@ -367,23 +377,7 @@ func (t *topicHome) view(cx *core.Scope) core.Node {
 		var rail []core.Node
 		for i, cat := range t.cats.Get() {
 			i := i
-			on := func() bool { return t.selected.Get() == i }
-			rail = append(rail, pressable(core.View{
-				Role: core.RoleTab, Label: cat.Title, OnPress: func(core.PressEvent) { t.selected.Set(i) },
-				ClassFunc: func() string {
-					if on() {
-						return "bg-secondary-container"
-					}
-					return ""
-				},
-				Style: core.Style{Height: core.Pt(48), CornerRadius: 24, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Overflow: core.Hidden},
-				Children: []core.Node{core.Text{Content: cat.Title, MaxLines: 1, Style: textStyle(textSecondary, 500), ClassFunc: func() string {
-					if on() {
-						return "text-on-secondary-container"
-					}
-					return "text-on-surface-variant"
-				}}},
-			}))
+			rail = append(rail, categoryTab(cat.Title, func() bool { return t.selected.Get() == i }, func() { t.selected.Set(i) }))
 		}
 		return row(fill, "",
 			core.Scroll{HideIndicator: true, Style: core.Style{Width: core.Pt(88), FlexShrink: 0}, Class: "bg-surface-container-low",
@@ -393,6 +387,25 @@ func (t *topicHome) view(cx *core.Scope) core.Node {
 					func(cx *core.Scope, get func() topicRow, r core.ListRow) core.Node { return a.topicGridRow(cx, get) }))
 			}),
 		)
+	})
+}
+
+func categoryTab(title string, selected func() bool, pick func()) core.Node {
+	return pressable(core.View{
+		Role: core.RoleTab, Label: title, OnPress: func(core.PressEvent) { pick() },
+		ClassFunc: func() string {
+			if selected() {
+				return "bg-secondary-container"
+			}
+			return ""
+		},
+		Style: core.Style{Height: core.Pt(48), CornerRadius: 24, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Overflow: core.Hidden},
+		Children: []core.Node{core.Text{Content: title, MaxLines: 1, Style: textStyle(textSecondary, 500), ClassFunc: func() string {
+			if selected() {
+				return "text-on-secondary-container"
+			}
+			return "text-on-surface-variant"
+		}}},
 	})
 }
 

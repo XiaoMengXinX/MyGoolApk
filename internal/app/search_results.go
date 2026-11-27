@@ -166,16 +166,9 @@ func (a *App) searchMatchRow(cx *core.Scope, product bool, get func() backend.Pa
 		thumbnail,
 		column(fill.Merge(core.Style{MinWidth: core.Pt(0), Gap: 4}), "",
 			core.Text{ContentFunc: func() string { return get().Title }, MaxLines: 2, Class: "text-on-surface", Style: textStyle(textBody, 600)},
-			core.Text{ContentFunc: func() string {
-				e := get()
-				metrics := []string{e.Hot, e.Discussions}
-				for i, unit := range []string{"热度", "讨论"} {
-					if metrics[i] != "" {
-						metrics[i] += unit
-					}
-				}
-				return strings.TrimSpace(strings.Join(metrics, "  "))
-			}, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textSecondary, 400)}),
+			heatLine(func() string { return get().Hot }, func() string {
+				return itemActivity(get().Hot, get().Discussions)
+			}, "text-on-surface-variant")),
 		dynamicShape(cx, func() string { return get().Score }, func(cx *core.Scope, score string) core.Node {
 			if score == "" {
 				return icon(&symbols.ChevronRight, 20, "text-on-surface-variant")

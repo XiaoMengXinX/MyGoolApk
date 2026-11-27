@@ -45,7 +45,7 @@ type Backend interface {
 	// TopicCategories returns the groups of the topic page.
 	TopicCategories(ctx context.Context) ([]TopicCategory, error)
 	// TopicList returns one page of a category's topics.
-	TopicList(ctx context.Context, category TopicCategory, page int) (TopicPage, error)
+	TopicList(ctx context.Context, category TopicCategory, page int, cursor ListCursor) (TopicPage, error)
 
 	// SessionUID returns the signed-in uid, or "" for a guest. It reads
 	// local state only.
@@ -121,8 +121,9 @@ type FeedSummary struct {
 // TopicCategory is a group of topics on the topic page: its title and the
 // page url its topics are listed under.
 type TopicCategory struct {
-	Title string
-	URL   string
+	Title   string
+	URL     string
+	Default bool
 }
 
 // TopicItem is one topic in a category.
@@ -137,11 +138,18 @@ type TopicItem struct {
 type TopicPage struct {
 	Items   []TopicItem
 	HasMore bool
+	Cursor  ListCursor
 }
 
 // ProductCategoriesURL is the PageQuery.URL of the product categories, which
 // is no page url but an endpoint of its own.
 const ProductCategoriesURL = "/product/categoryList"
+
+const (
+	DigitalHomeURL  = "/page?url=V10_DIGITAL_HOME"
+	DigitalPhoneURL = "/page?url=V10_CHANNEL_SJB"
+	DigitalRankURL  = "/page?url=V10_CHANNEL_SMB_TOP"
+)
 
 // TradeBrandsURL is the PageQuery.URL of the kinds of second-hand goods, an
 // endpoint of its own as the product categories are.
@@ -161,7 +169,7 @@ func TradeListURL(product, city string) string {
 // own, and the follow tab's url depends on the account.
 const (
 	HeadlineURL = "headline"
-	FollowURL   = "follow"
+	FollowURL   = "/page?url=V15_HOME_TAB_FOLLOW"
 )
 
 // The signed-in account's own lists. The my: ones are no page urls: what it
@@ -184,15 +192,26 @@ const (
 // PageQuery names a page of a server list: the url the clients ask
 // /v6/page/dataList for, or ProductCategoriesURL.
 type PageQuery struct {
-	URL   string
-	Title string
-	Page  int
+	URL    string
+	Title  string
+	Page   int
+	Cursor ListCursor
+	// ContentURL is the separate list named by a page's configCard.
+	ContentURL string
+}
+
+// ListCursor identifies the first and last scrollable entities already loaded.
+type ListCursor struct {
+	FirstItem string
+	LastItem  string
 }
 
 // PageEntriesResult is one page of a server list.
 type PageEntriesResult struct {
-	Entries []PageEntry
-	HasMore bool
+	Entries    []PageEntry
+	HasMore    bool
+	Cursor     ListCursor
+	ContentURL string
 	// Title is the server page's configured title, when provided.
 	Title string
 }

@@ -3,8 +3,6 @@ package app
 import (
 	"context"
 	"slices"
-	"strconv"
-	"sync"
 
 	"github.com/nsgo-dev/nsgo/core"
 
@@ -15,64 +13,109 @@ import (
 // what the rows after it show: the cards up to the selector stay, and the
 // rest come from the chosen item's url.
 type pageList struct {
-	p         *pager[backend.PageEntry]
-	chosen    *core.Signal[int]
-	pageTitle *core.Signal[string]
+	p                *pager[backend.PageEntry]
+	chosen           *core.Signal[int]
+	pageTitle        *core.Signal[string]
+	catalogSelection *pageList
 	// openCardTitle handles links that belong to the page holding this list.
 	openCardTitle func(backend.CardItem)
 	// onChoose, when set, hears the chosen item, as the follow tab keeps it.
 	onChoose func(i int)
 
-	mu sync.Mutex
-	// url and title are the chosen item's, "" for the list's own.
-	url, title string
-	// split leaves a page that ends with its tabs without the chosen tab's
-	// rows: whoever shows it gives each tab a list of its own.
-	split bool
-	head  []backend.PageEntry
+	// url and title name the selected child, if it has its own list.
+	url, title        string
+	cursor            backend.ListCursor
+	contentURL        string
+	deviceEnvironment *core.Signal[*backend.Card]
+	// split lets the caller display the tabs of a page as separate lists.
+	split     bool
+	head      []backend.PageEntry
+	inlineTab int
 }
 
-// newPageList lists url. head, when given, leads the list as the cards the
-// server would send, and source is the url its chosen item lists.
+// newPageList lists url and fetches a selector's child only when it has its own list.
 func (a *App) newPageList(cx *core.Scope, url, title string, head []backend.PageEntry, chosen int, source string) *pageList {
-	l := &pageList{chosen: core.NewSignal(cx, chosen), pageTitle: core.NewSignal(cx, title), head: head, url: source}
-	l.p = newQueryPager(cx, l.chosen.GetUntracked, func(ctx context.Context, picked, page int) ([]backend.PageEntry, bool, error) {
-		// chosen lists the chosen item under the rows that lead the list.
-		chosen := func(page int) ([]backend.PageEntry, bool, error) {
-			l.mu.Lock()
-			src, named, head := l.url, l.title, l.head
-			l.mu.Unlock()
-			if named == "" {
-				named = title
-			}
-			r, err := a.backend.PageEntries(ctx, backend.PageQuery{URL: src, Title: named, Page: page})
-			if page == 1 {
-				r.Entries = append(append([]backend.PageEntry(nil), head...), belowHead(r.Entries, head)...)
-			}
-			return r.Entries, r.HasMore, err
-		}
-		l.mu.Lock()
-		src := l.url
-		l.mu.Unlock()
+	l := &pageList{chosen: core.NewSignal(cx, chosen), pageTitle: core.NewSignal(cx, title), head: head, url: source, inlineTab: -1}
+	if url == backend.DigitalPhoneURL && (cx.Env().OS() == core.OSIOS || cx.Env().OS() == core.OSAndroid) {
+		l.deviceEnvironment = core.NewSignal[*backend.Card](cx, nil)
+	}
+	device := l.deviceEnvironment
+	l.p = newBatchPager(cx, func(page int) func(context.Context) (pageBatch[backend.PageEntry], error) {
+		q := backend.PageQuery{URL: url, Title: title, Page: page, Cursor: l.cursor, ContentURL: l.contentURL}
+		src, named, head, inlineTab := l.url, l.title, l.head, l.inlineTab
+		picked, remembered, split := l.chosen.GetUntracked(), l.onChoose != nil, l.split
 		if src != "" {
-			return chosen(page)
+			q.URL = src
+			if named != "" {
+				q.Title = named
+			}
 		}
-		r, err := a.backend.PageEntries(ctx, backend.PageQuery{URL: url, Title: title, Page: page})
-		if err == nil && page == 1 && r.Title != "" {
-			cx.Post(func() { l.pageTitle.Set(r.Title) })
+		return func(ctx context.Context) (pageBatch[backend.PageEntry], error) {
+			r, err := a.backend.PageEntries(ctx, q)
+			if err != nil {
+				return pageBatch[backend.PageEntry]{}, err
+			}
+			if page == 1 && len(r.Entries) == 0 && q.Cursor.FirstItem != "" {
+				return pageBatch[backend.PageEntry]{unchanged: true}, nil
+			}
+			var pageTitle string
+			if page == 1 && src == "" {
+				pageTitle = r.Title
+				for i, e := range r.Entries {
+					c := e.Card
+					if c == nil || !c.Chooses() {
+						continue
+					}
+					if split && c.Kind == backend.CardTabs && i == len(r.Entries)-1 {
+						r.HasMore = false
+						break
+					}
+					if !remembered || picked < 0 || picked >= len(c.Items) {
+						picked = c.DefaultTab
+					}
+					head = slices.Clone(r.Entries[:i+1])
+					inlineTab = -1
+					if i < len(r.Entries)-1 {
+						inlineTab = c.DefaultTab
+					}
+					if picked != inlineTab {
+						item := c.Items[picked]
+						src, named = item.URL, item.Title
+						r, err = a.backend.PageEntries(ctx, backend.PageQuery{URL: src, Title: named, Page: 1})
+						if err != nil {
+							return pageBatch[backend.PageEntry]{}, err
+						}
+					}
+					break
+				}
+			}
+			if page == 1 && src != "" {
+				r.Entries = append(slices.Clone(head), belowHead(r.Entries, head)...)
+			}
+			var environment *backend.Card
+			if device != nil {
+				r.Entries = slices.DeleteFunc(r.Entries, func(e backend.PageEntry) bool {
+					if e.Card != nil && e.Card.Kind == backend.CardDeviceEnvironment {
+						environment = e.Card
+						return true
+					}
+					return false
+				})
+			}
+			return pageBatch[backend.PageEntry]{items: r.Entries, hasMore: r.HasMore, apply: func() {
+				l.cursor, l.contentURL = r.Cursor, r.ContentURL
+				if page == 1 {
+					if device != nil {
+						device.Set(environment)
+					}
+					l.url, l.title, l.head, l.inlineTab = src, named, head, inlineTab
+					l.setChosen(picked)
+					if pageTitle != "" {
+						l.pageTitle.Set(pageTitle)
+					}
+				}
+			}}, nil
 		}
-		if err != nil || page != 1 {
-			return r.Entries, r.HasMore, err
-		}
-		// A page that ends with its tabs (iconTabLinkGridCard) lists
-		// nothing of its own: its chosen tab's list follows them.
-		if n := len(r.Entries) - 1; l.split && n >= 0 && r.Entries[n].Card != nil && r.Entries[n].Card.Kind == backend.CardTabs {
-			return r.Entries, false, nil
-		}
-		if l.keepHead(r.Entries, picked) {
-			return chosen(1)
-		}
-		return r.Entries, r.HasMore, err
 	}, entryKey)
 	a.trackPageList(cx, l)
 	return l
@@ -114,53 +157,27 @@ func (a *App) feedChanged(f backend.Feed) {
 	}
 }
 
-// keepHead keeps the rows up to the first selector of the list's own first
-// page, which lead the list whatever is chosen. It reports whether the
-// chosen item's list is to follow them: when nothing follows the selector,
-// or an item other than its first is chosen.
-func (l *pageList) keepHead(entries []backend.PageEntry, n int) bool {
-	for i, e := range entries {
-		if e.Card == nil || !e.Card.Chooses() {
-			continue
+func (l *pageList) setChosen(i int) {
+	if i != l.chosen.GetUntracked() {
+		l.chosen.Set(i)
+		if l.onChoose != nil {
+			l.onChoose(i)
 		}
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		l.head = append([]backend.PageEntry(nil), entries[:i+1]...)
-		if n >= len(e.Card.Items) {
-			// A choice remembered from a selector that had more items: the
-			// first is shown, and chosen.
-			n = 0
-			l.p.cx.Post(func() {
-				l.chosen.Set(0)
-				if l.onChoose != nil {
-					l.onChoose(0)
-				}
-			})
-		}
-		if n == 0 && i < len(entries)-1 {
-			return false
-		}
-		l.url, l.title = e.Card.Items[n].URL, e.Card.Items[n].Title
-		return true
 	}
-	return false
 }
 
-// choose shows the list of item i of the selector: the rows above it stay
-// while the new ones load.
+// choose keeps the leading cards while the new selection loads.
 func (l *pageList) choose(c *backend.Card, i int) {
 	if i == l.chosen.GetUntracked() || i >= len(c.Items) {
 		return
 	}
-	l.chosen.Set(i)
-	if l.onChoose != nil {
-		l.onChoose(i)
+	l.setChosen(i)
+	l.url, l.title = "", ""
+	if i != l.inlineTab {
+		l.url, l.title = c.Items[i].URL, c.Items[i].Title
 	}
-	l.mu.Lock()
-	l.url, l.title = c.Items[i].URL, c.Items[i].Title
-	head := l.head
-	l.mu.Unlock()
-	l.p.items.Set(head)
+	l.cursor, l.contentURL = backend.ListCursor{}, ""
+	l.p.items.Set(l.head)
 	l.p.hasMore.Set(true)
 	l.p.moreErr.Set("")
 	l.p.restart()
@@ -210,14 +227,33 @@ func (a *App) cardView(cx *core.Scope, get func() backend.PageEntry, l *pageList
 				return a.searchPreview(cx, c, open)
 			}
 			body = a.listCard(cx, c)
+		case backend.CardTimeline:
+			body = a.timelineCard(cx, c)
+		case backend.CardProductList:
+			body = a.ratedListCard(cx, c)
+		case backend.CardProductHighlights:
+			body = a.productHighlights(cx, c)
+		case backend.CardEntries:
+			body = a.cardEntries(cx, c)
+		case backend.CardMiniLinks:
+			body = a.miniLinksCard(cx, c)
+		case backend.CardFollowedProducts:
+			body = a.pairsCard(cx, c)
+		case backend.CardDeviceEnvironment:
+			return core.Group{}
 		case backend.CardAvatars:
 			return a.avatarsCard(cx, c)
+		case backend.CardTopicStrip:
+			body = a.topicStrip(cx, c)
 		case backend.CardPairs:
 			body = a.pairsCard(cx, c)
 		case backend.CardRanking:
 			body = a.rankingCard(cx, c)
 		case backend.CardTiles:
-			return a.tilesCard(cx, c)
+			body = a.tilesCard(cx, c)
+			if c.Title == "" {
+				return body
+			}
 		case backend.CardLogos:
 			body = a.logosCard(cx, c)
 		case backend.CardScroll:
@@ -225,7 +261,10 @@ func (a *App) cardView(cx *core.Scope, get func() backend.PageEntry, l *pageList
 		case backend.CardEditorial:
 			body = a.editorialCard(cx, c)
 		case backend.CardTitle:
-			return cardTitle(c.Title, core.Edges{Top: 16, Right: 16, Bottom: 4, Left: 16})
+			if c.URL == "" {
+				return cardTitle(c.Title, core.Edges{Top: 16, Right: 16, Bottom: 4, Left: 16})
+			}
+			body = core.Group{}
 		case backend.CardSelector:
 			return selectorCard(c, l)
 		case backend.CardTabs:
@@ -251,15 +290,26 @@ func (a *App) cardView(cx *core.Scope, get func() backend.PageEntry, l *pageList
 			if l != nil && l.openCardTitle != nil {
 				open = l.openCardTitle
 			}
-			parts = append(parts, tap(c.Title, func() { open(backend.CardItem{Title: c.Title, URL: c.URL}) },
-				core.Style{Direction: core.Row, Padding: core.Edges{Top: 12, Right: 12, Left: 16}, Gap: 4, AlignItems: core.AlignCenter}, "",
+			heading := tap(c.Title, func() { open(backend.CardItem{Title: c.Title, URL: c.URL}) },
+				core.Style{Direction: core.Row, MinHeight: core.Pt(44), Padding: core.Symmetric(0, 16), Gap: 4, AlignItems: core.AlignCenter}, "bg-background",
 				core.Text{Content: c.Title, MaxLines: 1, Class: "text-on-surface", Style: fill.Merge(textStyle(textBody, 600))},
-				label(c.More, textSecondary, 400, "text-on-surface-variant"),
-				icon(&symbols.ChevronRight, 24, "text-on-surface-variant")))
+				core.Text{Content: c.More, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textSecondary, 400)},
+				icon(&symbols.ChevronRight, 20, "text-on-surface-variant"))
+			if c.Kind == backend.CardTitle {
+				return heading
+			}
+			parts = append(parts, heading)
 		case c.Title != "":
 			parts = append(parts, cardTitle(c.Title, core.Edges{Top: 12, Right: 16, Left: 16}))
 		}
-		parts = append(parts, body, core.View{Style: core.Style{Height: core.Pt(8)}, Class: "bg-surface-container-low"})
+		parts = append(parts, body)
+		if c.Inset {
+			return column(core.Style{Padding: core.All(8)}, "bg-surface-container-low",
+				column(core.Style{CornerRadius: 16, Overflow: core.Hidden}, "bg-background", parts...))
+		}
+		if !c.Continues {
+			parts = append(parts, core.View{Style: core.Style{Height: core.Pt(8)}, Class: "bg-surface-container-low"})
+		}
 		return column(core.Style{}, "bg-background", parts...)
 	})
 }
@@ -382,14 +432,15 @@ func (a *App) bannerCard(cx *core.Scope, c *backend.Card) core.Node {
 // avatarsCard is people in a row that scrolls: the first ten of them, as the
 // official client shows a part, then the way to them all.
 func (a *App) avatarsCard(cx *core.Scope, c *backend.Card) core.Node {
-	const shown, size = 10, 48
+	const shown = 10
+	const size, width, radius = 48, 68, 24
 	cell := func(name string, open func(), pic core.Node) core.Node {
-		return tap(name, open, core.Style{Width: core.Pt(68), Gap: 4, Padding: core.Symmetric(4, 2), AlignItems: core.AlignCenter, CornerRadius: 12}, "", pic,
+		return tap(name, open, core.Style{Width: core.Pt(width), FlexShrink: 0, Gap: 6, Padding: core.Symmetric(4, 2), AlignItems: core.AlignCenter, CornerRadius: 12}, "", pic,
 			core.Text{Content: name, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400).Merge(core.Style{TextAlign: core.TextAlignCenter})})
 	}
 	var cells []core.Node
 	for _, it := range c.Items[:min(shown, len(c.Items))] {
-		cells = append(cells, cell(it.Title, func() { a.openCardItem(it) }, a.clippedPic(cx, it.Pic, size, size, size/2)))
+		cells = append(cells, cell(it.Title, func() { a.openCardItem(it) }, a.clippedPic(cx, it.Pic, size, size, radius)))
 	}
 	if c.URL != "" {
 		cells = append(cells, cell("查看更多", func() { a.openCardItem(backend.CardItem{Title: c.Title, URL: c.URL}) },
@@ -398,6 +449,25 @@ func (a *App) avatarsCard(cx *core.Scope, c *backend.Card) core.Node {
 	}
 	return column(core.Style{}, "bg-background", sideScroll{Children: []core.Node{
 		row(core.Style{Padding: core.Edges{Top: 8, Right: 8, Bottom: 4, Left: 8}}, "", cells...)}})
+}
+
+func (a *App) topicStrip(cx *core.Scope, c *backend.Card) core.Node {
+	width := core.NewSignal(cx, core.Points(0))
+	cells := make([]core.Node, len(c.Items))
+	for i, it := range c.Items {
+		cell := tap(it.Title, func() { a.openCardItem(it) },
+			core.Style{MinWidth: core.Pt(64), FlexShrink: 0, Gap: 6, Padding: core.Symmetric(4, 4),
+				AlignItems: core.AlignCenter, CornerRadius: 12}, "",
+			a.clippedPic(cx, it.Pic, 56, 56, 12),
+			core.Text{Content: it.Title, MaxLines: 1, Class: "text-on-surface",
+				Style: textStyle(textSecondary, 500).Merge(core.Style{TextAlign: core.TextAlignCenter})})
+		cell.StyleFunc = func() core.Style { return core.Style{Width: core.Pt(width.Get() / 4)} }
+		cells[i] = cell
+	}
+	return core.View{OnLayout: func(b core.Bounds) { width.Set(b.Size.Width) },
+		Children: []core.Node{sideScroll{Children: []core.Node{
+			row(core.Style{Padding: core.Symmetric(4, 0)}, "", cells...),
+		}}}}
 }
 
 // pairsCard is names with small icons, two to a row.
@@ -435,31 +505,29 @@ func (a *App) rankingCard(cx *core.Scope, c *backend.Card) core.Node {
 				continue
 			}
 			it := c.Items[n]
-			place := "bg-surface-container-highest text-on-surface-variant"
-			if n < 3 {
-				place = "bg-primary text-on-primary"
-			}
 			cells[j] = tap(it.Title, func() { a.openCardItem(it) },
 				fill.Merge(core.Style{AlignItems: core.AlignCenter, Gap: 6, Padding: core.Symmetric(8, 4), CornerRadius: 12}), "",
-				core.View{Style: core.Style{Width: core.Pt(size), Height: core.Pt(size)}, Children: []core.Node{
-					a.clippedPic(cx, it.Pic, size, size, 12),
-					core.Text{Content: strconv.Itoa(n + 1), Class: place, Style: textStyle(textCaption, 600).Merge(core.Style{
-						Position: core.Absolute, Top: core.Pt(-4), Left: core.Pt(-8), MinWidth: core.Pt(18), Padding: core.Symmetric(0, 4), CornerRadius: 8, TextAlign: core.TextAlignCenter})},
-				}},
-				core.Text{Content: it.Title, MaxLines: 2, Class: "text-on-surface", Style: textStyle(textCaption, 400).Merge(core.Style{TextAlign: core.TextAlignCenter})})
+				a.rankedPicture(cx, func() string { return it.Pic }, size, func() int { return n + 1 }),
+				column(core.Style{Width: core.Pct(100), AlignItems: core.AlignCenter, Gap: 3}, "",
+					core.Text{Content: it.Title, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textCaption, 400).Merge(core.Style{TextAlign: core.TextAlignCenter})},
+					heatCount(func() string { return it.Hot })))
 		}
 		rows = append(rows, row(core.Style{AlignItems: core.AlignStart}, "", cells...))
 	}
 	return column(core.Style{Padding: core.Edges{Top: 4, Right: 8, Bottom: 8, Left: 8}}, "", rows...)
 }
 
-// tilesCard is square pictures under their names, in a row that scrolls.
+// tilesCard overlays names on pictures in a horizontal strip.
 func (a *App) tilesCard(cx *core.Scope, c *backend.Card) core.Node {
-	const size = 76
+	width, height := core.Points(76), core.Points(76)
+	if c.Ratio > 0 {
+		width = 104
+		height = width / core.Points(c.Ratio)
+	}
 	tiles := make([]core.Node, len(c.Items))
 	for i, it := range c.Items {
 		tiles[i] = tap(it.Title, func() { a.openCardItem(it) },
-			core.Style{Width: core.Pt(size), Height: core.Pt(size), CornerRadius: 12}, "bg-surface-container-high",
+			core.Style{Width: core.Pt(width), Height: core.Pt(height), FlexShrink: 0, CornerRadius: 12}, "bg-surface-container-high",
 			a.picOf(cx, it.Pic, core.Cover, "", fillAbs),
 			core.View{Class: "bg-black/40", Style: fillAbs.Merge(core.Style{AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Padding: core.All(4)}),
 				PointerEvents: core.PointerEventsNone,
@@ -467,7 +535,7 @@ func (a *App) tilesCard(cx *core.Scope, c *backend.Card) core.Node {
 					Style: textStyle(textSecondary, 600).Merge(core.Style{TextAlign: core.TextAlignCenter})}}})
 	}
 	return column(core.Style{}, "bg-background", sideScroll{Children: []core.Node{
-		row(core.Style{Gap: 8, Padding: core.Symmetric(8, 16)}, "", tiles...)}})
+		row(core.Style{Gap: 8, Padding: core.Symmetric(8, 8)}, "", tiles...)}})
 }
 
 // logosCard is the logos of brands, two to a column, in columns that scroll
@@ -478,7 +546,7 @@ func (a *App) logosCard(cx *core.Scope, c *backend.Card) core.Node {
 	cell := func(it backend.CardItem) core.Node {
 		return tap(it.Title, func() { a.openCardItem(it) }, core.Style{Width: core.Pt(w + 8), Gap: 4, Padding: core.Symmetric(4, 0), AlignItems: core.AlignCenter, CornerRadius: 8}, "",
 			core.View{Class: "bg-white", Style: core.Style{Width: core.Pt(w), Height: core.Pt(h), CornerRadius: 8, Overflow: core.Hidden},
-				Children: []core.Node{a.picOf(cx, it.Pic, core.Contain, "", fillAbs)}},
+				Children: []core.Node{a.picOf(cx, it.Pic, core.Cover, "", fillAbs)}},
 			core.Text{Content: it.Title, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400).Merge(core.Style{TextAlign: core.TextAlignCenter})})
 	}
 	var cols []core.Node
@@ -496,9 +564,12 @@ func (a *App) logosCard(cx *core.Scope, c *backend.Card) core.Node {
 // iconsCard is a grid of icons: five to a row for links, four for topics,
 // products and people, whose names are longer and which have a line more.
 func (a *App) iconsCard(cx *core.Scope, c *backend.Card) core.Node {
-	cols := 4
-	if c.Items[0].Subtitle == "" && !c.Items[0].Round {
-		cols = 5
+	cols := c.Columns
+	if cols == 0 {
+		cols = 4
+		if it := c.Items[0]; it.Subtitle == "" && it.Hot == "" && !it.Round {
+			cols = 5
+		}
 	}
 	size := core.Points(48)
 	if cols == 5 {
@@ -521,7 +592,9 @@ func (a *App) iconsCard(cx *core.Scope, c *backend.Card) core.Node {
 				a.clippedPic(cx, it.Pic, size, size, radius),
 				core.Text{Content: it.Title, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textCaption, 500).Merge(core.Style{TextAlign: core.TextAlignCenter})},
 			}
-			if it.Subtitle != "" {
+			if it.Hot != "" && it.Hot != "0" {
+				parts = append(parts, heatCount(func() string { return it.Hot }))
+			} else if it.Subtitle != "" {
 				parts = append(parts, core.Text{Content: it.Subtitle, MaxLines: 1, Class: "text-on-surface-variant",
 					Style: textStyle(textCaption, 400).Merge(core.Style{TextAlign: core.TextAlignCenter})})
 			}
@@ -548,15 +621,24 @@ func (a *App) chipsCard(c *backend.Card) core.Node {
 
 // listCard is a few rows with an icon, a name and a line under it.
 func (a *App) listCard(cx *core.Scope, c *backend.Card) core.Node {
+	thumbnails := slices.ContainsFunc(c.Items, func(item backend.CardItem) bool { return item.Pic != "" })
 	rows := make([]core.Node, len(c.Items))
 	for i, it := range c.Items {
-		radius := core.Points(10)
-		if it.Round {
-			radius = 20
+		var thumbnail core.Node = core.Group{}
+		if it.Pic != "" {
+			radius := core.Points(10)
+			if it.Round {
+				radius = 20
+			}
+			thumbnail = a.clippedPic(cx, it.Pic, 40, 40, radius)
+		} else if thumbnails {
+			thumbnail = column(core.Style{Width: core.Pt(40), Height: core.Pt(40), FlexShrink: 0, CornerRadius: 10,
+				AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, "bg-surface-container-low",
+				icon(&symbols.Article, 20, "text-on-surface-variant"))
 		}
 		rows[i] = tap(it.Title, func() { a.openCardItem(it) },
 			core.Style{Direction: core.Row, Padding: core.Symmetric(8, 16), Gap: 12, AlignItems: core.AlignCenter}, "",
-			a.clippedPic(cx, it.Pic, 40, 40, radius),
+			thumbnail,
 			column(fill.Merge(core.Style{Gap: 2}), "",
 				core.Text{Content: it.Title, MaxLines: 1, Class: "text-on-surface", Style: textStyle(textSecondary, 500)},
 				core.Text{Content: it.Subtitle, MaxLines: 1, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)}),
@@ -692,7 +774,7 @@ func (a *App) clippedPic(cx *core.Scope, url string, w, h, radius core.Points) c
 
 // An image's own corner radius does not clip what it draws, the view around it does.
 func (a *App) clippedPicFrom(cx *core.Scope, url func() string, w, h, radius core.Points) core.Node {
-	return core.View{Class: "bg-surface-container-high",
+	return core.View{
 		Style:    core.Style{Width: core.Pt(w), Height: core.Pt(h), CornerRadius: radius, Overflow: core.Hidden, FlexShrink: 0},
 		Children: []core.Node{a.pic(cx, url, core.Cover, "", fillAbs)}}
 }
