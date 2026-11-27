@@ -23,6 +23,7 @@ android:
 # signed with the secret key releases build with (NSGO_UPDATES_KEY).
 updates:
   key: jaDUPWWYhv7lOUBGqTxy94hVpV8IvdmzmpAud0QH0eM=
+  automatic: true
 
 build:
   output: dist

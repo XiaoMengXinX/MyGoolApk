@@ -185,5 +185,15 @@ func (a *App) updateItem(cx *core.Scope) core.Node {
 		}
 		return core.Group{}
 	})
-	return listItem(&symbols.Download, "检查更新", progress, func() { updater.Check(cx) })
+	automatic := core.Dynamic(func(cx *core.Scope) core.Node {
+		capability := updater.CapabilityOf(cx)
+		if capability.Managed != updater.ManagedSelf && capability.Managed != updater.ManagedPage {
+			return core.Group{}
+		}
+		return toggleRow("自动检查更新", func() bool { return updater.Status(cx).AutomaticChecks }, func(on bool) {
+			updater.SetAutomaticChecks(cx, on)
+		})
+	})
+	return column(core.Style{}, "", automatic,
+		listItem(&symbols.Download, "检查更新", progress, func() { updater.Check(cx) }))
 }
