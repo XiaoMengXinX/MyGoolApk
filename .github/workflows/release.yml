@@ -31,6 +31,7 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       prerelease: ${{ steps.ver.outputs.prerelease }}
       ios_only: ${{ steps.ver.outputs.ios_only }}
+      macos_only: ${{ steps.ver.outputs.macos_only }}
     steps:
       - name: Parse version
         id: ver
@@ -57,10 +58,15 @@ jobs:
           if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-ios\.[1-9][0-9]*$ ]]; then
             ios_only=true
           fi
+          macos_only=false
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-macos\.[1-9][0-9]*$ ]]; then
+            macos_only=true
+          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "ios_only=$ios_only" >> "$GITHUB_OUTPUT"
+          echo "macos_only=$macos_only" >> "$GITHUB_OUTPUT"
 
   test:
     name: Test
@@ -87,7 +93,7 @@ jobs:
   build-android:
     name: Build Android (arm64)
     needs: [prepare, test]
-    if: needs.prepare.outputs.ios_only != 'true'
+    if: needs.prepare.outputs.ios_only != 'true' && needs.prepare.outputs.macos_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -155,6 +161,7 @@ jobs:
           coolapk-api-deploy-key: ${{ secrets.COOLAPK_API_DEPLOY_KEY }}
 
       - name: Build iOS IPA (unsigned)
+        if: needs.prepare.outputs.macos_only != 'true'
         working-directory: ${{ env.APP_DIR }}
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -170,8 +177,13 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          MACOS_ONLY: ${{ needs.prepare.outputs.macos_only }}
           NSGO_UPDATES_KEY: ${{ secrets.NSGO_UPDATES_KEY }}
-        run: go tool nsgo build -target macos_universal -version "$VERSION" .
+        run: |
+          if [[ "$MACOS_ONLY" == true ]]; then
+            VERSION="${VERSION%-macos.*}"
+          fi
+          go tool nsgo build -target macos_universal -version "$VERSION" .
 
       - name: Upload Apple release files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -190,7 +202,7 @@ jobs:
     name: Publish GitHub Release
     if: >-
       !cancelled() && github.event_name == 'push' && needs.build-apple.result == 'success' &&
-      (needs.build-android.result == 'success' || needs.prepare.outputs.ios_only == 'true')
+      (needs.build-android.result == 'success' || needs.prepare.outputs.ios_only == 'true' || needs.prepare.outputs.macos_only == 'true')
     needs: [prepare, build-android, build-apple]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
