@@ -271,61 +271,93 @@ func (a *App) detailPage(cx *core.Scope, id string) core.Node {
 func (d *detail) postBody(cx *core.Scope) core.Node {
 	a := d.a
 	get := func() backend.Feed { return d.feed.Get() }
-	type shape struct {
-		feedShape
-		blocks, rich          int
-		target, counted, text bool
-		voted                 bool
-		documents             *postDocuments
+	// Each part is built again only as its own shape changes: the full post
+	// that replaces the list's copy rebuilds what it changes, and pictures
+	// built again show their placeholder for a frame.
+	type coverShape struct {
+		url   string
+		ratio float32
 	}
-	return dynamicShape(cx, func() shape {
+	cover := dynamicShape(cx, func() coverShape {
 		f := get()
-		return shape{shapeOfFeed(f, 0), len(f.Blocks), len(f.Rich), f.Target != nil, f.Answers > 0 || f.Followers > 0, f.Content != "" || f.Markup != "", f.Vote != nil && f.Vote.Counted, d.documents.Get()}
-	}, func(cx *core.Scope, shape shape) core.Node {
-		f := core.Untracked(cx, get)
-		s := shapeOfFeed(f, 0)
-		kids := []core.Node{a.feedHeader(cx, get, 40)}
-		// The cover leads an article edge to edge, over its title.
-		if c := f.Cover; c != nil && !slices.ContainsFunc(f.Blocks, func(b backend.Block) bool { return b.Kind == backend.BlockImage && b.Image.URL == c.URL }) {
-			cover := *c
-			kids = append(kids, tap("查看封面", func() { a.openImages([]backend.Image{cover}, 0) },
-				core.Style{Margin: core.Symmetric(0, -16), AspectRatio: mediaRatio(cover, 16.0/9, 1, 3)}, "bg-surface-container-highest",
-				a.pic(cx, func() string { return thumbURL(cover, thumbMedium) }, core.Cover, "", fillAbs)))
+		c := f.Cover
+		if c == nil || slices.ContainsFunc(f.Blocks, func(b backend.Block) bool { return b.Kind == backend.BlockImage && b.Image.URL == c.URL }) {
+			return coverShape{}
 		}
-		if s.title {
-			kids = append(kids, core.Text{ContentFunc: func() string { return get().Title }, Class: "text-on-surface", Style: func() core.Style {
-				st := textStyle(textTitle, 500)
-				st.LineHeight = 31
-				return st
-			}()})
+		return coverShape{c.URL, mediaRatio(*c, 16.0/9, 1, 3)}
+	}, func(cx *core.Scope, cs coverShape) core.Node {
+		if cs.url == "" {
+			return core.Group{}
 		}
-		if f.Kind == backend.PostQuestion && (f.Answers > 0 || f.Followers > 0) {
-			kids = append(kids, core.Text{ContentFunc: func() string {
+		cover := *core.Untracked(cx, get).Cover
+		return tap("查看封面", func() { a.openImages([]backend.Image{cover}, 0) },
+			core.Style{Margin: core.Symmetric(0, -16), AspectRatio: cs.ratio}, "bg-surface-container-highest",
+			a.pic(cx, func() string { return thumbURL(cover, thumbMedium) }, core.Cover, "", fillAbs))
+	})
+	title := core.Show{
+		When: func() bool { return get().Title != "" },
+		Then: func(*core.Scope) core.Node {
+			st := textStyle(textTitle, 500)
+			st.LineHeight = 31
+			return core.Text{ContentFunc: func() string { return get().Title }, Class: "text-on-surface", Style: st}
+		},
+	}
+	question := core.Show{
+		When: func() bool { f := get(); return f.Kind == backend.PostQuestion && (f.Answers > 0 || f.Followers > 0) },
+		Then: func(*core.Scope) core.Node {
+			return core.Text{ContentFunc: func() string {
 				f := get()
 				return joinNonEmpty([]string{countLabel(f.Answers, "个回答"), countLabel(f.Followers, "人关注")}, "  ")
-			}, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)})
-		}
-		kids = append(kids, core.Show{
-			When: func() bool { return d.asked.Get() && !d.summaryError.Get() },
-			Then: d.summaryCard,
-		})
+			}, Class: "text-on-surface-variant", Style: textStyle(textCaption, 400)}
+		},
+	}
+	type textShape struct {
+		rating       bool
+		blocks, rich int
+		text         bool
+		documents    *postDocuments
+	}
+	text := dynamicShape(cx, func() textShape {
+		f := get()
+		return textShape{f.Rating != nil, len(f.Blocks), len(f.Rich), f.Content != "" || f.Markup != "", d.documents.Get()}
+	}, func(cx *core.Scope, ts textShape) core.Node {
+		f := core.Untracked(cx, get)
 		switch {
-		case f.Rating != nil:
-			kids = append(kids, d.ratingDetail(cx, f, shape.documents.parts))
-		case len(f.Blocks) > 0:
-			kids = append(kids, d.articleBlocks(cx, f, shape.documents.parts))
-		case len(f.Rich) > 0 || shape.text:
-			kids = append(kids, a.postDocument(cx, shape.documents.body, d.markdown.Get,
-				func() ([]backend.RichSpan, string) { f := get(); return f.Rich, f.Content }))
+		case ts.rating:
+			return d.ratingDetail(cx, f, ts.documents.parts)
+		case ts.blocks > 0:
+			return d.articleBlocks(cx, f, ts.documents.parts)
+		case ts.rich > 0 || ts.text:
+			return a.postDocument(cx, ts.documents.body, d.markdown.Get,
+				func() ([]backend.RichSpan, string) { f := get(); return f.Rich, f.Content })
 		}
-		if s.video || s.images > 0 || s.link || s.vote || s.fw {
-			kids = append(kids, a.feedMedia(cx, get, s, true, d.castVote))
-		}
-		if f.Target != nil {
-			kids = append(kids, row(core.Style{}, "", a.targetChip(cx, func() *backend.Target { return get().Target })))
-		}
-		return column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 20, Left: 16}, Gap: 16}, "bg-background", kids...)
+		return core.Group{}
 	})
+	type mediaShape struct {
+		feedShape
+		voted bool
+	}
+	media := dynamicShape(cx, func() mediaShape {
+		f := get()
+		s := shapeOfFeed(f, 0)
+		return mediaShape{feedShape{kind: s.kind, images: s.images, video: s.video, link: s.link, vote: s.vote, fw: s.fw}, f.Vote != nil && f.Vote.Counted}
+	}, func(cx *core.Scope, ms mediaShape) core.Node {
+		s := ms.feedShape
+		if !s.video && s.images == 0 && !s.link && !s.vote && !s.fw {
+			return core.Group{}
+		}
+		return a.feedMedia(cx, get, s, true, d.castVote)
+	})
+	target := core.Show{
+		When: func() bool { return get().Target != nil },
+		Then: func(cx *core.Scope) core.Node {
+			return row(core.Style{}, "", a.targetChip(cx, func() *backend.Target { return get().Target }))
+		},
+	}
+	return column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 20, Left: 16}, Gap: 16}, "bg-background",
+		a.feedHeader(cx, get, 40), cover, title, question,
+		core.Show{When: func() bool { return d.asked.Get() && !d.summaryError.Get() }, Then: d.summaryCard},
+		text, media, target)
 }
 
 func (d *detail) summaryCard(*core.Scope) core.Node {
