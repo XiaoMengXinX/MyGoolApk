@@ -268,8 +268,7 @@ func cardTitle(title string, pad core.Edges) core.Node {
 		label(title, textBody, 600, "text-on-surface")}}
 }
 
-// bannerCard pages through its pictures, as wide as the screen less the
-// margins, at the shape the card asks for or else the first picture's.
+// bannerCard pages through a loop at the card's aspect ratio.
 func (a *App) bannerCard(cx *core.Scope, c *backend.Card) core.Node {
 	const margin = 8
 	ratio := c.Ratio
@@ -281,8 +280,32 @@ func (a *App) bannerCard(cx *core.Scope, c *backend.Card) core.Node {
 	}
 	pos := core.NewSignal(cx, 0)
 	width := core.NewSignal(cx, core.Points(0))
-	pages := make([]core.Node, len(c.Items))
-	for i, it := range c.Items {
+	var ref core.Ref
+	count := len(c.Items)
+	items := c.Items
+	page := 0
+	if count > 1 {
+		// Each end has a copy of its neighbor across the seam. Once that
+		// copy is fully visible, scroll back to the identical original.
+		items = make([]backend.CardItem, 0, count+2)
+		items = append(items, c.Items[count-1])
+		items = append(items, c.Items...)
+		items = append(items, c.Items[0])
+		page = 1
+	}
+	scrollTo := func(i int, animated bool) {
+		ref.ScrollTo(core.Point{X: core.Points(i) * width.GetUntracked()}, animated)
+	}
+	var wheel func(core.WheelEvent)
+	if count > 1 && hoverable {
+		wheel = pagedWheel(&ref, width.GetUntracked, len(items), func() int { return page }, func(delta int) {
+			if next := max(0, min(page+delta, len(items)-1)); next != page {
+				scrollTo(next, true)
+			}
+		})
+	}
+	pages := make([]core.Node, len(items))
+	for i, it := range items {
 		pages[i] = core.View{
 			StyleFunc: func() core.Style {
 				return core.Style{Width: core.Pt(width.Get()), Height: core.Pct(100), Padding: core.Symmetric(0, margin)}
@@ -293,29 +316,46 @@ func (a *App) bannerCard(cx *core.Scope, c *backend.Card) core.Node {
 		}
 	}
 	pager := core.Scroll{
-		Horizontal: true, HideIndicator: true,
+		Horizontal: true, HideIndicator: true, Ref: &ref,
 		// A single picture leaves a sideways drag to the views around it.
-		Behavior: core.ScrollBehavior{Paging: true, NoScroll: len(c.Items) == 1},
+		Behavior: core.ScrollBehavior{Paging: true, NoScroll: count == 1},
 		Style:    core.Style{Direction: core.Row},
 		// The pictures keep the shape between the margins.
 		StyleFunc: func() core.Style {
 			return core.Style{Height: core.Pt(max(width.Get()-2*margin, 0) / core.Points(ratio))}
 		},
 		OnLayout: func(b core.Bounds) {
-			if b.Size.Width > 0 {
+			if b.Size.Width > 0 && b.Size.Width != width.GetUntracked() {
 				width.Set(b.Size.Width)
+				if count > 1 {
+					scrollTo(page, false)
+				}
 			}
 		},
 		OnScroll: func(e core.ScrollEvent) {
-			if !e.Stale && e.Size.Width > 0 {
-				pos.Set(int(e.Offset.X/e.Size.Width + 0.5))
+			if count > 1 && !e.Stale && e.Size.Width > 0 {
+				page = max(0, min(int(e.Offset.X/e.Size.Width+0.5), count+1))
+				pos.Set((page + count - 1) % count)
 			}
 		},
-		Children: []core.Node{core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}},
+		OnScrollEnd: func(e core.ScrollEvent) {
+			if count == 1 || e.Stale || e.Size.Width <= 0 {
+				return
+			}
+			switch {
+			case e.Offset.X < 0.5:
+				page = count
+				scrollTo(page, false)
+			case e.Offset.X >= core.Points(count+1)*e.Size.Width-0.5:
+				page = 1
+				scrollTo(page, false)
+			}
+		},
+		Children: []core.Node{core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, OnWheel: wheel, Children: pages}},
 	}
 	parts := []core.Node{pager}
-	if len(c.Items) > 1 {
-		dots := make([]core.Node, len(c.Items))
+	if count > 1 {
+		dots := make([]core.Node, count)
 		for i := range c.Items {
 			dots[i] = core.View{
 				Style: core.Style{Height: core.Pt(6), CornerRadius: 3, Transition: core.Transition{Duration: 200e6, Properties: core.TransitionLayout}},
