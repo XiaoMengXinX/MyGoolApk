@@ -46,8 +46,8 @@ func (a *App) userPage(cx *core.Scope, uid string) core.Node {
 
 	// The profile is over the tabs' lists and scrolls away with the shown one.
 	over := newHeaded(cx, u.tab, len(userTabs), func(i int) *core.Ref { return &u.feeds[i].list })
-	at := core.NewSignal(cx, float32(0))
-	pages := tabPages(cx, u.tab, at, len(userTabs), func(cx *core.Scope, i int) core.Node {
+	slide := newPageSlide(cx, core.NewSignal(cx, core.Points(0)), len(userTabs))
+	pages := tabPages(cx, u.tab, slide, func(cx *core.Scope, i int) core.Node {
 		p := u.feeds[i]
 		spec := over.under(cx, i, listSpec{pushed: true, empty: "暂无内容", bottom: 24, skeleton: skeletonCard,
 			onRefresh: func() {
@@ -64,7 +64,7 @@ func (a *App) userPage(cx *core.Scope, uid string) core.Node {
 		if failed.Get() {
 			return statusBlock("加载失败", u.err.Get(), "重试", func() { u.err.Set(""); u.load() })
 		}
-		return over.view(u.header(cx), simpleTabs(u.tab, at, userTabs...), pages)
+		return over.view(u.header(cx), simpleTabs(cx, u.tab, slide, userTabs...), pages)
 	})
 	return a.screen(func() string { return u.profile.Get().Author.Name }, nil,
 		core.Dynamic(func(cx *core.Scope) core.Node {

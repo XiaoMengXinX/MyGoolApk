@@ -92,6 +92,7 @@ type tabGroup struct {
 	selected *core.Signal[int]
 	pos      *core.Signal[float32]
 	width    *core.Signal[core.Points]
+	slide    *pageSlide
 	pages    core.Ref
 	tabRefs  []*core.Ref
 	// jump shows page i, as the strip's taps and the back key do.
@@ -254,8 +255,15 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 	// elsewhere, and the pages go back to the selected tab. A tap's animated
 	// jump (glide) moves the indicator without choosing on the way.
 	last, glide := core.Points(-1), -1
+	slide := newPageSlide(cx, g.width, len(g.tabs))
+	g.slide = slide
 	jump := func(i int, animated bool) {
 		w := g.width.GetUntracked()
+		if slide.byPan {
+			g.pos.Set(float32(i))
+			slide.show(&g.pages, i, animated)
+			return
+		}
 		if animated {
 			glide = i
 		} else {
@@ -265,24 +273,19 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 	}
 	g.jump = jump
 	placed := false
-	row := core.View{Style: core.Style{Direction: core.Row, Height: core.Pct(100)}, Children: pages}
-	byPan := swipesByPan(cx)
-	if byPan {
-		sp := &swipePager{ref: &g.pages, width: g.width.GetUntracked, count: len(g.tabs), at: g.selected.GetUntracked,
-			goTo: func(i int) {
-				if i != g.selected.GetUntracked() {
-					g.selected.Set(i)
-					g.tabRefs[i].Reveal(core.RevealOptions{})
-				}
-				jump(i, true)
-			}}
-		row.OnPan, row.PanActivation = sp.pan, swipeActivation
-	}
+	row := slide.row(pages, func(i int) {
+		g.pos.Set(float32(i))
+		if i != g.selected.GetUntracked() {
+			g.selected.Set(i)
+			g.tabRefs[i].Reveal(core.RevealOptions{})
+		}
+	})
 	pager := core.Scroll{
 		TestID:     "pages",
 		Horizontal: true, HideIndicator: true, Ref: &g.pages,
-		Behavior: core.ScrollBehavior{Paging: true, NoScroll: byPan},
-		Style:    fill.Merge(core.Style{Direction: core.Row}),
+		Behavior:     core.ScrollBehavior{Paging: true, NoScroll: slide.byPan},
+		OffsetValues: slide.scroll(),
+		Style:        fill.Merge(core.Style{Direction: core.Row}),
 		// A page a back gesture previews is laid out at 0 for a moment; its
 		// pages keep the width they had, or they would empty and the offset
 		// would shrink to the first page. A new pager, and a width that
@@ -375,18 +378,28 @@ func (g *tabGroup) strip(cx *core.Scope) core.Node {
 		})
 	}
 	const bar = 32
+	// The indicator goes from tab to tab as the pages' offset goes from page
+	// to page, on the platform's main thread.
+	move := core.NewMemoFunc(cx, func() core.AnimatedNode {
+		laid.Get()
+		w := float64(g.width.Get())
+		if len(centers) < 2 || w <= 0 {
+			return nil
+		}
+		in, out := make([]float64, len(centers)), make([]float64, len(centers))
+		for i, c := range centers {
+			in[i], out[i] = float64(i)*w, float64(c-bar/2)
+		}
+		return core.Interpolate(g.slide.offset, core.Interpolation{Input: in, Output: out, Extrapolate: core.ExtrapolateClamp})
+	}, func(a, b core.AnimatedNode) bool { return false })
 	tabs = append(tabs, core.View{
 		PointerEvents: core.PointerEventsNone, Class: "bg-primary",
-		Style: core.Style{Position: core.Absolute, Bottom: core.Pt(0), Width: core.Pt(bar), Height: core.Pt(3), CornerRadii: core.Corners{TopLeft: 3, TopRight: 3}},
+		Style: core.Style{Position: core.Absolute, Bottom: core.Pt(0), Left: core.Pt(0), Width: core.Pt(bar), Height: core.Pt(3), CornerRadii: core.Corners{TopLeft: 3, TopRight: 3}},
 		StyleFunc: func() core.Style {
-			laid.Get()
-			pos := min(max(g.pos.Get(), 0), float32(len(centers)-1))
-			i := min(int(pos), len(centers)-2)
-			if i < 0 {
-				return core.Style{Left: core.Pt(centers[0] - bar/2)}
+			if m := move.Get(); m != nil {
+				return core.Style{Animated: &core.AnimatedStyle{TranslateX: m}}
 			}
-			c := centers[i] + (centers[i+1]-centers[i])*core.Points(pos-float32(i))
-			return core.Style{Left: core.Pt(c - bar/2)}
+			return core.Style{Left: core.Pt(centers[0] - bar/2)}
 		},
 	})
 	return column(core.Style{FlexShrink: 0}, "bg-background",

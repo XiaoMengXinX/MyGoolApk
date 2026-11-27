@@ -245,6 +245,8 @@ type listSpec struct {
 	onRefresh func()
 	// onScroll hears the list scroll.
 	onScroll func(core.ScrollEvent)
+	// offset follows the list's offset on the platform's main thread.
+	offset core.AnimatedXY
 	// inverted puts the first row at the bottom, as a chat does.
 	inverted bool
 	// inSheet says the list is in a sheet, under no top bar of its own.
@@ -358,6 +360,7 @@ func pagerRows[T, R any](cx *core.Scope, p *pager[T], rows func([]T) []R, key fu
 			})
 		},
 		OnScroll:          scrollReport(cx, spec),
+		OffsetValues:      spec.offset,
 		OnLoadMore:        p.loadMore,
 		LoadMoreThreshold: 1.5,
 		OnRefresh: func() {

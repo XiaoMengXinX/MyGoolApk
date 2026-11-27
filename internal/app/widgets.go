@@ -99,9 +99,9 @@ func toggleRow(title string, on func() bool, set func(bool)) core.Node {
 }
 
 // simpleTabs are Material 3 primary tabs: equal-width labels, the selected
-// one in primary, over a rule. The indicator stands under the page at, which
-// goes between pages as a finger drags them.
-func simpleTabs(selected *core.Signal[int], at *core.Signal[float32], titles ...string) core.Node {
+// one in primary, over a rule. The indicator moves with the pages slide
+// shows, on the platform's main thread.
+func simpleTabs(cx *core.Scope, selected *core.Signal[int], slide *pageSlide, titles ...string) core.Node {
 	tabs := make([]core.Node, len(titles))
 	for i, title := range titles {
 		i := i
@@ -117,17 +117,32 @@ func simpleTabs(selected *core.Signal[int], at *core.Signal[float32], titles ...
 			}}},
 		})
 	}
-	share := 100 / float32(len(titles))
+	n := len(titles)
+	strip := core.NewSignal(cx, core.Points(0))
+	move := core.NewMemoFunc(cx, func() core.AnimatedNode {
+		w, tab := float64(slide.width.Get()), float64(strip.Get())/float64(n)
+		if n < 2 || w <= 0 || tab <= 0 {
+			return nil
+		}
+		return core.Interpolate(slide.offset, core.Interpolation{Input: []float64{0, float64(n-1) * w},
+			Output: []float64{0, float64(n-1) * tab}, Extrapolate: core.ExtrapolateClamp})
+	}, func(a, b core.AnimatedNode) bool { return false })
 	indicator := core.View{
 		PointerEvents: core.PointerEventsNone,
-		Style:         core.Style{Position: core.Absolute, Bottom: core.Pt(0), Width: core.Pct(share), AlignItems: core.AlignCenter},
-		StyleFunc:     func() core.Style { return core.Style{Left: core.Pct(at.Get() * share)} },
+		Style:         core.Style{Position: core.Absolute, Bottom: core.Pt(0), Left: core.Pt(0), Width: core.Pct(100 / float32(n)), AlignItems: core.AlignCenter},
+		StyleFunc: func() core.Style {
+			if m := move.Get(); m != nil {
+				return core.Style{Animated: &core.AnimatedStyle{TranslateX: m}}
+			}
+			return core.Style{}
+		},
 		Children: []core.Node{core.View{Class: "bg-primary",
 			Style: core.Style{Width: core.Pt(32), Height: core.Pt(3), CornerRadii: core.Corners{TopLeft: 3, TopRight: 3}}}},
 	}
 	return column(core.Style{FlexShrink: 0}, "bg-background",
 		core.View{Style: core.Style{Height: core.Pt(48), Padding: core.Symmetric(0, 8)}, Children: []core.Node{
-			core.View{Style: fill.Merge(core.Style{Direction: core.Row}), Children: append(tabs, indicator)}}},
+			core.View{Style: fill.Merge(core.Style{Direction: core.Row}), OnLayout: func(b core.Bounds) { strip.Set(b.Size.Width) },
+				Children: append(tabs, indicator)}}},
 		core.View{Style: core.Style{Height: core.Pt(1)}, Class: "bg-outline-variant"})
 }
 
