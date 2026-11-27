@@ -9,8 +9,9 @@ These patches apply, in order, to the NSGo release named in `go.mod` (`github.co
 4. `0004`: on iOS, screens that slide in, out or under a swipe back run at the screen's full rate. Without it a ProMotion iPhone shows them at 60 Hz unless something else in the app animates.
 5. `0005`: iOS's `ScrollTarget`. A vertical drag on the view moves the target's content natively, stretching past its edges and gliding on at UIKit's normal deceleration, at the screen's full rate.
 6. `0006`: zoomable scroll content follows its children's bounds, so centering a smaller image leaves the margins outside its scrollable area. iOS centers the content again after viewport changes. Android releases a cancelled drag without starting a fling.
+7. `0007`: `mobile.SavePhoto` adds an encoded image to Photos on iOS with add-only authorization, or to Android's MediaStore. Android 28 requests storage permission; newer Android versions need none. The callback reports the library write's completion.
 
-`0002`, `0003` and `0006` change the Android runtime's Java, so after applying the patches rebuild `classes.dex` and `classes.jar` with a JDK 17+ and an Android SDK with platform 36 and build-tools 36+ (CI does this through `rebuild-android-runtime`):
+`0002`, `0003`, `0006` and `0007` change the Android runtime's Java, so after applying the patches rebuild `classes.dex` and `classes.jar` with a JDK 17+ and an Android SDK with platform 36 and build-tools 36+ (CI does this through `rebuild-android-runtime`):
 
 ```sh
 git clone --depth 1 --branch v0.3.4 https://github.com/nsgo-dev/nsgo.git nsgo

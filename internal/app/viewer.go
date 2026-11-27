@@ -8,6 +8,7 @@ import (
 
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/desktop"
+	"github.com/nsgo-dev/nsgo/mobile"
 
 	"app/internal/backend"
 )
@@ -502,7 +503,7 @@ func (a *App) viewerPage(cx *core.Scope, v *viewer) core.Node {
 	return column(fill, "", black, content, counter, save)
 }
 
-// saveImage keeps the original of a picture where the user chooses.
+// saveImage keeps the original in the mobile photo library or a desktop file.
 func (a *App) saveImage(im backend.Image) {
 	name := path.Base(strings.SplitN(im.URL, "?", 2)[0])
 	if !strings.Contains(name, ".") {
@@ -515,14 +516,19 @@ func (a *App) saveImage(im backend.Image) {
 				a.notice("保存失败：" + err.Error())
 				return
 			}
-			a.cx.SaveFile(core.SaveOptions{Name: name, Path: p}, func(saved bool, _ string, err error) {
+			done := func(saved bool, _ string, err error) {
 				switch {
 				case err != nil:
 					a.notice("保存失败：" + err.Error())
 				case saved:
 					a.notice("已保存")
 				}
-			})
+			}
+			if os := a.cx.Env().OS(); os == core.OSAndroid || os == core.OSIOS {
+				mobile.SavePhoto(a.cx, mobile.PhotoSaveOptions{Name: name, Path: p}, done)
+			} else {
+				a.cx.SaveFile(core.SaveOptions{Name: name, Path: p}, done)
+			}
 		})
 	}()
 }

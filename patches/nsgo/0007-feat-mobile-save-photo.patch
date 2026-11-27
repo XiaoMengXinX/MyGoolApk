@@ -1,0 +1,472 @@
+From e759fe8ee0d3f11a2ed6e592659699b68949f756 Mon Sep 17 00:00:00 2001
+From: xiaomengxin <xibaole2333@gmail.com>
+Date: Fri, 27 Nov 2026 19:51:34 +0800
+Subject: [PATCH] feat(mobile): save images to the photo library
+
+---
+ changelog.d/save-photo.md                     |  3 +
+ core/photo_save_test.go                       | 38 +++++++++
+ core/services.go                              | 29 ++++++-
+ docs/architecture/services.md                 |  2 +
+ docs/public/en/services.md                    |  6 ++
+ internal/driver/files.go                      |  1 +
+ internal/driver/kindnames_gen.go              |  1 +
+ internal/driver/mount.go                      |  2 +
+ internal/platform/android/android.go          |  3 +
+ .../android/java/dev/oneo/nsgo/NsgoView.java  | 25 ++++++
+ .../android/java/dev/oneo/nsgo/Protocol.java  |  1 +
+ .../android/java/dev/oneo/nsgo/Services.java  | 39 +++++++++
+ internal/platform/ios/ios.go                  |  6 +-
+ internal/platform/ios/photos.go               | 85 +++++++++++++++++++
+ mobile/mobile.go                              | 11 +++
+ skills/nsgo/SKILL.md                          |  1 +
+ 16 files changed, 251 insertions(+), 2 deletions(-)
+ create mode 100644 changelog.d/save-photo.md
+ create mode 100644 core/photo_save_test.go
+ create mode 100644 internal/platform/ios/photos.go
+
+diff --git a/changelog.d/save-photo.md b/changelog.d/save-photo.md
+new file mode 100644
+index 00000000..42536aa8
+--- /dev/null
++++ b/changelog.d/save-photo.md
+@@ -0,0 +1,3 @@
++### Added
++
++- Add `mobile.SavePhoto` to save images to Photos on iOS with add-only authorization and to MediaStore on Android.
+diff --git a/core/photo_save_test.go b/core/photo_save_test.go
+new file mode 100644
+index 00000000..7654ba74
+--- /dev/null
++++ b/core/photo_save_test.go
+@@ -0,0 +1,38 @@
++package core
++
++import (
++	"testing"
++
++	"github.com/nsgo-dev/nsgo/internal/driver"
++)
++
++func TestSavePhotoLibraryResults(t *testing.T) {
++	for _, os := range []OS{OSIOS, OSAndroid} {
++		t.Run(string(os), func(t *testing.T) {
++			var cx *Scope
++			h := newHost(t, Size{Width: 100, Height: 100}, func(c *Scope) Node { cx = c; return View{} })
++			h.commit()
++			h.tree.SetEnvironment(Environment{OS: os})
++			for _, message := range []string{"", "photo library access denied"} {
++				answered := false
++				cx.SavePhoto(PhotoSaveOptions{Name: "photo.gif", Data: []byte("GIF89a")}, func(saved bool, _ string, err error) {
++					answered = true
++					if saved != (message == "") || (err != nil) != (message != "") {
++						t.Errorf("saved=%v error=%v for %q", saved, err, message)
++					}
++				})
++				it := command(h.commit(), driver.ItemSaveFile)
++				if it == nil || !it.Save.Photo || it.Save.MIME != "image/gif" {
++					t.Fatalf("photo request = %+v", it)
++				}
++				if answered {
++					t.Fatal("save completed before the photo library answered")
++				}
++				h.tree.Dispatch(driver.Event{Kind: driver.EventFiles, Count: it.Count, Finished: message == "", Text: message})
++				if !answered {
++					t.Fatal("photo library result was not delivered")
++				}
++			}
++		})
++	}
++}
+diff --git a/core/services.go b/core/services.go
+index ddf2a3c5..5ead4557 100644
+--- a/core/services.go
++++ b/core/services.go
+@@ -639,6 +639,25 @@ type SaveOptions struct {
+ // picker where the browser has one, else a download, which counts as
+ // saved. An iOS or HarmonyOS save requiring preflight reports an error.
+ func (cx *Scope) SaveFile(o SaveOptions, done func(saved bool, path string, err error)) {
++	cx.saveFile(o, done, false)
++}
++
++// PhotoSaveOptions implements mobile.PhotoSaveOptions.
++// Path supplies a file; otherwise Data supplies its encoded bytes.
++type PhotoSaveOptions struct {
++	Name, MIME, Path string
++	Data             []byte
++}
++
++// SavePhoto implements mobile.SavePhoto for Photos on iOS and MediaStore on Android.
++// iOS needs NSPhotoLibraryAddUsageDescription. Android 28 needs the
++// WRITE_EXTERNAL_STORAGE manifest permission; later Android needs none.
++// The callback runs on the engine goroutine after the library finishes.
++func (cx *Scope) SavePhoto(o PhotoSaveOptions, done func(saved bool, path string, err error)) {
++	cx.saveFile(SaveOptions{Name: o.Name, MIME: o.MIME, Path: o.Path, Data: o.Data}, done, true)
++}
++
++func (cx *Scope) saveFile(o SaveOptions, done func(saved bool, path string, err error), photo bool) {
+ 	answer := func(saved bool, path string, err error) {
+ 		if done != nil {
+ 			done(saved, path, err)
+@@ -648,7 +667,11 @@ func (cx *Scope) SaveFile(o SaveOptions, done func(saved bool, path string, err
+ 	if t == nil || cx.denied(servicePicker, "") {
+ 		return
+ 	}
+-	r := driver.SaveRequest{Name: o.Name, MIME: o.MIME, Path: o.Path, Data: o.Data, Preflight: o.Preflight || o.Accept != nil}
++	if photo && cx.Env().OS() != OSIOS && cx.Env().OS() != OSAndroid {
++		answer(false, "", errors.New("photo library saving is available on iOS and Android"))
++		return
++	}
++	r := driver.SaveRequest{Photo: photo, Name: o.Name, MIME: o.MIME, Path: o.Path, Data: o.Data, Preflight: o.Preflight || o.Accept != nil}
+ 	if filepath.IsAbs(o.Start) {
+ 		r.Start = o.Start
+ 	}
+@@ -670,6 +693,10 @@ func (cx *Scope) SaveFile(o SaveOptions, done func(saved bool, path string, err
+ 	if r.MIME == "" {
+ 		r.MIME = driver.MIMEForFile(r.Name)
+ 	}
++	if photo && !strings.HasPrefix(r.MIME, "image/") {
++		answer(false, "", errors.New("the photo must have an image media type"))
++		return
++	}
+ 	var denied error
+ 	var deniedPath string
+ 	id := t.request(cx, driver.MountItem{Kind: driver.ItemSaveFile, Save: &r}, func(ev driver.Event) {
+diff --git a/docs/architecture/services.md b/docs/architecture/services.md
+index e3daf0fd..dab437f0 100644
+--- a/docs/architecture/services.md
++++ b/docs/architecture/services.md
+@@ -130,6 +130,8 @@ Apple reads from bundle resources and Windows and Linux read beside the executab
+ 
+ ## Files
+ 
++`mobile.SavePhoto` uses `core.PhotoSaveOptions` and the file save request/answer lifecycle, with `SaveRequest.Photo` selecting the photo library. iOS requests PhotoKit add-only authorization and adds a file resource through `PHAssetCreationRequest`, preserving its encoded format and original filename. Staging and library writes run off the UI thread; completion removes the staged file. Android's `ItemSavePhoto` pipe variant streams to `MediaStore.Images`, publishes the pending item after closing its stream, and deletes an incomplete item after failure. Android 28 requests `WRITE_EXTERNAL_STORAGE` and writes to public Pictures; newer versions need no storage permission. Other platforms report an error before issuing a request.
++
+ `PickFiles` and `SaveFile` move files of any type in and out of the app. As in NSH, the system dialog lets the user choose a path. NSGo's save request also carries the file source, which the backend writes after the user chooses. `PickFilesOptions.Types` offers media types (`application/pdf`), families (`image/*`) and extensions (`.zip`). A picker that filters only by one kind gets the other through `driver`'s table of common types and offers every file when a type has no counterpart.
+ 
+ Both pickers take hints a platform without the setting ignores, each empty for the system's own: `Title` says what the picker is for, `Button` labels the button that picks and `Start` is the folder it opens in, ignored where no such folder exists, as the table says per target. `PickFilesOptions.TypesName` names `Types` in the type menu of Windows and Linux, which otherwise read the English "Files", and Windows "All files" where every file is offered. Android's `EXTRA_INITIAL_URI` and the web's `startIn` take a document URI or a handle rather than a path, so neither has a `Start`. `nsgotest` records the hints with each pick (`App.FilePicks`, `App.DirectoryPicks`). The desktops' folder pickers let the user make a new folder: macOS's through `setCanCreateDirectories:`, Windows' and GTK's on their own.
+diff --git a/docs/public/en/services.md b/docs/public/en/services.md
+index 3ba76fd1..796dc9b3 100644
+--- a/docs/public/en/services.md
++++ b/docs/public/en/services.md
+@@ -126,6 +126,12 @@ Set `core.SaveOptions.Accept` to validate the chosen destination before writing.
+ 
+ In headless tests, `App.PickFiles`, `App.PickDirectories` and `App.SaveFile` receive `nsgotest.FilePick`, `nsgotest.DirectoryPick` and `nsgotest.FileSave` records. The same records are in `app.FilePicks`, `app.DirectoryPicks` and `app.Saves`.
+ 
++### Saving photos
++
++Use `mobile.SavePhoto(cx, mobile.PhotoSaveOptions{Name: "photo.jpg", Path: path}, done)` to add an encoded image to the device's photo library on iOS and Android. Supply `Data` instead of `Path` for bytes; `MIME` defaults to the name's extension. The callback `func(saved bool, path string, err error)` runs on the engine goroutine after the library finishes, with a MediaStore URI on Android. iOS preserves the image's original format, including GIF animation.
++
++On iOS, put `NSPhotoLibraryAddUsageDescription` in `apple.info`; the service asks only for permission to add photos. Android 28 requires `android.permission.WRITE_EXTERNAL_STORAGE` in `android.permissions` and asks for it when saving. Android 29 and later need no storage permission. Access denial and write failures report an error. Other platforms report that photo library saving is unavailable; use `cx.SaveFile` for a desktop save dialog.
++
+ ### Bundled assets
+ 
+ Put files under the app's `resources/` directory and use `cx.ReadAsset("asset:maps/level.bin", done)` to read them from Go. The callback receives `([]byte, error)` on the engine's goroutine after the read and is dropped if its owner goes away or runs again. Use `errors.Is(err, core.ErrAssetNotFound)` to identify missing files. The read loads the entire file into memory.
+diff --git a/internal/driver/files.go b/internal/driver/files.go
+index 4fe65d57..a9f17516 100644
+--- a/internal/driver/files.go
++++ b/internal/driver/files.go
+@@ -127,6 +127,7 @@ const NoDirectoryPicker = "this platform has no folder picker"
+ // SaveRequest is a save as the platform carries it out: the file the
+ // dialog suggests and what goes in it, the file at Path or else Data.
+ type SaveRequest struct {
++	Photo bool
+ 	// Name is a file name without directories, never empty.
+ 	Name string
+ 	MIME string
+diff --git a/internal/driver/kindnames_gen.go b/internal/driver/kindnames_gen.go
+index 823d6e5a..ce6554a1 100644
+--- a/internal/driver/kindnames_gen.go
++++ b/internal/driver/kindnames_gen.go
+@@ -137,6 +137,7 @@ var itemKindNames = map[ItemKind]string{
+ 	ItemSetClipboardItems:       "ItemSetClipboardItems",
+ 	ItemNowPlaying:              "ItemNowPlaying",
+ 	ItemCapture:                 "ItemCapture",
++	ItemSavePhoto:               "ItemSavePhoto",
+ }
+ 
+ // String returns the kind's name, as a log or an event prints it.
+diff --git a/internal/driver/mount.go b/internal/driver/mount.go
+index 41eb2fab..0a66bd79 100644
+--- a/internal/driver/mount.go
++++ b/internal/driver/mount.go
+@@ -421,6 +421,8 @@ const (
+ 	ItemNowPlaying
+ 	// ItemCapture requests a PNG of ID, or of the surface for zero. EventFiles answers Count with the bytes.
+ 	ItemCapture
++	// ItemSavePhoto is ItemSaveFile targeting the photo library on Android's pipe.
++	ItemSavePhoto
+ )
+ 
+ // EditAction is an editing action of an input's touch edit menu (ItemEditMenu, EventEditAction).
+diff --git a/internal/platform/android/android.go b/internal/platform/android/android.go
+index aabad943..d1eaf5e9 100644
+--- a/internal/platform/android/android.go
++++ b/internal/platform/android/android.go
+@@ -1657,6 +1657,9 @@ func encode(w *writer, b *driver.MountBatch, first bool, requests []uint32, nati
+ 		if kind == driver.ItemSaveFile && it.Save.Preflight {
+ 			kind = driver.ItemSaveFilePreflight
+ 		}
++		if kind == driver.ItemSaveFile && it.Save.Photo {
++			kind = driver.ItemSavePhoto
++		}
+ 		if kind == driver.ItemPictureInPictureCommand {
+ 			// Existing runtimes safely consume and ignore this native command.
+ 			kind = driver.ItemNativeCommand
+diff --git a/internal/platform/android/java/dev/oneo/nsgo/NsgoView.java b/internal/platform/android/java/dev/oneo/nsgo/NsgoView.java
+index 17a9a3c6..b48f1914 100644
+--- a/internal/platform/android/java/dev/oneo/nsgo/NsgoView.java
++++ b/internal/platform/android/java/dev/oneo/nsgo/NsgoView.java
+@@ -4230,6 +4230,31 @@ public class NsgoView extends FrameLayout implements NsgoEngine.Listener {
+                 }
+                 break;
+             }
++            case Protocol.ITEM_SAVE_PHOTO: {
++                long count = in.readInt() & 0xffffffffL;
++                String from = Protocol.readString(in), name = Protocol.readString(in), mime = Protocol.readString(in);
++                if (from.isEmpty()) break;
++                java.util.function.Consumer<Boolean> save = allowed -> {
++                    if (!allowed) {
++                        event(Protocol.EVENT_FILES, 0, count, 0, 0, "photo library access denied", 0, 0, 0, 0, 0, 0, 0, null, 0, 0, false, "", false);
++                        return;
++                    }
++                    files.execute(() -> {
++                        String error = "", uri = "";
++                        try { uri = Services.savePhoto(getContext(), from, name, mime).toString(); }
++                        catch (IOException | RuntimeException e) { error = e.toString(); }
++                        final String message = error, savedURI = uri;
++                        post(() -> event(Protocol.EVENT_FILES, 0, count, 0, 0, message, 0, 0, 0, 0, 0, 0, 0, null, 0, 0, false, savedURI, message.isEmpty()));
++                    });
++                };
++                String permission = android.Manifest.permission.WRITE_EXTERNAL_STORAGE;
++                if (Build.VERSION.SDK_INT <= 28 && getContext().checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
++                    askMediaPermissions(new String[]{permission}, save);
++                } else {
++                    save.accept(true);
++                }
++                break;
++            }
+             case Protocol.ITEM_SAVE_PREFLIGHT_ANSWER: {
+                 long count = in.readInt() & 0xffffffffL;
+                 boolean approved = (in.readUnsignedByte() & 1) != 0;
+diff --git a/internal/platform/android/java/dev/oneo/nsgo/Protocol.java b/internal/platform/android/java/dev/oneo/nsgo/Protocol.java
+index 13d24bd6..5b3a07b7 100644
+--- a/internal/platform/android/java/dev/oneo/nsgo/Protocol.java
++++ b/internal/platform/android/java/dev/oneo/nsgo/Protocol.java
+@@ -547,6 +547,7 @@ final class Protocol {
+     static final int ITEM_HAPTIC_PATTERN = 124;
+     static final int ITEM_EDIT_MENU = 126;
+     static final int ITEM_CAPTURE = 132;
++    static final int ITEM_SAVE_PHOTO = 133;
+ 
+     // Bitmask carried in ITEM_EDIT_MENU and EVENT_EDIT_ACTION, as driver.EditAction.
+     static final int EDIT_CUT = 1;
+diff --git a/internal/platform/android/java/dev/oneo/nsgo/Services.java b/internal/platform/android/java/dev/oneo/nsgo/Services.java
+index f7ccc058..d9b4dbc5 100644
+--- a/internal/platform/android/java/dev/oneo/nsgo/Services.java
++++ b/internal/platform/android/java/dev/oneo/nsgo/Services.java
+@@ -7,6 +7,7 @@ import android.content.ClipDescription;
+ import android.content.ClipboardManager;
+ import android.content.ComponentName;
+ import android.content.ContentResolver;
++import android.content.ContentValues;
+ import android.content.Context;
+ import android.content.Intent;
+ import android.content.pm.PackageManager;
+@@ -17,6 +18,7 @@ import android.graphics.ImageDecoder;
+ import android.media.ExifInterface;
+ import android.net.Uri;
+ import android.os.Build;
++import android.os.Environment;
+ import android.os.ext.SdkExtensions;
+ import android.provider.DocumentsContract;
+ import android.provider.MediaStore;
+@@ -761,6 +763,43 @@ final class Services {
+         }
+     }
+ 
++    static Uri savePhoto(Context context, String from, String name, String mime) throws IOException {
++        ContentResolver resolver = context.getContentResolver();
++        ContentValues values = new ContentValues();
++        values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
++        values.put(MediaStore.Images.Media.MIME_TYPE, mime);
++        if (Build.VERSION.SDK_INT >= 29) {
++            values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES);
++            values.put(MediaStore.Images.Media.IS_PENDING, 1);
++        } else {
++            File folder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
++            if (!folder.isDirectory() && !folder.mkdirs()) throw new IOException("could not create Pictures folder");
++            File file = File.createTempFile("nsgo-", "-" + name, folder);
++            values.put(MediaStore.Images.Media.DATA, file.getAbsolutePath());
++            file.delete();
++        }
++        Uri created = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
++        if (created == null) throw new IOException("the media store could not create the image");
++        try (InputStream in = new FileInputStream(from); OutputStream out = resolver.openOutputStream(created, "w")) {
++            if (out == null) throw new IOException("the media store could not open the image");
++            copy(in, out);
++        } catch (IOException | RuntimeException e) {
++            resolver.delete(created, null, null);
++            throw e;
++        }
++        if (Build.VERSION.SDK_INT >= 29) {
++            values.clear();
++            values.put(MediaStore.Images.Media.IS_PENDING, 0);
++            try {
++                if (resolver.update(created, values, null, null) != 1) throw new IOException("the media store could not publish the image");
++            } catch (IOException | RuntimeException e) {
++                resolver.delete(created, null, null);
++                throw e;
++            }
++        }
++        return created;
++    }
++
+     /** Creates and writes the approved name under the user's directory grant. */
+     static Uri createSave(Context context, Documents d, Uri tree) throws IOException {
+         ContentResolver resolver = context.getContentResolver();
+diff --git a/internal/platform/ios/ios.go b/internal/platform/ios/ios.go
+index eb516209..fae47d2d 100644
+--- a/internal/platform/ios/ios.go
++++ b/internal/platform/ios/ios.go
+@@ -1386,7 +1386,11 @@ func (s *surface) apply(b *driver.MountBatch) {
+ 			s.share(*it.Share, it.Count)
+ 			continue
+ 		case driver.ItemSaveFile:
+-			s.saveFile(*it.Save, it.Count)
++			if it.Save.Photo {
++				s.savePhoto(*it.Save, it.Count)
++			} else {
++				s.saveFile(*it.Save, it.Count)
++			}
+ 			continue
+ 		case driver.ItemDirection:
+ 			s.rtl, s.directed = it.RTL, true
+diff --git a/internal/platform/ios/photos.go b/internal/platform/ios/photos.go
+new file mode 100644
+index 00000000..7157f574
+--- /dev/null
++++ b/internal/platform/ios/photos.go
+@@ -0,0 +1,85 @@
++//go:build ios
++
++package ios
++
++import (
++	"os"
++	"path/filepath"
++	"runtime"
++	"sync"
++
++	"github.com/ebitengine/purego"
++	"github.com/ebitengine/purego/objc"
++	"github.com/nsgo-dev/nsgo/internal/driver"
++	"github.com/nsgo-dev/nsgo/internal/platform/apple"
++	"github.com/nsgo-dev/nsgo/internal/platform/objcblock"
++)
++
++var photoLibrary = sync.OnceValues(func() (objc.ID, error) {
++	_, err := purego.Dlopen("/System/Library/Frameworks/Photos.framework/Photos", purego.RTLD_NOW|purego.RTLD_GLOBAL)
++	if err != nil {
++		return 0, err
++	}
++	return objc.ID(apple.Class("PHPhotoLibrary")), nil
++})
++
++func (s *surface) savePhoto(r driver.SaveRequest, id uint32) {
++	answer := func(saved bool, message string) {
++		s.engine.Dispatch(driver.Event{Kind: driver.EventFiles, Count: id, Finished: saved, Text: message})
++	}
++	if onTV() {
++		answer(false, "photo library saving is unavailable on tvOS")
++		return
++	}
++	libraryClass, err := photoLibrary()
++	if err != nil {
++		answer(false, err.Error())
++		return
++	}
++	write := func(status int64) {
++		if status != 3 && status != 4 {
++			answer(false, "photo library access denied")
++			return
++		}
++		path, err := r.Stage(filepath.Join(os.TempDir(), "nsgo-photo"))
++		if err != nil {
++			answer(false, err.Error())
++			return
++		}
++		runtime.LockOSThread()
++		defer runtime.UnlockOSThread()
++		pool := objc.ID(apple.Class("NSAutoreleasePool")).Send(selNew)
++		defer pool.Send(sel("drain"))
++		changes := objcblock.New(func(objc.Block) {
++			request := objc.ID(apple.Class("PHAssetCreationRequest")).Send(sel("creationRequestForAsset"))
++			options := objc.ID(apple.Class("PHAssetResourceCreationOptions")).Send(selAlloc).Send(sel("init"))
++			options.Send(sel("setOriginalFilename:"), apple.NSString(r.Name))
++			url := objc.ID(apple.Class("NSURL")).Send(sel("fileURLWithPath:"), apple.NSString(path))
++			request.Send(sel("addResourceWithType:fileURL:options:"), int64(1), url, options)
++			options.Send(sel("release"))
++		})
++		completed := objcblock.New(func(_ objc.Block, success bool, err objc.ID) {
++			os.RemoveAll(filepath.Dir(path))
++			message := ""
++			if !success {
++				message = "the photo library could not save the image"
++				if err != 0 {
++					message = apple.GoString(err.Send(sel("localizedDescription")))
++				}
++			}
++			answer(success, message)
++		})
++		libraryClass.Send(sel("sharedPhotoLibrary")).Send(sel("performChanges:completionHandler:"), changes, completed)
++		changes.Release()
++		completed.Release()
++	}
++	const addOnly = int64(1)
++	status := objc.Send[int64](libraryClass, sel("authorizationStatusForAccessLevel:"), addOnly)
++	if status != 0 {
++		go write(status)
++		return
++	}
++	permission := objcblock.New(func(_ objc.Block, status int64) { go write(status) })
++	libraryClass.Send(sel("requestAuthorizationForAccessLevel:handler:"), addOnly, permission)
++	permission.Release()
++}
+diff --git a/mobile/mobile.go b/mobile/mobile.go
+index 9d64d888..1cde8d37 100644
+--- a/mobile/mobile.go
++++ b/mobile/mobile.go
+@@ -6,6 +6,17 @@ package mobile
+ 
+ import "github.com/nsgo-dev/nsgo/core"
+ 
++// PhotoSaveOptions names an encoded image to add to the device's photo library.
++type PhotoSaveOptions = core.PhotoSaveOptions
++
++// SavePhoto adds an image to Photos on iOS or MediaStore on Android.
++// iOS requires NSPhotoLibraryAddUsageDescription; Android 28 requires
++// WRITE_EXTERNAL_STORAGE in the manifest. The callback reports completion
++// on the engine goroutine, with a library identifier where available.
++func SavePhoto(cx *core.Scope, o PhotoSaveOptions, done func(saved bool, path string, err error)) {
++	cx.SavePhoto(o, done)
++}
++
+ type (
+ 	// TabBar is the system's tab bar for an app's top-level sections:
+ 	// UITabBar on iOS (Liquid Glass from iOS 26), a Material 3 navigation
+diff --git a/skills/nsgo/SKILL.md b/skills/nsgo/SKILL.md
+index b307522c..32324a33 100644
+--- a/skills/nsgo/SKILL.md
++++ b/skills/nsgo/SKILL.md
+@@ -77,6 +77,7 @@ func main() { nsgo.Run(Root) }
+ - `desktop.OpenWindow`, `desktop.OpenPanel`, `desktop.NewTray`, `mobile.OpenOverlay`, `audio.NewPlayer`, `audio.LoadSound` and `core.NewHolder` belong directly to the `*core.Scope` passed to them rather than the running handler's owner, so passing `app` from a button's `OnPress` keeps them alive after the button's scope goes; reactive primitives (`Effect`, `Cleanup`, `AfterFunc`, `OnKey`) belong to the running owner, which `Scope.Run` switches.
+ - Signals belong to the engine's goroutine. Do I/O on a goroutine and set signals through `cx.Post`, or use `core.NewResource`, whose fetcher runs off the engine with a `context` cancelled when its source changes, under `core.Suspense` for the loading state. Never block a component or a handler on the network or disk; desktop window resizes wait at most 16 ms for the engine's layout ([desktop services](https://nsgo.dev/docs/services.md#speech-and-the-lifecycle)).
+ - Use scoped `cx.WatchSteps`, `WatchActivity`, `WatchPressure`, `WatchGeofences`, `RequestPreciseLocation` and `WatchBackgroundMotion` for sensor services. Ask for `PermissionActivityRecognition` for fitness (also Apple pressure); keep background motion explicit with a positive duration, separate capability and Android `background_motion` opt-in. Handle unavailable providers and OS expiry ([sensors](https://nsgo.dev/docs/services.md#fitness-regions-and-bounded-motion)).
++- Save mobile images with `mobile.SavePhoto` and `mobile.PhotoSaveOptions` (`Name`, `MIME`, `Path` or `Data`). iOS needs `NSPhotoLibraryAddUsageDescription` in `apple.info`; Android 28 needs `WRITE_EXTERNAL_STORAGE`, and Android 29+ needs no storage permission. The callback runs after the photo library write completes. Use `cx.SaveFile` for desktop file exports. [Services](https://nsgo.dev/docs/services.md#saving-photos)
+ - Find the user's Documents, Downloads, Desktop, Pictures, Music or Videos folder with `desktop.UserDir`, which macOS, Windows and Linux answer and other targets report `core.ErrUserDirUnavailable`; tests get temporary folders, pinned with `nsgotest.UserDirs`. [The user's folders](https://nsgo.dev/docs/services.md#the-users-folders)
+ - Use `cx.DiskSpace` for an asynchronous reading of the app’s available storage. On Apple platforms, declare the reason in `apple.privacy.accessed_apis`; tests set the answer with `nsgotest.DiskSpace`. [Disk space](https://nsgo.dev/docs/services.md#disk-space)
+ - Use `cx.AdvertiseService` and `cx.BrowseServices` for local service discovery on macOS, iOS, Android, Windows and Linux. Set `NSBonjourServices` and `NSLocalNetworkUsageDescription` in `apple.info` for Apple builds. Linux needs the Avahi daemon. Android hosts may need to declare `CHANGE_WIFI_MULTICAST_STATE`. [Services](https://nsgo.dev/docs/services.md#discovering-local-services)
+-- 
+2.54.0 (Apple Git-157)
+

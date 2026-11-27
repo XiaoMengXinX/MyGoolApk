@@ -12,6 +12,13 @@ icon:
 
 url_schemes: [coolmarket]
 
+apple:
+  info:
+    NSPhotoLibraryAddUsageDescription: 保存图片到相册
+
+android:
+  permissions: [android.permission.WRITE_EXTERNAL_STORAGE]
+
 # In-app updates on Android and macOS read the latest GitHub release's appcast,
 # signed with the secret key releases build with (NSGO_UPDATES_KEY).
 updates:
