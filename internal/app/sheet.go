@@ -52,7 +52,9 @@ func (a *App) bottomSheetOf(open func() bool, onClose func(), class string, side
 				onClose()
 			}
 		},
-		CloseOnSwipe:  true,
+		// Android's sheet pan takes vertical drags from child lists;
+		// PanScrollHandoff currently coordinates them only on iOS.
+		CloseOnSwipe:  env.OS() != core.OSAndroid,
 		BackdropStyle: core.Style{Background: core.RGBA(0x000000, 0.32)},
 		PopupClass:    class,
 		PopupStyleFunc: func() core.Style {
