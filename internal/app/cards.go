@@ -106,6 +106,7 @@ func (a *App) feedChanged(f backend.Feed) {
 			if e.Feed != nil {
 				g := *e.Feed
 				g.Liked, g.Stats.Likes = f.Liked, f.Stats.Likes
+				g.AuthorFollowed = f.AuthorFollowed
 				e.Feed = &g
 			}
 			return e

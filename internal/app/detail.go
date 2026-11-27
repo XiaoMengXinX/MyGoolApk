@@ -45,6 +45,7 @@ type detail struct {
 	depth int
 
 	likeBusy      bool
+	followBusy    bool
 	voteBusy      bool
 	replyLikeBusy map[string]bool
 	// menu is the comment whose menu is open.
@@ -355,7 +356,7 @@ func (d *detail) postBody(cx *core.Scope) core.Node {
 		},
 	}
 	return column(core.Style{Padding: core.Edges{Top: 8, Right: 16, Bottom: 20, Left: 16}, Gap: 16}, "bg-background",
-		a.feedHeader(cx, get, 40), cover, title, question,
+		d.authorHeader(cx), cover, title, question,
 		core.Show{When: func() bool { return d.asked.Get() && !d.summaryError.Get() }, Then: d.summaryCard},
 		dynamicShape(cx, func() bool { return get().BigCover }, func(_ *core.Scope, big bool) core.Node {
 			if big {
@@ -363,6 +364,50 @@ func (d *detail) postBody(cx *core.Scope) core.Node {
 			}
 			return core.Group{text, media}
 		}), target)
+}
+
+func (d *detail) authorHeader(cx *core.Scope) core.Node {
+	type followState struct{ visible, followed bool }
+	return row(core.Style{Gap: 12, AlignItems: core.AlignCenter}, "",
+		core.View{Style: fill, Children: []core.Node{d.a.feedHeader(cx, d.feed.Get, 40)}},
+		dynamicShape(cx, func() followState {
+			f := d.feed.Get()
+			uid := d.a.account.uid.Get()
+			return followState{f.Author.ID != "" && f.Author.ID != uid, f.AuthorFollowed}
+		}, func(_ *core.Scope, state followState) core.Node {
+			if !state.visible {
+				return core.Group{}
+			}
+			action, text, border, foreground := "关注", "关注", "border-primary", "text-primary"
+			if state.followed {
+				action, text, border, foreground = "取消关注", "已关注", "border-outline-variant", "text-on-surface-variant"
+			}
+			button := tap(action, d.toggleAuthorFollow, core.Style{Height: core.Pt(32), Padding: core.Symmetric(0, 16),
+				CornerRadius: 16, BorderWidth: 1, FlexShrink: 0, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter},
+				border, label(text, textSecondary, 500, foreground))
+			button.HitSlop = core.Symmetric(8, 0)
+			return button
+		}))
+}
+
+func (d *detail) toggleAuthorFollow() {
+	if d.followBusy || !d.a.requireLogin() {
+		return
+	}
+	f := d.feed.GetUntracked()
+	follow := !f.AuthorFollowed
+	d.followBusy = true
+	backgroundErr(d.a, func(ctx context.Context) error { return d.a.backend.SetUserFollow(ctx, f.Author.ID, follow) }, func(err error) {
+		d.followBusy = false
+		if err != nil {
+			d.a.notice("关注失败：" + err.Error())
+			return
+		}
+		f := d.feed.GetUntracked()
+		f.AuthorFollowed = follow
+		d.feed.Set(f)
+		d.a.feedChanged(f)
+	})
 }
 
 func (d *detail) summaryCard(*core.Scope) core.Node {

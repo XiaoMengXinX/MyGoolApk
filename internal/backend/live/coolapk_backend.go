@@ -377,8 +377,9 @@ func feedFromObject(object map[string]any) backend.Feed {
 			Forwards:  apiInt(object, "forwardnum"),
 			Favorites: apiInt(object, "favnum"),
 		},
-		Liked:     apiInt(action, "like") != 0,
-		Favorited: apiInt(action, "collect") == 1 || apiInt(action, "favorite") == 1,
+		Liked:          apiInt(action, "like") != 0,
+		Favorited:      apiInt(action, "collect") == 1 || apiInt(action, "favorite") == 1,
+		AuthorFollowed: apiInt(action, "followAuthor") == 1,
 	}
 	for _, row := range apiObjects(object, "relationRows") {
 		if title, link := firstAPIString(row, "title"), firstAPIString(row, "url"); title != "" && link != "" {

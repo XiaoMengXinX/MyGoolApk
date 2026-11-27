@@ -47,6 +47,19 @@ func TestFeedPublishingLayouts(t *testing.T) {
 	}
 }
 
+func TestFeedAuthorFollowState(t *testing.T) {
+	for _, state := range []string{"-1", "0", "1"} {
+		object, err := decodeAPIObject(json.RawMessage(`{"id":"1","userAction":{"followAuthor":` + state + `}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		feed := feedFromObject(object)
+		if feed.AuthorFollowed != (state == "1") {
+			t.Errorf("followAuthor=%s: followed=%v", state, feed.AuthorFollowed)
+		}
+	}
+}
+
 func TestDailyNewsPresentation(t *testing.T) {
 	objects, err := decodeAPIObjects(json.RawMessage(`[
 		{"entityType":"card","entityTemplate":"imageTextGridCard","entities":[{"entityType":"imageText","title":"芯片开售","url":"/feed/1","pic":"https://image.coolapk.com/a.jpg"},{"entityType":"imageText","title":"手机销量","url":"/feed/2","pic":"https://image.coolapk.com/b.jpg"}]},
