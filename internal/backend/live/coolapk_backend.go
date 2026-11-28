@@ -390,15 +390,20 @@ func feedFromObject(object map[string]any) backend.Feed {
 		feed.Title = firstAPIString(object, "title")
 	}
 	switch feed.Kind {
-	case backend.PostArticle, backend.PostTrade:
+	case backend.PostArticle:
 		feed.Blocks = blocksFromObject(object)
-		if feed.Kind == backend.PostTrade && !slices.ContainsFunc(feed.Blocks, func(b backend.Block) bool { return b.Kind == backend.BlockImage }) {
+		if covers := imagesFromURLs(firstAPIString(object, "message_cover")); len(covers) > 0 {
+			feed.Cover = &covers[0]
+		} else {
+			feed.Images = imagesFromObject(object)
+		}
+	case backend.PostTrade:
+		feed.Blocks = blocksFromObject(object)
+		if !slices.ContainsFunc(feed.Blocks, func(b backend.Block) bool { return b.Kind == backend.BlockImage }) {
 			feed.Images = imagesFromObject(object)
 			break
 		}
 		if covers := imagesFromURLs(firstAPIString(object, "message_cover"), firstAPIString(object, "pic")); len(covers) > 0 {
-			// pic only repeats the body's first picture for some articles,
-			// whose detail draws it again right below the cover.
 			cover := covers[0]
 			dupe := false
 			for _, block := range feed.Blocks {

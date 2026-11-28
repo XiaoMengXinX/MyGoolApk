@@ -403,6 +403,27 @@ func TestPicturesOpenInTheViewer(t *testing.T) {
 	}
 }
 
+func TestCoverlessArticleShowsOneRowOfPictures(t *testing.T) {
+	b := newFakeBackend()
+	b.feed.Kind = backend.PostArticle
+	b.feed.Images = []backend.Image{
+		{Width: 600, Height: 900}, {Width: 900, Height: 600},
+		{Width: 600, Height: 900}, {Width: 900, Height: 600},
+	}
+	app := start(t, b)
+	first := app.Find("role:button 查看第 1 张图片 >> nth=1").Bounds()
+	third := app.Find("role:button 查看第 3 张图片 >> nth=1").Bounds()
+	if first.Size.Width == 0 || first.Size.Width != first.Size.Height || first.Origin.Y != third.Origin.Y ||
+		shows(app, "role:button 查看第 4 张图片") {
+		t.Fatalf("article pictures should fit in one row of three squares, got %v and %v", first, third)
+	}
+	app.Press("role:button 查看第 3 张图片 >> nth=1")
+	settle(app)
+	if !shows(app, "text:3 / 4") {
+		t.Fatal("the viewer should open the third picture and include all four")
+	}
+}
+
 func TestPressingAnAuthorOpensTheirPage(t *testing.T) {
 	app := start(t, newFakeBackend())
 	app.Press("role:button 作者主页 >> nth=1")

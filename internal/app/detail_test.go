@@ -108,6 +108,12 @@ func TestArticleWaitsForItsDetailBeforeShowingThePost(t *testing.T) {
 			if got := len(app.QueryMounted(coverButton)); got != wantCovers {
 				t.Errorf("mounted %d covers, want %d", got, wantCovers)
 			}
+			if distinctCover {
+				frame := app.Find(coverButton).Frame.Size
+				if wantHeight := list.Frame.Size.Width * 9 / 20; frame.Width != list.Frame.Size.Width || frame.Height < wantHeight-1 || frame.Height > wantHeight+1 {
+					t.Errorf("article cover frame = %v, want full width at 20:9", frame)
+				}
+			}
 			selector := fmt.Sprintf("view:%d", list.ID)
 			app.ScrollTo(selector, core.Point{Y: list.Content.Height})
 			position := func(view *nsgotest.View) core.Points {

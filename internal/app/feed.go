@@ -199,10 +199,7 @@ func pill(text func() string, class string) core.Node {
 		}()}
 }
 
-// feedBody is what a card shows of a post, by what the post is: an article
-// has its title, a summary and its cover; a question its title and counts;
-// an answer the question it answers, over the answer; a video its cover;
-// a vote its choices; the others their text and pictures.
+// feedBody arranges the text and media of a card by post kind.
 func (a *App) feedBody(cx *core.Scope, get func() backend.Feed, s feedShape) core.Node {
 	title := func() core.Node {
 		if !s.title {
@@ -212,7 +209,14 @@ func (a *App) feedBody(cx *core.Scope, get func() backend.Feed, s feedShape) cor
 	}
 	switch s.kind {
 	case backend.PostArticle:
-		return through(column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), a.coverImage(cx, get, s)))
+		const columns = 3
+		var media core.Node
+		if s.cover {
+			media = a.coverImage(cx, get, s)
+		} else if s.images > 0 {
+			media = a.imageGrid(cx, func() []backend.Image { return get().Images }, min(s.images, columns), columns)
+		}
+		return through(column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), media))
 	case backend.PostQuestion:
 		return through(column(core.Style{Gap: 12}, "", title(), a.feedContent(cx, get, s, 3), core.Text{
 			ContentFunc: func() string {
@@ -273,18 +277,24 @@ func (a *App) feedContent(cx *core.Scope, get func() backend.Feed, s feedShape, 
 		label("查看更多", textSecondary, 500, "text-primary"))))
 }
 
-// coverImage shows the cover of an article, at its ratio between 4:3 and
-// 2.4:1.
+const articleCoverRatio = 20.0 / 9
+
 func (a *App) coverImage(cx *core.Scope, get func() backend.Feed, s feedShape) core.Node {
-	if !s.cover {
-		return core.Group{}
+	ratio, fit := float32(16.0/9), core.Cover
+	if s.kind == backend.PostArticle {
+		ratio, fit = articleCoverRatio, core.Contain
 	}
-	return a.pic(cx, func() string {
+	image := a.pic(cx, func() string {
 		if c := get().Cover; c != nil {
 			return thumbURL(*c, thumbSmall)
 		}
 		return ""
-	}, core.Cover, "bg-surface-container-highest", core.Style{Width: core.Pct(100), AspectRatio: 16.0 / 9, CornerRadius: 12, Overflow: core.Hidden})
+	}, fit, "", fillAbs)
+	return core.View{
+		Class:    "bg-surface-container-highest",
+		Style:    core.Style{Width: core.Pct(100), AspectRatio: ratio, CornerRadius: 12, Overflow: core.Hidden},
+		Children: []core.Node{image},
+	}
 }
 
 // feedMedia shows a post's video, images, link, vote and repost. cast, on

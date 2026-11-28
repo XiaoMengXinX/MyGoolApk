@@ -129,8 +129,21 @@ func TestCleanAPITextWithoutMarkup(t *testing.T) {
 	}
 }
 
-// Posts are read by their feedType: an article has a cover and no pictures,
-// a video its cover and length, a question its counts.
+func TestCoverlessArticleKeepsItsPictures(t *testing.T) {
+	o, err := decodeAPIObject(json.RawMessage(`{
+		"entityType":"feed","id":1,"feedType":"feedArticle","message_cover":"",
+		"pic":"http://image.coolapk.com/feed/a@800x1200.jpg",
+		"picArr":["http://image.coolapk.com/feed/a@800x1200.jpg","http://image.coolapk.com/feed/b@800x1200.jpg"]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := feedFromObject(o)
+	if f.Cover != nil || len(f.Images) != 2 || f.Images[0].URL != "https://image.coolapk.com/feed/a@800x1200.jpg" {
+		t.Fatalf("cover = %v, pictures = %v", f.Cover, f.Images)
+	}
+}
+
 func TestFeedKinds(t *testing.T) {
 	data := json.RawMessage(`[
 		{"entityType":"feed","id":1,"feedType":"feedArticle","message_title":"文章","message":"摘要","message_cover":"http://image.coolapk.com/feed_cover/a@1600x719.jpg","pic":"http://image.coolapk.com/feed_cover/a@1600x719.jpg","picArr":[]},

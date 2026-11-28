@@ -400,6 +400,9 @@ func (d *detail) postBody(cx *core.Scope) core.Node {
 		if c == nil || slices.ContainsFunc(f.Blocks, func(b backend.Block) bool { return b.Kind == backend.BlockImage && b.Image.URL == c.URL }) {
 			return coverShape{}
 		}
+		if f.Kind == backend.PostArticle {
+			return coverShape{c.URL, articleCoverRatio}
+		}
 		return coverShape{c.URL, mediaRatio(*c, 16.0/9, 1, 3)}
 	}, func(cx *core.Scope, cs coverShape) core.Node {
 		if cs.url == "" {
@@ -456,6 +459,9 @@ func (d *detail) postBody(cx *core.Scope) core.Node {
 	media := dynamicShape(cx, func() mediaShape {
 		f := get()
 		s := shapeOfFeed(f, 0)
+		if s.kind == backend.PostArticle {
+			s.images = 0 // Article body images are rendered by articleBlocks.
+		}
 		return mediaShape{feedShape{kind: s.kind, images: s.images, video: s.video, link: s.link, vote: s.vote, fw: s.fw, bigCover: s.bigCover}, f.Vote != nil && f.Vote.Counted}
 	}, func(cx *core.Scope, ms mediaShape) core.Node {
 		s := ms.feedShape
