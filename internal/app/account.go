@@ -8,6 +8,12 @@ import (
 	"app/internal/backend"
 )
 
+const (
+	accountFollows     = "account:follows"
+	accountCollections = "account:collections"
+	accountReplies     = "account:replies"
+)
+
 // accountState is the signed-in profile and the message-center badges. The
 // session itself lives in the backend; uid mirrors it for the views.
 type accountState struct {
@@ -162,20 +168,16 @@ func (a *App) mePage(cx *core.Scope) core.Node {
 	group := core.Dynamic(func(cx *core.Scope) core.Node {
 		var items []core.Node
 		if signedIn() {
-			items = append(items, listItem(&symbols.Mail, "消息", badge(func() int { return s.unread.Get().Total() }),
-				func() { a.push(routeMessages, "") }))
-		}
-		if signedIn() {
 			items = append(items,
-				listItem(&symbols.Tag, "关注的话题", nil, func() { a.openList("关注的话题", backend.MyTopicsURL) }),
-				listItem(&symbols.Devices, "关注的数码", nil, func() { a.openList("关注的数码", backend.MyProductsURL) }),
-				listItem(&symbols.Folder, "收藏单", nil, func() { a.openList("收藏单", backend.MyCollectionsURL) }),
+				listItem(&symbols.Mail, "消息", badge(func() int { return s.unread.Get().Total() }),
+					func() { a.push(routeMessages, "") }),
+				listItem(&symbols.Tag, "我的关注", nil, func() { a.openList("我的关注", accountFollows) }),
+				listItem(&symbols.Folder, "我的收藏", nil, func() { a.openList("我的收藏", accountCollections) }),
 				listItem(&symbols.Block, "黑名单", nil, func() { a.openList("黑名单", backend.MyBlocksURL) }))
+		} else {
+			items = append(items, listItem(&symbols.History, "浏览历史", nil, a.openHistory))
 		}
-		items = append(items,
-			listItem(&symbols.History, "浏览历史", nil, a.openHistory),
-			listItem(&symbols.Settings, "设置", nil, a.openSettings),
-		)
+		items = append(items, listItem(&symbols.Settings, "设置", nil, a.openSettings))
 		return column(core.Style{CornerRadius: 28, Overflow: core.Hidden}, "bg-surface-container-low", items...)
 	})
 	return column(fill, "bg-background",
@@ -186,8 +188,6 @@ func (a *App) mePage(cx *core.Scope) core.Node {
 	)
 }
 
-// myShortcuts are the account's own lists, as c001apk's grid under the
-// profile has them.
 func (a *App) myShortcuts() core.Node {
 	item := func(glyph *symbol, name string, open func()) core.Node {
 		return tap(name, open, fill.Merge(core.Style{AlignItems: core.AlignCenter, Gap: 8, Padding: core.Symmetric(14, 0), CornerRadius: 16}), "",
@@ -198,9 +198,30 @@ func (a *App) myShortcuts() core.Node {
 	return row(core.Style{Padding: core.Symmetric(4, 4), CornerRadius: 28}, "bg-surface-container-low",
 		item(&symbols.Article, "我的动态", func() { a.openUser(backend.Author{ID: a.account.uid.GetUntracked()}) }),
 		item(&symbols.FavoriteOutline, "我的赞", list("我的赞", backend.MyLikesURL)),
-		item(&symbols.Comment, "我的回复", list("我的回复", backend.MyRepliesURL)),
-		item(&symbols.Footprint, "足迹", list("足迹", backend.MyFootprintsURL)),
+		item(&symbols.Comment, "我的回复", list("我的回复", accountReplies)),
+		item(&symbols.History, "历史", a.openHistory),
 	)
+}
+
+func accountTabs(url string) []pageTab {
+	switch url {
+	case accountFollows:
+		return []pageTab{
+			{Title: "话题", Kind: tabPage, URL: backend.MyTopicsURL},
+			{Title: "数码", Kind: tabPage, URL: backend.MyProductsURL},
+		}
+	case accountCollections:
+		return []pageTab{
+			{Title: "我的", Kind: tabPage, URL: backend.MyCollectionsURL},
+			{Title: "关注", Kind: tabPage, URL: backend.FollowedCollectionsURL},
+		}
+	case accountReplies:
+		return []pageTab{
+			{Title: "我的回复", Kind: tabPage, URL: backend.MyRepliesURL},
+			{Title: "我收到的回复", Kind: tabPage, URL: backend.RepliesToMeURL},
+		}
+	}
+	return nil
 }
 
 func (a *App) guestCard() core.Node {

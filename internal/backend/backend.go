@@ -195,18 +195,17 @@ const (
 	FollowURL   = "/page?url=V15_HOME_TAB_FOLLOW"
 )
 
-// The signed-in account's own lists. The my: ones are no page urls: what it
-// liked, its comments, the posts it opened on any device, the accounts it
-// blocks and its collections.
+// Account lists. The my: routes use dedicated endpoints.
 const (
 	MyLikesURL       = "my:likes"
 	MyRepliesURL     = "my:replies"
-	MyFootprintsURL  = "my:footprints"
+	RepliesToMeURL   = "my:replies-to-me"
 	MyBlocksURL      = "my:blocks"
 	MyCollectionsURL = "my:collections"
 	// MyTopicsURL and MyProductsURL are server lists of what the account follows.
-	MyTopicsURL   = "#/topic/userFollowTagList"
-	MyProductsURL = "#/product/followProductList"
+	MyTopicsURL            = "#/topic/userFollowTagList"
+	MyProductsURL          = "#/product/followProductList"
+	FollowedCollectionsURL = "#/collection/followList"
 	// CollectionURLPrefix leads the url of what a collection holds, before its id.
 	CollectionURLPrefix = "collection:"
 	ChannelURLPrefix    = "channel:"

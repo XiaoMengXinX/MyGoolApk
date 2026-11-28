@@ -284,8 +284,10 @@ func (b *coolapkBackend) PageEntries(ctx context.Context, q backend.PageQuery) (
 		return backend.PageEntriesResult{
 			Entries: entriesFromObjects(objects), HasMore: len(objects) > 0, Cursor: pageCursor(objects, q.Cursor, q.Page),
 		}, nil
-	case backend.MyLikesURL, backend.MyRepliesURL, backend.MyFootprintsURL, backend.MyBlocksURL, backend.MyCollectionsURL:
+	case backend.MyLikesURL, backend.MyRepliesURL, backend.RepliesToMeURL, backend.MyBlocksURL, backend.MyCollectionsURL:
 		return b.myList(ctx, q)
+	case backend.FollowedCollectionsURL:
+		q.Title = "我关注的收藏单"
 	}
 	if strings.HasPrefix(q.URL, backend.CollectionURLPrefix) {
 		return b.myList(ctx, q)
@@ -663,31 +665,31 @@ func (b *coolapkBackend) myList(ctx context.Context, q backend.PageQuery) (backe
 	if uid == "" {
 		return backend.PageEntriesResult{}, fmt.Errorf("请先登录")
 	}
-	key := "my:" + q.URL
-	cursor := b.cursor(key, q.Page)
-	r := coolapk.ListRequest{Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last}
+	r := coolapk.ListRequest{Page: q.Page, FirstItem: q.Cursor.FirstItem, LastItem: q.Cursor.LastItem}
 	var response *coolapk.RawResponse
 	var err error
-	switch {
-	case strings.HasPrefix(q.URL, backend.CollectionURLPrefix):
-		response, err = b.client.GetCollectionItemListWithCtx(ctx, strings.TrimPrefix(q.URL, backend.CollectionURLPrefix), r)
-	case q.URL == backend.MyCollectionsURL:
-		response, err = b.client.GetCollectionsWithCtx(ctx, coolapk.CollectionListRequest{UID: uid, Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last})
-	case q.URL == backend.MyBlocksURL:
+	switch q.URL {
+	case backend.MyCollectionsURL:
+		// Resolve the owner from the session so the list includes private collections.
+		response, err = b.client.GetCollectionsWithCtx(ctx, coolapk.CollectionListRequest{Page: r.Page, FirstItem: r.FirstItem, LastItem: r.LastItem})
+	case backend.MyBlocksURL:
 		response, err = b.client.GetBlackListWithCtx(ctx, r)
-	case q.URL == backend.MyLikesURL:
+	case backend.MyLikesURL:
 		response, err = b.client.GetUserLikeListWithCtx(ctx, uid, r)
-	case q.URL == backend.MyRepliesURL:
+	case backend.MyRepliesURL:
 		response, err = b.client.GetUserReplyListWithCtx(ctx, uid, r)
+	case backend.RepliesToMeURL:
+		response, err = b.client.GetUserReplyToMeListWithCtx(ctx, uid, r)
 	default:
-		response, err = b.client.GetHitHistoryWithCtx(ctx, coolapk.ListRequest{Page: q.Page, FirstItem: cursor.first, LastItem: cursor.last})
+		response, err = b.client.GetCollectionItemListWithCtx(ctx, strings.TrimPrefix(q.URL, backend.CollectionURLPrefix), r)
 	}
 	objects, err := listObjects(response, err)
 	if err != nil {
 		return backend.PageEntriesResult{}, err
 	}
-	b.storeCursor(key, q.Page, feedCursor(objects))
-	return backend.PageEntriesResult{Entries: entriesFromObjects(objects), HasMore: len(objects) > 0}, nil
+	return backend.PageEntriesResult{
+		Entries: entriesFromObjects(objects), HasMore: len(objects) > 0, Cursor: pageCursor(objects, q.Cursor, q.Page),
+	}, nil
 }
 
 // replyAsFeed reads a comment as a card of the post it is on: its author,

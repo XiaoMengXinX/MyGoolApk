@@ -4,11 +4,70 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"app/internal/backend"
 	coolapk "github.com/XiaoMengXinX/CoolapkApi-Go"
 )
+
+func TestAccountListRequests(t *testing.T) {
+	cases := []struct {
+		query  backend.PageQuery
+		path   string
+		args   url.Values
+		body   string
+		id     string
+		cursor backend.ListCursor
+	}{
+		{backend.PageQuery{URL: backend.MyCollectionsURL, Page: 1}, "/collection/list",
+			url.Values{"showDefault": {"0"}, "page": {"1"}},
+			`[{"entityType":"collection","id":101,"title":"默认收藏单","item_num":0,"is_open":0}]`, "collection:101", backend.ListCursor{FirstItem: "101", LastItem: "101"}},
+		{backend.PageQuery{URL: backend.MyCollectionsURL, Page: 2, Cursor: backend.ListCursor{FirstItem: "101", LastItem: "101"}}, "/collection/list",
+			url.Values{"showDefault": {"0"}, "page": {"2"}, "firstItem": {"101"}, "lastItem": {"101"}},
+			`[]`, "", backend.ListCursor{FirstItem: "101", LastItem: "101"}},
+		{backend.PageQuery{URL: backend.FollowedCollectionsURL, Title: "关注", Page: 2, Cursor: backend.ListCursor{FirstItem: "102", LastItem: "102"}}, "/page/dataList",
+			url.Values{"url": {"#/collection/followList"}, "title": {"我关注的收藏单"}, "page": {"2"}, "firstItem": {"102"}, "lastItem": {"102"}},
+			`[]`, "", backend.ListCursor{FirstItem: "102", LastItem: "102"}},
+		{backend.PageQuery{URL: backend.MyRepliesURL, Page: 1}, "/user/replyList",
+			url.Values{"uid": {"10"}, "page": {"1"}},
+			`[{"entityType":"feed_reply","id":103,"fid":201,"message":"我的回复"}]`, "reply:103", backend.ListCursor{FirstItem: "103", LastItem: "103"}},
+		{backend.PageQuery{URL: backend.RepliesToMeURL, Page: 2, Cursor: backend.ListCursor{FirstItem: "104", LastItem: "105"}}, "/user/replyToMeList",
+			url.Values{"uid": {"10"}, "page": {"2"}, "firstItem": {"104"}, "lastItem": {"105"}},
+			`[{"entityType":"feed_reply","id":106,"fid":202,"message":"收到的回复"}]`, "reply:106", backend.ListCursor{FirstItem: "104", LastItem: "106"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.query.URL, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/v6"+tc.path || r.URL.Query().Encode() != tc.args.Encode() {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+				}
+				fmt.Fprintf(w, `{"data":%s}`, tc.body)
+			}))
+			defer server.Close()
+			c := coolapk.New()
+			c.APIEndpoint = server.URL + "/v6"
+			c.SetSession(coolapk.Session{UID: "10", Token: "test"})
+			b := &coolapkBackend{client: c}
+			got, err := b.PageEntries(t.Context(), tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Cursor != tc.cursor {
+				t.Fatalf("cursor = %+v, want %+v", got.Cursor, tc.cursor)
+			}
+			if tc.id == "" {
+				if got.HasMore || len(got.Entries) != 0 {
+					t.Fatalf("expected the end of the list, got %+v", got)
+				}
+				return
+			}
+			if len(got.Entries) != 1 || got.Entries[0].ID != tc.id {
+				t.Fatalf("wrong entries: %+v", got.Entries)
+			}
+		})
+	}
+}
 
 func TestPageTitleWithSeparateFeeds(t *testing.T) {
 	for _, fail := range []bool{false, true} {

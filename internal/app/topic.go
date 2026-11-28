@@ -279,6 +279,11 @@ func ratingCard(r *backend.Rating, data, open func()) core.Node {
 func (a *App) listPage(cx *core.Scope, param string) core.Node {
 	raw, _ := base64.RawURLEncoding.DecodeString(param)
 	title, url, _ := strings.Cut(string(raw), "\x00")
+	if tabs := accountTabs(url); tabs != nil {
+		g := a.newTabGroup(cx, tabs, 0)
+		g.pushed = true
+		return a.screen(titled(title), nil, g.view(cx, nil))
+	}
 	switch url {
 	case backend.ProductCategoriesURL:
 		return a.screen(titled(title), nil, a.productCatalog(cx, a.newPageList(cx, url, title, nil, 0, ""), listSpec{pushed: true}))
