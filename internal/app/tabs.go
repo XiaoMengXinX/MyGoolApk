@@ -210,8 +210,17 @@ func (g *tabGroup) reload(kinds ...tabKind) {
 // view shows the tabs of g over its swiping pages.
 func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) core.Node {
 	var over *headed
+	webScrolls := make(map[int]*core.Ref)
 	if g.head != nil {
+		for i, tab := range g.tabs {
+			if tab.Kind == tabWeb {
+				webScrolls[i] = new(core.Ref)
+			}
+		}
 		over = newHeaded(cx, g.selected, len(g.tabs), func(i int) *core.Ref {
+			if ref := webScrolls[i]; ref != nil {
+				return ref
+			}
 			if l := g.lists[i]; l != nil {
 				return &l.p.list
 			}
@@ -237,7 +246,11 @@ func (g *tabGroup) view(cx *core.Scope, topics func(cx *core.Scope) core.Node) c
 						return topics(cx)
 					}
 					if g.tabs[i].Kind == tabWeb {
-						return g.webTab(cx, i)
+						web := g.webTab(cx, i)
+						if ref := webScrolls[i]; ref != nil {
+							return over.webPage(i, ref, web)
+						}
+						return web
 					}
 					l, spec := g.list(cx, i), listSpec{pushed: g.pushed}
 					if g.newList != nil {
@@ -481,6 +494,8 @@ func (a *App) entryView(cx *core.Scope, get func() backend.PageEntry, l *pageLis
 			return a.cardView(cx, get, l)
 		case backend.EntryNews:
 			return a.newsCard(cx, get)
+		case backend.EntryOfflineEvent:
+			return a.offlineEventCard(cx, get)
 		case backend.EntryFeed:
 			return a.feedCard(cx, func() backend.Feed {
 				if f := get().Feed; f != nil {

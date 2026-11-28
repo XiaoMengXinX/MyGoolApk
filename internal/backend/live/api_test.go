@@ -2,6 +2,7 @@ package live
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -292,7 +293,8 @@ func TestTabPagesAndLinkRows(t *testing.T) {
 	if e := entries[2]; e.Kind != backend.EntryLink || e.URL != "/u/12202" || e.Title != "酷安小编" || !e.Round || e.Subtitle != "140466粉丝" {
 		t.Errorf("user = %+v", e)
 	}
-	if e := entries[3]; e.Kind != backend.EntryLink || e.URL != "https://m.coolapk.com/activity/x" || e.Subtitle != "2026年8月8日  北京 8人" {
+	if e := entries[3]; e.Kind != backend.EntryOfflineEvent || e.URL != "https://m.coolapk.com/activity/x" || e.Event == nil ||
+		e.Event.Date != "2026年8月8日" || !slices.Equal(e.Event.Tags, []string{"北京", "8人"}) {
 		t.Errorf("event = %+v", e)
 	}
 }

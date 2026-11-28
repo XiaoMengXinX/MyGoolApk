@@ -145,10 +145,11 @@ const (
 	// row of entries, a selector of what the list below shows.
 	EntryCard
 	// EntryLink is a row that leads where its URL says, as ResolveLink reads
-	// it: a person of a ranking, an offline event.
+	// it, such as a person in a ranking.
 	EntryLink
 	// EntryNews is an editorial headline and pictures (articleNews).
 	EntryNews
+	EntryOfflineEvent
 )
 
 // CardKind is how a card of a server page shows.
@@ -287,10 +288,16 @@ type PageEntry struct {
 	Ranked      bool
 	Timeline    bool
 	RatingRow   bool
+	Event       *OfflineEvent
 	// URL is the page url of the list a category opens, or where a link
 	// leads.
 	URL  string
 	Card *Card
+}
+
+type OfflineEvent struct {
+	Date string
+	Tags []string
 }
 
 // BlockKind names one part of an article's body.

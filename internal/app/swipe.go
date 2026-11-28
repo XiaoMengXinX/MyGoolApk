@@ -66,6 +66,7 @@ type headed struct {
 	// head is the head's height, top the head's with the bar's, and shift how
 	// far the head is scrolled away.
 	head, top *core.Signal[core.Points]
+	viewport  *core.Signal[core.Points]
 	shift     core.Points
 	// ys follow the lists' offsets on the platform, which moves the head with
 	// the shown list in the frame it scrolls; lifts turn them into the head's
@@ -89,7 +90,7 @@ type headed struct {
 // one not made yet, of which shown is in sight.
 func newHeaded(cx *core.Scope, shown *core.Signal[int], count int, list func(i int) *core.Ref) *headed {
 	h := &headed{shown: shown, count: count, list: list, head: core.NewSignal(cx, core.Points(0)), top: core.NewSignal(cx, core.Points(0)),
-		offsets: map[int]core.Points{}, held: map[int]bool{}}
+		viewport: core.NewSignal(cx, core.Points(0)), offsets: map[int]core.Points{}, held: map[int]bool{}}
 	h.rests, h.ends = make([]*core.Signal[core.Points], count), make([][2]core.Ref, count)
 	h.ys = make([]*core.AnimatedValue, count)
 	for i := range h.rests {
@@ -148,9 +149,9 @@ func (h *headed) follow(i int) {
 // away, and reports whether that changed.
 func (h *headed) fit(i int, ref *core.Ref) bool {
 	frame, ok := ref.Frame()
-	above, _ := h.ends[i][0].Bounds()
-	below, _ := h.ends[i][1].Bounds()
-	if !ok {
+	above, hasHeader := h.ends[i][0].Bounds()
+	below, hasFooter := h.ends[i][1].Bounds()
+	if !ok || !hasHeader || !hasFooter {
 		return false
 	}
 	rest := h.rests[i].GetUntracked()
@@ -174,6 +175,8 @@ func (h *headed) under(cx *core.Scope, i int, spec listSpec, rows func()) listSp
 		OnLayout: func(core.Bounds) {
 			if i != h.shown.GetUntracked() {
 				h.follow(i)
+			} else {
+				h.fit(i, h.list(i))
 			}
 		},
 	}
@@ -184,6 +187,24 @@ func (h *headed) under(cx *core.Scope, i int, spec listSpec, rows func()) listSp
 		h.keep(i)
 	})
 	return spec
+}
+
+// webPage gives the shared header a native scroll target while the site
+// keeps its own viewport and handles scrolling within the document.
+func (h *headed) webPage(i int, ref *core.Ref, web core.Node) core.Node {
+	return core.Scroll{Ref: ref, Style: fill, HideIndicator: true,
+		OnScroll: h.scrolled(i), OffsetValues: core.AnimatedXY{Y: h.ys[i]},
+		Children: []core.Node{
+			core.View{StyleFunc: func() core.Style { return core.Style{Height: core.Pt(h.top.Get()), FlexShrink: 0} }},
+			core.View{StyleFunc: func() core.Style {
+				return core.Style{Height: core.Pt(max(0, h.viewport.Get()-h.top.Get()+h.head.Get())), FlexShrink: 0}
+			}, OnLayout: func(core.Bounds) {
+				if i != h.shown.GetUntracked() {
+					h.follow(i)
+				}
+			}, Children: []core.Node{web}},
+		},
+	}
 }
 
 // keep holds list i where it is under the head while its changed rows are
@@ -241,22 +262,23 @@ func (h *headed) lift() *core.AnimatedStyle {
 
 // view lays head and bar over pages.
 func (h *headed) view(head, bar, pages core.Node) core.Node {
-	return core.View{Style: fill.Merge(core.Style{Overflow: core.Hidden}), Children: []core.Node{
-		column(fill, "", pages),
-		core.View{
-			Style:         core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0)},
-			PointerEvents: core.PointerEventsBoxNone,
-			StyleFunc:     func() core.Style { return core.Style{Animated: h.lift()} },
-			OnLayout:      func(b core.Bounds) { h.top.Set(b.Size.Height) },
-			// The head and the bar lie over the lists rather than in them:
-			// the scrolls that start on them go to the list shown.
-			ScrollTarget: func() *core.Ref { return h.list(h.shown.GetUntracked()) },
-			Children: []core.Node{
-				core.View{OnLayout: func(b core.Bounds) { h.head.Set(b.Size.Height) }, Children: []core.Node{head}},
-				bar,
+	return core.View{Style: fill.Merge(core.Style{Overflow: core.Hidden}),
+		OnLayout: func(b core.Bounds) { h.viewport.Set(b.Size.Height) }, Children: []core.Node{
+			column(fill, "", pages),
+			core.View{
+				Style:         core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0)},
+				PointerEvents: core.PointerEventsBoxNone,
+				StyleFunc:     func() core.Style { return core.Style{Animated: h.lift()} },
+				OnLayout:      func(b core.Bounds) { h.top.Set(b.Size.Height) },
+				// The head and the bar lie over the lists rather than in them:
+				// the scrolls that start on them go to the list shown.
+				ScrollTarget: func() *core.Ref { return h.list(h.shown.GetUntracked()) },
+				Children: []core.Node{
+					core.View{OnLayout: func(b core.Bounds) { h.head.Set(b.Size.Height) }, Children: []core.Node{head}},
+					bar,
+				},
 			},
-		},
-	}}
+		}}
 }
 
 // pageSlide moves count pages that lie side by side in a row. On a touch

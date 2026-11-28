@@ -2,12 +2,48 @@ package app
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 
 	"app/internal/backend"
 )
+
+func (a *App) offlineEventCard(cx *core.Scope, get func() backend.PageEntry) core.Node {
+	tags := core.NewMemoFunc(cx, func() []string { return get().Event.Tags }, slices.Equal)
+	card := tap("", func() {
+		e := get()
+		a.openCardItem(backend.CardItem{Title: e.Title, URL: e.URL})
+	}, core.Style{Direction: core.Row, Gap: 12, Padding: core.All(12), CornerRadius: 16,
+		Margin: core.Edges{Left: 12, Right: 12, Bottom: 8}, AlignItems: core.AlignStart}, "bg-surface-container-low",
+		core.View{Style: core.Style{Width: core.Pt(76), Height: core.Pt(76), CornerRadius: 12, Overflow: core.Hidden, FlexShrink: 0},
+			Children: []core.Node{a.pic(cx, func() string { return get().LogoURL }, core.Cover, "", fillAbs)}},
+		column(fill.Merge(core.Style{Gap: 8}), "",
+			core.Text{ContentFunc: func() string { return get().Title }, MaxLines: 2, Class: "text-on-surface", Style: textStyle(textBody, 600)},
+			core.Dynamic(func(*core.Scope) core.Node {
+				values := tags.Get()
+				if len(values) == 0 {
+					return core.Group{}
+				}
+				chips := make([]core.Node, len(values))
+				for i, tag := range values {
+					chips[i] = core.Text{Content: tag, MaxLines: 1, Class: "bg-surface-container-high text-on-surface-variant",
+						Style: textStyle(textCaption, 400).Merge(core.Style{Padding: core.Symmetric(2, 6), CornerRadius: 6,
+							MaxWidth: core.Pct(100), MinWidth: core.Pt(0)})}
+				}
+				return row(core.Style{Wrap: core.Wrap, RowGap: 4, ColumnGap: 4}, "", chips...)
+			}),
+			row(core.Style{Wrap: core.Wrap, RowGap: 4, ColumnGap: 8, AlignItems: core.AlignCenter}, "",
+				core.Show{When: func() bool { return get().Event.Date != "" }, Then: func(*core.Scope) core.Node {
+					return labelFunc(func() string { return get().Event.Date }, textCaption, 500, "text-primary")
+				}},
+				row(core.Style{AutoMargin: core.SideLeft, AlignItems: core.AlignCenter, Gap: 2}, "",
+					label("查看详情", textCaption, 500, "text-primary"), icon(&symbols.ChevronRight, 16, "text-primary"))),
+		))
+	card.LabelFunc = func() string { return "查看详情 " + get().Title }
+	return card
+}
 
 func (a *App) eventPage(cx *core.Scope, id string) core.Node {
 	event := core.NewSignal[*backend.EventDetail](cx, nil)

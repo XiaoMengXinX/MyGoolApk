@@ -569,13 +569,16 @@ func entriesFromObjects(objects []map[string]any) []backend.PageEntry {
 			}
 			return
 		case "pear_goods":
-			// An offline event: its date and place, and the page it opens.
 			if link := firstAPIString(o, "goods_url", "goods_buy_url"); link != "" {
+				event := &backend.OfflineEvent{Date: firstAPIString(o, "goods_promo_title")}
+				for tag := range strings.SplitSeq(firstAPIString(o, "goods_tags"), ",") {
+					if tag = strings.TrimSpace(tag); tag != "" {
+						event.Tags = append(event.Tags, tag)
+					}
+				}
 				entries = append(entries, backend.PageEntry{
-					Kind: backend.EntryLink, ID: "goods:" + apiID(o), Title: firstAPIString(o, "goods_title", "title"),
-					LogoURL:  normalizeCoolapkImage(firstAPIString(o, "goods_pic")),
-					Subtitle: joinNonEmpty("  ", firstAPIString(o, "goods_promo_title"), strings.ReplaceAll(firstAPIString(o, "goods_tags"), ",", " ")),
-					URL:      link,
+					Kind: backend.EntryOfflineEvent, ID: "goods:" + apiID(o), Title: firstAPIString(o, "goods_title", "title"),
+					LogoURL: normalizeCoolapkImage(firstAPIString(o, "goods_pic")), URL: link, Event: event,
 				})
 			}
 			return

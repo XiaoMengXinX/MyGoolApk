@@ -146,7 +146,7 @@ func (a *App) topicTabs(cx *core.Scope, d backend.TopicDetail, get func() backen
 		web, _ := a.siteContent(cx, tabs[i].URL, nil, func() bool { return g.selected.GetUntracked() == i }, ready)
 		return web
 	}
-	return column(fill, "", head, core.Show{
+	g.head = column(core.Style{}, "bg-background", head, core.Show{
 		When: func() bool { return lotto.Get() != nil },
 		Then: func(cx *core.Scope) core.Node {
 			return tap("一键抽奖", func() {
@@ -161,7 +161,8 @@ func (a *App) topicTabs(cx *core.Scope, d backend.TopicDetail, get func() backen
 					label("参与互动，赢取奖品", textCaption, 400, "text-on-primary-container")),
 				icon(&symbols.ChevronRight, 20, "text-on-primary-container"))
 		},
-	}, g.view(cx, nil))
+	})
+	return g.view(cx, nil)
 }
 
 // The activity site supplies the drawing ID in the same link its button uses.
