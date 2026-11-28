@@ -40,24 +40,27 @@ func dynamicOnShape(cx *core.Scope, shape func() feedShape, body func(cx *core.S
 // counts. Cards sit edge to edge on the surface, split by an 8dp band.
 func (a *App) feedCard(cx *core.Scope, get func() backend.Feed) core.Node {
 	open := func() { a.openFeed(get()) }
-	// The pressable parts are siblings: Android gives a press to the outermost
-	// view that takes one, so a card that is itself pressable would open its
-	// post whatever was pressed in it.
-	card := column(core.Style{}, "bg-background",
-		// The press area under the card: its parts let a press on empty space
-		// through to it. Its hover follows the whole card, which the parts over
-		// it would otherwise turn off and on as the pointer crosses them.
-		pointing(core.View{Role: core.RoleButton, Label: "查看帖子", OnPress: func(core.PressEvent) { open() },
-			Android: core.AndroidViewProps{Ripple: &core.Ripple{}}, Style: fillAbs.Merge(core.Style{Overflow: core.Hidden})}),
+	press := pointing(core.View{Role: core.RoleButton, Label: "查看帖子", OnPress: func(core.PressEvent) { open() }})
+	card := core.View{Class: "bg-background", Children: []core.Node{
 		through(column(core.Style{Padding: core.Edges{Top: 16, Right: 16, Bottom: 8, Left: 16}, Gap: 12}, "",
 			a.feedHeader(cx, get, 40),
 			dynamicOnShape(cx, func() feedShape { return shapeOfFeed(get(), 6) },
 				func(cx *core.Scope, s feedShape) core.Node { return a.feedBody(cx, get, s) }),
 		)),
 		a.feedFooter(cx, get, open),
-		core.View{Style: core.Style{Height: core.Pt(8)}, Class: "bg-surface-container-low"}).(core.View)
-	// The layer leaves the band between cards.
-	return hoverGroup(card, "card", fillAbs.Merge(core.Style{Bottom: core.Pt(8)}))
+	}}
+	if cx.Env().OS() == core.OSMacOS {
+		// AppKit walks up from decorative children to the nearest pressable view.
+		card.Role, card.Label, card.OnPress, card.Style.Cursor = press.Role, press.Label, press.OnPress, press.Style.Cursor
+	} else {
+		// On Android a pressable ancestor would take presses from its children.
+		press.Style = fillAbs.Merge(core.Style{Overflow: core.Hidden, Cursor: press.Style.Cursor})
+		press.Android.Ripple = &core.Ripple{}
+		card.Children = append([]core.Node{press}, card.Children...)
+	}
+	return column(core.Style{}, "",
+		hoverGroup(card, "card", fillAbs),
+		core.View{Style: core.Style{Height: core.Pt(8)}, Class: "bg-surface-container-low"})
 }
 
 func (a *App) feedFooter(cx *core.Scope, get func() backend.Feed, open func()) core.Node {
