@@ -184,7 +184,7 @@ func (h *headed) under(cx *core.Scope, i int, spec listSpec, rows func()) listSp
 	spec.offset = core.AnimatedXY{Y: h.ys[i]}
 	cx.Effect(func() {
 		rows()
-		h.keep(i)
+		h.rowsChanged(i)
 	})
 	return spec
 }
@@ -207,17 +207,22 @@ func (h *headed) webPage(i int, ref *core.Ref, web core.Node) core.Node {
 	}
 }
 
-// keep holds list i where it is under the head while its changed rows are
-// laid out.
-func (h *headed) keep(i int) {
+// rowsChanged refits the space under the rows after layout, preserving the
+// head's collapse if the list was already scrolled.
+func (h *headed) rowsChanged(i int) {
 	ref := h.list(i)
-	at := min(h.offsets[i], h.head.GetUntracked())
-	if ref == nil || at == 0 || h.held[i] {
+	if ref == nil || h.held[i] {
 		return
 	}
-	h.held[i] = true
+	at := min(h.offsets[i], h.head.GetUntracked())
+	if at > 0 {
+		h.held[i] = true
+	}
 	ref.Measure(func(_, _ core.Bounds, _ bool) {
 		h.fit(i, ref)
+		if at == 0 {
+			return
+		}
 		ref.Measure(func(_, _ core.Bounds, _ bool) {
 			delete(h.held, i)
 			if h.offsets[i] < at {
