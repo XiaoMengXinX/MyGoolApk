@@ -47,7 +47,7 @@ jobs:
         run: go tool nsgo test ./...
 
   build-android:
-    name: Build Android (arm64)
+    name: Build Android APKs
     needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -64,8 +64,9 @@ jobs:
           app-dir: ${{ env.APP_DIR }}
           coolapk-api-deploy-key: ${{ secrets.COOLAPK_API_DEPLOY_KEY }}
           rebuild-android-runtime: "true"
+          setup-android-ndk: "true"
 
-      - name: Build Android APK
+      - name: Build Android APKs
         working-directory: ${{ env.APP_DIR }}
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -74,7 +75,7 @@ jobs:
           NSGO_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          args=(-target android_arm64)
+          args=(-target android_arm64,android_x64)
           if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
             printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
             args+=(-keystore "$RUNNER_TEMP/release.keystore")
@@ -84,13 +85,13 @@ jobs:
           fi
           go tool nsgo build "${args[@]}" .
 
-      - name: Upload Android APK artifact
+      - name: Upload Android APKs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: mygoolapk-android-arm64
+          name: mygoolapk-android
           path: |
-            ${{ env.APP_DIR }}/dist/releases/*-android-arm64.apk
-            ${{ env.APP_DIR }}/dist/releases/*-android-arm64.apk.sha256
+            ${{ env.APP_DIR }}/dist/releases/*-android-*.apk
+            ${{ env.APP_DIR }}/dist/releases/*-android-*.apk.sha256
           if-no-files-found: error
           retention-days: 14
 

@@ -1,16 +1,21 @@
 # MyGoolApk
 
-MyGoolApk是一款独立开发的第三方酷安客户端，支持Android、iOS和macOS。界面采用Material Design 3，使用自有API库[CoolapkApi-Go](https://github.com/XiaoMengXinX/CoolapkApi-Go)连接酷安。页面结构、交互和API均以官方酷安iOS 16.7.4为基准。
+MyGoolApk是一款独立开发的第三方酷安客户端。页面结构、交互和API以官方酷安iOS 16.7.4为基准。
+
+- **技术栈：** 使用Go和[NSGo](https://github.com/nsgo-dev/nsgo)开发，界面采用Material Design 3，通过自有API库[CoolapkApi-Go](https://github.com/XiaoMengXinX/CoolapkApi-Go)连接酷安。
+- **跨平台特性：** 各端共用一套Go代码，使用原生控件。窄屏使用底部导航，宽屏使用侧边导航，窗口足够宽时可并排显示列表和详情。
+- **平台：** Android（ARM64和AMD64）、iOS、macOS（Apple Silicon和Intel）。
 
 [下载最新版](https://github.com/XiaoMengXinX/MyGoolApk/releases/latest)
 
 ## 下载与安装
 
-Android和macOS支持在应用内检查更新。
+Android和macOS支持在应用内检查更新。Android请选择对应架构的APK。
 
 | 平台 | 产物 | 说明 |
 | --- | --- | --- |
-| Android | `mygoolapk-<version>-android-arm64.apk` | 适用于`arm64-v8a`。本地构建未指定签名密钥时使用调试签名。 |
+| Android ARM64 | `mygoolapk-<version>-android-arm64.apk` | 适用于`arm64-v8a`设备。 |
+| Android AMD64 | `mygoolapk-<version>-android-x64.apk` | 适用于`x86_64`设备和模拟器。 |
 | iOS | `mygoolapk-<version>-ios.ipa` | 未签名IPA，请使用设备支持的侧载工具安装，例如TrollStore、AltStore、SideStore或Sideloadly。 |
 | macOS | `mygoolapk-<version>-macos-universal.dmg` | 支持Apple Silicon和Intel。使用ad-hoc签名，首次打开可能需要在系统设置中允许运行。 |
 
@@ -21,6 +26,7 @@ Android和macOS支持在应用内检查更新。
 - Go版本见[go.mod](go.mod)。
 - 构建iOS和macOS版需要macOS与Xcode。
 - 构建Android版需要JDK 17及以上、Android SDK Platform 36和Build Tools 36及以上。
+- 构建Android AMD64还需要Android NDK，CI使用`27.2.12479018`。本地构建APK未指定签名密钥时使用调试签名。
 
 ### 准备依赖目录
 
@@ -53,7 +59,7 @@ cd app-nsgo
 go tool nsgo test ./...
 
 # 按需选择目标平台，安装包输出到dist/releases/
-go tool nsgo build -target android_arm64 .
+go tool nsgo build -target android_arm64,android_x64 .
 go tool nsgo build -target ios .
 go tool nsgo build -target macos_universal .
 ```

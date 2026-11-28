@@ -18,6 +18,10 @@ inputs:
     description: Rebuild NSGo's Android classes.dex and classes.jar after applying patches/nsgo/*.patch.
     required: false
     default: "false"
+  setup-android-ndk:
+    description: Install the Android NDK required for x86_64 builds.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -110,6 +114,19 @@ runs:
           (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-36" "build-tools;36.0.0" > /dev/null
         fi
         sh "$NSGO_DIR/internal/platform/android/runtime/build.sh"
+
+    - name: Set up Android NDK
+      if: inputs.setup-android-ndk == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?Android SDK not found}}"
+        version=27.2.12479018
+        ndk="$sdk/ndk/$version"
+        if [ ! -d "$ndk/toolchains/llvm/prebuilt" ]; then
+          (yes || true) | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$version" > /dev/null
+        fi
+        echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
 
     - name: Set up Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

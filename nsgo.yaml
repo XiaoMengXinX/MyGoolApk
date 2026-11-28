@@ -31,7 +31,7 @@ updates:
 
 build:
   output: dist
-  targets: [android_arm64, ios, macos_universal]
+  targets: [android_arm64, android_x64, ios, macos_universal]
 
 licenses:
   allow: [github.com/XiaoMengXinX/CoolapkApi-Go]
